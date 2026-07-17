@@ -75,3 +75,14 @@
 | 《炉心残冬》第五批干净数值补表：007 事件  承诺  固定增员.md | `docs/numeric/《炉心残冬》第五批干净数值补表：007 事件  承诺  固定增员.md` | 干净数值补表 | 记录 007 事件、承诺与固定增员数值 | 已归档 |
 | 《炉心残冬》第六批干净数值补表：旧城派与 006C 接口.md | `docs/numeric/《炉心残冬》第六批干净数值补表：旧城派与 006C 接口.md` | 干净数值补表 | 记录旧城派与 006C 接口数值 | 已归档 |
 | 《炉心残冬》第七批干净数值补表：第七霜落与终局评分.md | `docs/numeric/《炉心残冬》第七批干净数值补表：第七霜落与终局评分.md` | 干净数值补表 | 记录第七霜落与终局评分数值 | 已归档 |
+
+## 六轮文案资产
+
+| 文件名 | 路径 | 来源等级 | 用途 | 状态 |
+| --- | --- | --- | --- | --- |
+| 第 1 轮 命名规则  UI  面板氛围  资源  状态  天气  基础命令.md | `docs/text-assets/第 1 轮 命名规则  UI  面板氛围  资源  状态  天气  基础命令.md` | 六轮文案资产 | 命名、UI、面板氛围、资源、状态、天气与基础命令文案 | 已归档 |
+| 第 2 轮：建筑  Facility  地图资源点  炉心  heat  仓储  医疗.md | `docs/text-assets/第 2 轮：建筑  Facility  地图资源点  炉心  heat  仓储  医疗.md` | 六轮文案资产 | 建筑、地图资源点、炉心、仓储与医疗文案 | 已归档 |
+| 第 3 轮：Route  Law  Mode  Confirm  Requirement  Cooldown.md | `docs/text-assets/第 3 轮：Route  Law  Mode  Confirm  Requirement  Cooldown.md` | 六轮文案资产 | 路线、炉律、模式、确认、条件与冷却文案 | 已归档 |
+| 第 4 轮：Tech  Research  Medical  Entertainment  Population  Feedback.md | `docs/text-assets/第 4 轮：Tech  Research  Medical  Entertainment  Population  Feedback.md` | 六轮文案资产 | 科技、研究、医疗、娱乐、人口与反馈文案 | 已归档 |
+| 第 5 轮：Event  Promise  OldCity  FixedArrival  FrostWarning  Achievement.md | `docs/text-assets/第 5 轮：Event  Promise  OldCity  FixedArrival  FrostWarning  Achievement.md` | 六轮文案资产 | 事件、承诺、旧城、固定增员、霜冻预警与成就文案 | 已归档 |
+| 第 6 轮：FrostFinal  Ending  HardFail  EndingReport  EndingTag  Interrogation.md | `docs/text-assets/第 6 轮：FrostFinal  Ending  HardFail  EndingReport  EndingTag  Interrogation.md` | 六轮文案资产 | 终局霜冻、结局、失败、结算报告、结局标签与审问文案 | 已归档 |
