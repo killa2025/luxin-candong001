@@ -26,7 +26,7 @@
 
 ## 第 2 批：001～009 A 干净封存版
 
-已收到并归档 Patch 001～005、Patch 006A、006B、006C、Patch 007 与 Patch 008；Patch 009 待后续文件提供后登记。
+已收到并归档 Patch 001～005、Patch 006A、006B、006C、Patch 007、Patch 008 与 Patch 009。
 
 | 文件名 | 路径 | 来源等级 | 用途 | 状态 |
 | --- | --- | --- | --- | --- |
@@ -61,3 +61,5 @@
 | A 【炉心残冬·Patch 008-2 干净封存版】.md | `docs/patches/008/A 【炉心残冬·Patch 008-2 干净封存版】.md` | A 干净封存版 | Patch 008-2 封存文档 | 已归档 |
 | A 【炉心残冬·Patch 008-3 干净封存版】.md | `docs/patches/008/A 【炉心残冬·Patch 008-3 干净封存版】.md` | A 干净封存版 | Patch 008-3 封存文档 | 已归档 |
 | A 【炉心残冬·Patch 008-4 干净封存版】.md | `docs/patches/008/A 【炉心残冬·Patch 008-4 干净封存版】.md` | A 干净封存版 | Patch 008-4 封存文档 | 已归档 |
+| A【炉心残冬·Patch 009-1 干净封存版】.md | `docs/patches/009/A【炉心残冬·Patch 009-1 干净封存版】.md` | A 干净封存版 | Patch 009-1 封存文档 | 已归档 |
+| A 【炉心残冬·Patch 009-2 干净封存版】.md | `docs/patches/009/A 【炉心残冬·Patch 009-2 干净封存版】.md` | A 干净封存版 | Patch 009-2 封存文档 | 已归档 |
