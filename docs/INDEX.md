@@ -86,3 +86,13 @@
 | 第 4 轮：Tech  Research  Medical  Entertainment  Population  Feedback.md | `docs/text-assets/第 4 轮：Tech  Research  Medical  Entertainment  Population  Feedback.md` | 六轮文案资产 | 科技、研究、医疗、娱乐、人口与反馈文案 | 已归档 |
 | 第 5 轮：Event  Promise  OldCity  FixedArrival  FrostWarning  Achievement.md | `docs/text-assets/第 5 轮：Event  Promise  OldCity  FixedArrival  FrostWarning  Achievement.md` | 六轮文案资产 | 事件、承诺、旧城、固定增员、霜冻预警与成就文案 | 已归档 |
 | 第 6 轮：FrostFinal  Ending  HardFail  EndingReport  EndingTag  Interrogation.md | `docs/text-assets/第 6 轮：FrostFinal  Ending  HardFail  EndingReport  EndingTag  Interrogation.md` | 六轮文案资产 | 终局霜冻、结局、失败、结算报告、结局标签与审问文案 | 已归档 |
+
+## 代码窗交接资料
+
+| 文件名 | 路径 | 来源等级 | 用途 | 状态 |
+| --- | --- | --- | --- | --- |
+| 《炉心残冬》010 代码骨架输入清单 v0.md | `docs/handoff/《炉心残冬》010 代码骨架输入清单 v0.md` | 代码窗交接资料 | 记录 010 代码骨架输入清单 | 已归档，未执行 |
+| 《炉心残冬》Codex 项目规则.md | `docs/handoff/《炉心残冬》Codex 项目规则.md` | 代码窗交接资料 | 保存 Codex 项目规则供后续交接参考 | 已归档，未执行 |
+| PATCH-001：项目骨架、数据状态与文案注册系统.md | `docs/handoff/PATCH-001：项目骨架、数据状态与文案注册系统.md` | 代码窗交接资料 | 保存 PATCH-001 代码窗需求说明 | 已归档，未实现 |
+| 代码窗的.md | `docs/handoff/代码窗的.md` | 代码窗交接资料 | 保存代码窗相关说明 | 已归档，未执行 |
+| 第一次给codex指令.md | `docs/handoff/第一次给codex指令.md` | 代码窗交接资料 | 保存首次 Codex 指令作为交接参考 | 已归档，未执行 |
