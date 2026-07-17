@@ -49,6 +49,7 @@
 | 【炉心残冬·Patch 006B-3 干净封存版】.md | `docs/patches/006/【炉心残冬·Patch 006B-3 干净封存版】.md` | A 干净封存版 | Patch 006B-3 封存文档 | 已归档 |
 | 【炉心残冬·Patch 006B-4 干净封存版】.md | `docs/patches/006/【炉心残冬·Patch 006B-4 干净封存版】.md` | A 干净封存版 | Patch 006B-4 封存文档 | 已归档 |
 | 【炉心残冬·Patch 006B 总收口清单 干净封存版】.md | `docs/patches/006/【炉心残冬·Patch 006B 总收口清单 干净封存版】.md` | A 干净封存版 | Patch 006B 总收口清单 | 已归档 |
+| 006B 全局修正复核包.md | `docs/patches/006/006B 全局修正复核包.md` | Patch 006B 复核资料 | Patch 006B 全局修正复核 | 已归档，未执行 |
 | A 【炉心残冬·Patch 006C-1 干净封存版】.md | `docs/patches/006/A 【炉心残冬·Patch 006C-1 干净封存版】.md` | A 干净封存版 | Patch 006C-1 封存文档 | 已归档 |
 | A 【炉心残冬·Patch 006C-2 干净封存版】.md | `docs/patches/006/A 【炉心残冬·Patch 006C-2 干净封存版】.md` | A 干净封存版 | Patch 006C-2 封存文档 | 已归档 |
 | A 【炉心残冬·Patch 006C-3 干净封存版】.md | `docs/patches/006/A 【炉心残冬·Patch 006C-3 干净封存版】.md` | A 干净封存版 | Patch 006C-3 封存文档 | 已归档 |
