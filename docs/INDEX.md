@@ -26,7 +26,7 @@
 
 ## 第 2 批：001～009 A 干净封存版
 
-已收到并归档 Patch 001～005 与 Patch 006A；Patch 006B、006C、007～009 待后续文件提供后登记。
+已收到并归档 Patch 001～005 与 Patch 006A、006B、006C；Patch 007～009 待后续文件提供后登记。
 
 | 文件名 | 路径 | 来源等级 | 用途 | 状态 |
 | --- | --- | --- | --- | --- |
@@ -44,3 +44,13 @@
 | A 【炉心残冬·Patch 006A-5 干净封存版】.md | `docs/patches/006/A 【炉心残冬·Patch 006A-5 干净封存版】.md` | A 干净封存版 | Patch 006A-5 封存文档 | 已归档 |
 | 【炉心残冬·Patch 006A-6 干净封存版】.md | `docs/patches/006/【炉心残冬·Patch 006A-6 干净封存版】.md` | A 干净封存版 | Patch 006A-6 封存文档 | 已归档 |
 | A 【炉心残冬·Patch 006A 总收口清单 干净封存版】.md | `docs/patches/006/A 【炉心残冬·Patch 006A 总收口清单 干净封存版】.md` | A 干净封存版 | Patch 006A 总收口清单 | 已归档 |
+| 【炉心残冬·Patch 006B-1 干净封存版】.md | `docs/patches/006/【炉心残冬·Patch 006B-1 干净封存版】.md` | A 干净封存版 | Patch 006B-1 封存文档 | 已归档 |
+| A 【炉心残冬·Patch 006B-2 干净封存版】.md | `docs/patches/006/A 【炉心残冬·Patch 006B-2 干净封存版】.md` | A 干净封存版 | Patch 006B-2 封存文档 | 已归档 |
+| 【炉心残冬·Patch 006B-3 干净封存版】.md | `docs/patches/006/【炉心残冬·Patch 006B-3 干净封存版】.md` | A 干净封存版 | Patch 006B-3 封存文档 | 已归档 |
+| 【炉心残冬·Patch 006B-4 干净封存版】.md | `docs/patches/006/【炉心残冬·Patch 006B-4 干净封存版】.md` | A 干净封存版 | Patch 006B-4 封存文档 | 已归档 |
+| 【炉心残冬·Patch 006B 总收口清单 干净封存版】.md | `docs/patches/006/【炉心残冬·Patch 006B 总收口清单 干净封存版】.md` | A 干净封存版 | Patch 006B 总收口清单 | 已归档 |
+| A 【炉心残冬·Patch 006C-1 干净封存版】.md | `docs/patches/006/A 【炉心残冬·Patch 006C-1 干净封存版】.md` | A 干净封存版 | Patch 006C-1 封存文档 | 已归档 |
+| A 【炉心残冬·Patch 006C-2 干净封存版】.md | `docs/patches/006/A 【炉心残冬·Patch 006C-2 干净封存版】.md` | A 干净封存版 | Patch 006C-2 封存文档 | 已归档 |
+| A 【炉心残冬·Patch 006C-3 干净封存版】.md | `docs/patches/006/A 【炉心残冬·Patch 006C-3 干净封存版】.md` | A 干净封存版 | Patch 006C-3 封存文档 | 已归档 |
+| 【炉心残冬·Patch 006C-4 干净封存版】.md | `docs/patches/006/【炉心残冬·Patch 006C-4 干净封存版】.md` | A 干净封存版 | Patch 006C-4 封存文档 | 已归档 |
+| 【炉心残冬·Patch 006C 总收口】.md | `docs/patches/006/【炉心残冬·Patch 006C 总收口】.md` | A 干净封存版批次 | Patch 006C 总收口文档 | 已归档 |
