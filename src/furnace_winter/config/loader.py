@@ -20,7 +20,7 @@ class ConfigLoadError(ValueError):
 class LoadedConfig:
     path: Path
     data: Mapping[str, Any]
-    status: ConfigStatus | None
+    status: ConfigStatus
 
 
 def load_config_file(path: Path) -> LoadedConfig:
@@ -35,14 +35,14 @@ def load_config_file(path: Path) -> LoadedConfig:
             (ValidationIssue(path, "$", "配置文件顶层必须是 JSON 对象"),)
         )
 
-    raw_status = data.get("config_status")
+    raw_status = data["config_status"]
     try:
-        status = ConfigStatus(raw_status) if raw_status is not None else None
+        status = ConfigStatus(raw_status)
     except ValueError as exc:
         raise ConfigLoadError(
             (ValidationIssue(path, "$.config_status", f"未知配置状态：{raw_status!r}"),)
         ) from exc
-    if status is not None and not status.is_runtime:
+    if not status.is_runtime:
         raise ConfigLoadError(
             (ValidationIssue(path, "$.config_status", "非运行状态不得加载"),)
         )

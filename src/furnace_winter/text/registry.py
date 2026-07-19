@@ -42,6 +42,14 @@ class MissingTextError(KeyError):
         super().__init__(text_id)
 
 
+def _validate_normalized_id(value: object, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must not be blank")
+    if value != value.strip():
+        raise ValueError(f"{name} must not have leading or trailing whitespace")
+    return value
+
+
 class TextRegistry:
     """Runtime-only registry for confirmed, non-internal player text."""
 
@@ -49,10 +57,14 @@ class TextRegistry:
         self._entries: dict[str, TextEntry] = {}
 
     def register(self, entry: TextEntry) -> None:
-        if not entry.text_id.strip():
-            raise TextRegistryError("text_id must not be blank")
-        if not entry.text:
-            raise TextRegistryError("runtime text must not be empty")
+        try:
+            _validate_normalized_id(entry.text_id, "text_id")
+        except ValueError as exc:
+            raise TextRegistryError(str(exc)) from exc
+        if not isinstance(entry.text, str) or not entry.text.strip():
+            raise TextRegistryError("runtime text must not be blank")
+        if not isinstance(entry.status, ConfigStatus):
+            raise TextRegistryError("text status must be a ConfigStatus")
         if not entry.status.is_runtime:
             raise TextRegistryError(f"non-runtime status is excluded: {entry.status}")
         if entry.visibility not in {
@@ -97,6 +109,7 @@ class PendingRegistry:
         self._entries: dict[str, PendingEntry] = {}
 
     def register(self, entry: PendingEntry) -> None:
+        _validate_normalized_id(entry.entry_id, "entry_id")
         if entry.status not in {ConfigStatus.PENDING, ConfigStatus.TODO_TEXT}:
             raise ValueError("PendingRegistry only accepts PENDING or TODO_TEXT")
         if entry.entry_id in self._entries:
@@ -126,6 +139,9 @@ class DeprecatedRegistry:
         self._entries: dict[str, DeprecatedEntry] = {}
 
     def register(self, entry: DeprecatedEntry) -> None:
+        _validate_normalized_id(entry.entry_id, "entry_id")
+        if entry.replacement_id is not None:
+            _validate_normalized_id(entry.replacement_id, "replacement_id")
         if entry.entry_id in self._entries:
             raise ValueError(f"duplicate deprecated entry: {entry.entry_id}")
         self._entries[entry.entry_id] = entry

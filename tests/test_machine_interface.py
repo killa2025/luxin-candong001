@@ -16,6 +16,8 @@ from furnace_winter.interface import (
     CommandValidator,
     ErrorCode,
     EventLog,
+    FeedbackItem,
+    FeedbackLevel,
     LogCategory,
     LogEntry,
     ReplayEntry,
@@ -51,6 +53,33 @@ class CommandInterfaceTests(unittest.TestCase):
 
         self.assertEqual(result.code, ErrorCode.COMMAND_NOT_REGISTERED)
 
+    def test_malformed_command_identity_returns_stable_error(self) -> None:
+        requests = (
+            CommandRequest(None, "test.action"),  # type: ignore[arg-type]
+            CommandRequest(1, "test.action"),  # type: ignore[arg-type]
+            CommandRequest("command-1", None),  # type: ignore[arg-type]
+            CommandRequest("command-1", 1),  # type: ignore[arg-type]
+            CommandRequest(" ", "test.action"),
+            CommandRequest(" command-1 ", "test.action"),
+        )
+        for request in requests:
+            with self.subTest(request=request):
+                result = self.validator.validate(request)
+
+                self.assertEqual(result.code, ErrorCode.INVALID_COMMAND_FORMAT)
+
+    def test_malformed_arguments_return_stable_error(self) -> None:
+        requests = (
+            CommandRequest("command-1", "test.action", []),  # type: ignore[arg-type]
+            CommandRequest("command-2", "test.action", {"amount": {1}}),
+            CommandRequest("command-3", "test.action", {"amount": float("nan")}),
+        )
+        for request in requests:
+            with self.subTest(request=request):
+                result = self.validator.validate(request)
+
+                self.assertEqual(result.code, ErrorCode.INVALID_ARGUMENTS)
+
     def test_stale_state_and_legality_hooks_are_separate(self) -> None:
         state = GameState.initial()
         state.command_sequence = 3
@@ -85,6 +114,25 @@ class ReplayInterfaceTests(unittest.TestCase):
 
         self.assertEqual(log.entries()[0].code, "START")
 
+    def test_event_log_snapshots_payload_on_write_and_read(self) -> None:
+        payload = {"nested": {"value": 1}}
+        log = EventLog()
+        log.append(LogEntry(1, LogCategory.SYSTEM, "SNAPSHOT", payload))
+
+        payload["nested"]["value"] = 2
+        returned = log.entries()
+        returned[0].payload["nested"]["value"] = 3
+
+        self.assertEqual(log.entries()[0].payload["nested"]["value"], 1)
+
+    def test_event_log_rejects_non_json_payload(self) -> None:
+        log = EventLog()
+
+        with self.assertRaises(TypeError):
+            log.append(
+                LogEntry(1, LogCategory.SYSTEM, "INVALID", {"bad": {1, 2}})
+            )
+
     def test_replay_log_records_command_result_and_random_boundaries(self) -> None:
         random = DeterministicRandom(11)
         before = random.snapshot()
@@ -101,6 +149,50 @@ class ReplayInterfaceTests(unittest.TestCase):
         self.assertEqual(log.entries()[0].random_after, after)
         self.assertEqual(log.document().initial_state["random"]["seed"], 11)
 
+    def test_replay_snapshots_request_result_feedback_and_logs(self) -> None:
+        arguments = {"amount": 1}
+        result_data = {"nested": {"value": 2}}
+        feedback_data = {"detail": {"value": 3}}
+        log_payload = {"event": {"value": 4}}
+        request = CommandRequest("command-1", "test.action", arguments)
+        result = CommandResult(
+            "command-1",
+            True,
+            ErrorCode.OK,
+            feedback=(
+                FeedbackItem(FeedbackLevel.INFO, data=feedback_data),
+            ),
+            data=result_data,
+        )
+        random = DeterministicRandom(5).snapshot()
+        replay = ReplayLog(GameState.initial(random_seed=5))
+        replay.append(
+            ReplayEntry(
+                1,
+                request,
+                result,
+                random,
+                random,
+                logs=(LogEntry(1, LogCategory.RESULT, "OK", log_payload),),
+            )
+        )
+
+        arguments["amount"] = 9
+        result_data["nested"]["value"] = 9
+        feedback_data["detail"]["value"] = 9
+        log_payload["event"]["value"] = 9
+        returned = replay.entries()
+        returned[0].request.arguments["amount"] = 8
+        returned[0].result.data["nested"]["value"] = 8
+        returned[0].result.feedback[0].data["detail"]["value"] = 8
+        returned[0].logs[0].payload["event"]["value"] = 8
+
+        stored = replay.entries()[0]
+        self.assertEqual(stored.request.arguments["amount"], 1)
+        self.assertEqual(stored.result.data["nested"]["value"], 2)
+        self.assertEqual(stored.result.feedback[0].data["detail"]["value"], 3)
+        self.assertEqual(stored.logs[0].payload["event"]["value"], 4)
+
 
 class MachineStartupTests(unittest.TestCase):
     def test_state_command_outputs_json_with_requested_seed(self) -> None:
@@ -112,6 +204,9 @@ class MachineStartupTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(document["protocol_version"], 1)
         self.assertEqual(document["state"]["random"]["seed"], 31415)
+        self.assertEqual(
+            document["state"]["trust_panic"], {"panic": None, "trust": None}
+        )
         self.assertEqual(document["available_commands"], [])
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
 from furnace_winter.models.randomness import RandomState
 
 
@@ -42,6 +43,23 @@ class ResourceState:
     raw_food: int = 0
     cooked_food: int = 0
     storage_capacity: int = 0
+
+
+@dataclass(slots=True)
+class TrustPanicState:
+    """Uninitialized until a later Patch loads confirmed starting values."""
+
+    trust: int | None = None
+    panic: int | None = None
+
+    def __post_init__(self) -> None:
+        for name, value in (("trust", self.trust), ("panic", self.panic)):
+            if value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise TypeError(f"{name} must be an integer or None")
+            if not 0 <= value <= 100:
+                raise ValueError(f"{name} must be between 0 and 100")
 
 
 @dataclass(slots=True)
@@ -119,6 +137,7 @@ class GameState:
     calendar: CalendarState = field(default_factory=CalendarState)
     population: PopulationState = field(default_factory=PopulationState)
     resources: ResourceState = field(default_factory=ResourceState)
+    trust_panic: TrustPanicState = field(default_factory=TrustPanicState)
     furnace: FurnaceState = field(default_factory=FurnaceState)
     buildings: dict[str, BuildingState] = field(default_factory=dict)
     laws: LawState = field(default_factory=LawState)

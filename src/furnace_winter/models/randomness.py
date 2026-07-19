@@ -90,6 +90,13 @@ class DeterministicRandom:
     def randint(self, start: int, stop: int) -> int:
         """Return a deterministic integer in the inclusive interval."""
 
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(stop, int)
+            or isinstance(stop, bool)
+        ):
+            raise TypeError("randint bounds must be integers and not booleans")
         if start > stop:
             raise ValueError("start must not be greater than stop")
         width = stop - start + 1

@@ -50,12 +50,30 @@ class ConfigLoaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "todo.json"
             path.write_text(
-                json.dumps({"text": "TODO_TEXT: not sealed"}),
+                json.dumps(
+                    {"config_status": "FINAL", "text": "TODO_TEXT: not sealed"}
+                ),
                 encoding="utf-8",
             )
 
             with self.assertRaises(ConfigLoadError):
                 load_config_tree(Path(temp_dir))
+
+    def test_validator_and_loader_reject_the_same_invalid_documents(self) -> None:
+        documents = (
+            {"value": 1},
+            {"config_status": "UNKNOWN"},
+            {"config_status": 1},
+            {"config_status": "FINAL", "TODO_TEXT": "x"},
+        )
+        for index, document in enumerate(documents):
+            with self.subTest(document=document), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                path = root / f"invalid-{index}.json"
+                path.write_text(json.dumps(document), encoding="utf-8")
+
+                with self.assertRaises(ConfigLoadError):
+                    load_config_tree(root)
 
 
 if __name__ == "__main__":

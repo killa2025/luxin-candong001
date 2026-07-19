@@ -9,7 +9,7 @@ from furnace_winter.models.save import (
     decode_game_state,
     encode_game_state,
 )
-from furnace_winter.models.serialization import dumps, to_primitive
+from furnace_winter.models.serialization import dumps, snapshot_json, to_primitive
 from furnace_winter.models.state import (
     CURRENT_SAVE_DATA_VERSION,
     BuildingState,
@@ -24,6 +24,7 @@ from furnace_winter.models.state import (
     PromiseState,
     ResourceState,
     TechState,
+    TrustPanicState,
 )
 
 __all__ = [
@@ -45,8 +46,10 @@ __all__ = [
     "SaveDataError",
     "SaveMigrationRegistry",
     "TechState",
+    "TrustPanicState",
     "decode_game_state",
     "dumps",
     "encode_game_state",
+    "snapshot_json",
     "to_primitive",
 ]

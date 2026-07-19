@@ -9,6 +9,7 @@ from furnace_winter.models import (
     GameState,
     SaveDataError,
     SaveMigrationRegistry,
+    TrustPanicState,
     decode_game_state,
     encode_game_state,
 )
@@ -23,6 +24,8 @@ class GameStateTests(unittest.TestCase):
         self.assertEqual(state.calendar.max_day, 55)
         self.assertEqual(state.population.population_total, 0)
         self.assertEqual(state.resources.coal, 0)
+        self.assertIsNone(state.trust_panic.trust)
+        self.assertIsNone(state.trust_panic.panic)
         self.assertFalse(state.furnace.is_active)
         self.assertEqual(state.buildings, {})
         self.assertEqual(state.laws.signed_law_ids, [])
@@ -45,6 +48,7 @@ class GameStateTests(unittest.TestCase):
         random = DeterministicRandom.from_state(state.random)
         random.next_u64()
         state.random = random.snapshot()
+        state.trust_panic = TrustPanicState(trust=60, panic=25)
         state.buildings["building-1"] = BuildingState(
             building_id="building-1",
             building_type="example",
@@ -57,6 +61,57 @@ class GameStateTests(unittest.TestCase):
         self.assertEqual(restored, state)
         restored_random = DeterministicRandom.from_state(restored.random)
         self.assertEqual(random.next_u64(), restored_random.next_u64())
+
+    def test_missing_required_state_sections_are_rejected(self) -> None:
+        for section in ("calendar", "population", "resources", "trust_panic"):
+            with self.subTest(section=section):
+                document = encode_game_state(GameState.initial())
+                del document[section]
+
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(document)
+
+    def test_missing_required_nested_field_is_rejected(self) -> None:
+        document = encode_game_state(GameState.initial())
+        del document["population"]["workers"]
+
+        with self.assertRaises(SaveDataError):
+            decode_game_state(document)
+
+    def test_invalid_current_day_and_command_sequence_are_rejected(self) -> None:
+        invalid_values = (
+            ("current_day", "not-a-day"),
+            ("command_sequence", "not-a-sequence"),
+            ("command_sequence", -1),
+        )
+        for field_name, value in invalid_values:
+            with self.subTest(field_name=field_name, value=value):
+                document = encode_game_state(GameState.initial())
+                if field_name == "current_day":
+                    document["calendar"][field_name] = value
+                else:
+                    document[field_name] = value
+
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(document)
+
+    def test_unknown_random_algorithm_is_rejected(self) -> None:
+        document = encode_game_state(GameState.initial())
+        document["random"]["algorithm"] = "unknown-v1"
+
+        with self.assertRaises(SaveDataError):
+            decode_game_state(document)
+
+    def test_trust_and_panic_range_is_validated(self) -> None:
+        for value in (-1, 101, True, "50"):
+            with self.subTest(value=value):
+                with self.assertRaises((TypeError, ValueError)):
+                    TrustPanicState(trust=value)  # type: ignore[arg-type]
+
+                document = encode_game_state(GameState.initial())
+                document["trust_panic"]["trust"] = value
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(document)
 
     def test_future_save_version_is_rejected(self) -> None:
         document = encode_game_state(GameState.initial())
@@ -97,6 +152,26 @@ class DeterministicRandomTests(unittest.TestCase):
 
         self.assertEqual(original.next_u64(), restored.next_u64())
         self.assertEqual(original.snapshot(), restored.snapshot())
+
+    def test_randint_rejects_invalid_bounds(self) -> None:
+        random = DeterministicRandom(1)
+        for start, stop in ((1.5, 2.5), (True, 2), (1, False)):
+            with self.subTest(start=start, stop=stop), self.assertRaises(TypeError):
+                random.randint(start, stop)  # type: ignore[arg-type]
+
+        with self.assertRaises(ValueError):
+            random.randint(2, 1)
+        with self.assertRaises(ValueError):
+            random.randint(0, 1 << 64)
+
+    def test_randint_accepts_full_unsigned_64_bit_interval(self) -> None:
+        random = DeterministicRandom(1)
+
+        value = random.randint(0, (1 << 64) - 1)
+
+        self.assertIsInstance(value, int)
+        self.assertGreaterEqual(value, 0)
+        self.assertLessEqual(value, (1 << 64) - 1)
 
 
 if __name__ == "__main__":

@@ -85,6 +85,34 @@ class TextRegistryTests(unittest.TestCase):
                 )
             )
 
+    def test_blank_text_and_non_normalized_text_ids_are_rejected(self) -> None:
+        registry = TextRegistry()
+        for entry in (
+            TextEntry(
+                "text.blank",
+                "   ",
+                ConfigStatus.FINAL,
+                TextVisibility.PLAYER_VISIBLE,
+                "tests",
+            ),
+            confirmed_entry(""),
+            confirmed_entry("   "),
+            confirmed_entry(" text.spaced"),
+            confirmed_entry("text.spaced "),
+        ):
+            with self.subTest(entry=entry), self.assertRaises(TextRegistryError):
+                registry.register(entry)
 
+    def test_pending_and_deprecated_ids_must_be_normalized(self) -> None:
+        for entry_id in ("", "   ", " pending.id", "deprecated.id "):
+            with self.subTest(entry_id=entry_id):
+                with self.assertRaises(ValueError):
+                    PendingRegistry().register(
+                        PendingEntry(entry_id, ConfigStatus.PENDING, source="tests")
+                    )
+                with self.assertRaises(ValueError):
+                    DeprecatedRegistry().register(
+                        DeprecatedEntry(entry_id, source="tests")
+                    )
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from furnace_winter.config.status import ConfigStatus
+
 
 DEPRECATED_KEYS = frozenset(
     {
@@ -82,6 +84,16 @@ def _validate_value(path: Path, data: Any) -> list[ValidationIssue]:
                             "作废字段不得进入运行配置",
                         )
                     )
+                    continue
+                marker = key.strip()
+                if NON_RUNTIME_MARKER_PATTERN.match(marker):
+                    issues.append(
+                        ValidationIssue(
+                            path,
+                            f"{location}.{key}",
+                            f"非运行标记字段 {marker!r} 不得进入运行配置",
+                        )
+                    )
         elif isinstance(value, str):
             marker = value.strip()
             if NON_RUNTIME_MARKER_PATTERN.match(marker):
@@ -92,6 +104,45 @@ def _validate_value(path: Path, data: Any) -> list[ValidationIssue]:
                         f"非运行状态 {marker!r} 不得进入运行配置",
                     )
                 )
+    return issues
+
+
+def _validate_document(path: Path, data: Any) -> list[ValidationIssue]:
+    if not isinstance(data, Mapping):
+        return [ValidationIssue(path, "$", "配置文件顶层必须是 JSON 对象")]
+
+    issues: list[ValidationIssue] = []
+    if "config_status" not in data:
+        issues.append(
+            ValidationIssue(path, "$.config_status", "运行配置必须声明 config_status")
+        )
+    else:
+        raw_status = data["config_status"]
+        if not isinstance(raw_status, str):
+            issues.append(
+                ValidationIssue(path, "$.config_status", "config_status 必须是字符串")
+            )
+        else:
+            try:
+                status = ConfigStatus(raw_status)
+            except ValueError:
+                issues.append(
+                    ValidationIssue(
+                        path,
+                        "$.config_status",
+                        f"未知配置状态：{raw_status!r}",
+                    )
+                )
+            else:
+                if not status.is_runtime:
+                    issues.append(
+                        ValidationIssue(
+                            path,
+                            "$.config_status",
+                            f"非运行配置状态不得加载：{status.value}",
+                        )
+                    )
+    issues.extend(_validate_value(path, data))
     return issues
 
 
@@ -121,7 +172,7 @@ def validate_config_file(path: Path) -> list[ValidationIssue]:
                 f"JSON 格式错误：{exc.msg}",
             )
         ]
-    return _validate_value(path, data)
+    return _validate_document(path, data)
 
 
 def validate_config_tree(root: Path) -> ValidationReport:

@@ -8,6 +8,10 @@ from pathlib import Path
 from furnace_winter.config import validate_config_file, validate_config_tree
 
 
+def runtime_document(**values: object) -> dict[str, object]:
+    return {"config_status": "FINAL", **values}
+
+
 class ConfigValidatorTests(unittest.TestCase):
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,7 +31,7 @@ class ConfigValidatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "sample.json"
             path.write_text(
-                json.dumps({"status": "FINAL", "value": 1}),
+                json.dumps(runtime_document(value=1)),
                 encoding="utf-8",
             )
             issues = validate_config_file(path)
@@ -37,7 +41,9 @@ class ConfigValidatorTests(unittest.TestCase):
     def test_utf8_bom_json_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "bom.json"
-            path.write_text('{"value": 1}', encoding="utf-8-sig")
+            path.write_text(
+                json.dumps(runtime_document(value=1)), encoding="utf-8-sig"
+            )
             issues = validate_config_file(path)
 
         self.assertEqual(issues, [])
@@ -45,7 +51,7 @@ class ConfigValidatorTests(unittest.TestCase):
     def test_invalid_utf8_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "invalid-utf8.json"
-            path.write_bytes(b'{"value": "\xff"}')
+            path.write_bytes(b'{"config_status":"FINAL","value":"\xff"}')
             issues = validate_config_file(path)
 
         self.assertEqual(len(issues), 1)
@@ -64,7 +70,10 @@ class ConfigValidatorTests(unittest.TestCase):
         for token in ("NaN", "Infinity", "-Infinity"):
             with self.subTest(token=token), tempfile.TemporaryDirectory() as temp_dir:
                 path = Path(temp_dir) / "non-finite.json"
-                path.write_text(f'{{"value": {token}}}', encoding="utf-8")
+                path.write_text(
+                    f'{{"config_status":"FINAL","value":{token}}}',
+                    encoding="utf-8",
+                )
                 issues = validate_config_file(path)
 
             self.assertEqual(len(issues), 1)
@@ -75,14 +84,14 @@ class ConfigValidatorTests(unittest.TestCase):
             path = Path(temp_dir) / "deprecated.json"
             path.write_text(
                 json.dumps(
-                    {
-                        "ending": {
+                    runtime_document(
+                        ending={
                             "terminal_fail": True,
                             "trust_fail": True,
                             "panic_fail": True,
                             "hope_state": 50,
                         }
-                    }
+                    )
                 ),
                 encoding="utf-8",
             )
@@ -91,7 +100,7 @@ class ConfigValidatorTests(unittest.TestCase):
         self.assertEqual(len(issues), 4)
         self.assertTrue(all("作废字段" in issue.message for issue in issues))
 
-    def test_non_runtime_status_values_are_rejected(self) -> None:
+    def test_non_runtime_markers_are_rejected_as_values(self) -> None:
         markers = (
             "PENDING",
             "PENDING_NUMERIC",
@@ -105,7 +114,11 @@ class ConfigValidatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "pending.json"
             path.write_text(
-                json.dumps({str(index): marker for index, marker in enumerate(markers)}),
+                json.dumps(
+                    runtime_document(
+                        values={str(index): marker for index, marker in enumerate(markers)}
+                    )
+                ),
                 encoding="utf-8",
             )
             issues = validate_config_file(path)
@@ -127,12 +140,32 @@ class ConfigValidatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "annotated.json"
             path.write_text(
-                json.dumps({str(index): marker for index, marker in enumerate(markers)}),
+                json.dumps(
+                    runtime_document(
+                        values={str(index): marker for index, marker in enumerate(markers)}
+                    )
+                ),
                 encoding="utf-8",
             )
             issues = validate_config_file(path)
 
         self.assertEqual(len(issues), len(markers))
+
+    def test_non_runtime_markers_are_rejected_as_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "marker-keys.json"
+            path.write_text(
+                json.dumps(
+                    runtime_document(
+                        values={"TODO_TEXT": "x", "PENDING_NUMERIC": 10}
+                    )
+                ),
+                encoding="utf-8",
+            )
+            issues = validate_config_file(path)
+
+        self.assertEqual(len(issues), 2)
+        self.assertTrue(all("标记字段" in issue.message for issue in issues))
 
     def test_marker_like_words_without_boundary_are_accepted(self) -> None:
         values = (
@@ -144,18 +177,41 @@ class ConfigValidatorTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "ordinary-text.json"
-            path.write_text(json.dumps(values), encoding="utf-8")
+            path.write_text(
+                json.dumps(runtime_document(values=list(values))), encoding="utf-8"
+            )
             issues = validate_config_file(path)
 
         self.assertEqual(issues, [])
+
+    def test_missing_unknown_and_non_string_status_are_rejected(self) -> None:
+        documents = ({"value": 1}, {"config_status": "UNKNOWN"}, {"config_status": 1})
+        for index, document in enumerate(documents):
+            with self.subTest(document=document), tempfile.TemporaryDirectory() as temp_dir:
+                path = Path(temp_dir) / f"invalid-{index}.json"
+                path.write_text(json.dumps(document), encoding="utf-8")
+                issues = validate_config_file(path)
+
+            self.assertTrue(issues)
+            self.assertTrue(any(issue.location == "$.config_status" for issue in issues))
+
+    def test_array_top_level_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "array.json"
+            path.write_text(json.dumps([runtime_document()]), encoding="utf-8")
+            issues = validate_config_file(path)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].location, "$")
 
     def test_config_tree_scans_nested_directories_and_counts_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             nested = root / "nested"
             nested.mkdir()
-            (root / "root.json").write_text("{}", encoding="utf-8")
-            (nested / "child.json").write_text("{}", encoding="utf-8")
+            source = json.dumps(runtime_document())
+            (root / "root.json").write_text(source, encoding="utf-8")
+            (nested / "child.json").write_text(source, encoding="utf-8")
             report = validate_config_tree(root)
 
         self.assertTrue(report.is_valid)

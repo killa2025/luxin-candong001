@@ -130,11 +130,18 @@ class CommandValidator:
         state: GameState | None = None,
         legality_check: LegalityCheck | None = None,
     ) -> CommandValidation:
-        if not request.command_id.strip() or not COMMAND_NAME_PATTERN.fullmatch(request.name):
+        if not isinstance(request, CommandRequest):
+            return CommandValidation(False, ErrorCode.INVALID_COMMAND_FORMAT)
+        if (
+            not isinstance(request.command_id, str)
+            or not request.command_id.strip()
+            or request.command_id != request.command_id.strip()
+            or not isinstance(request.name, str)
+            or not COMMAND_NAME_PATTERN.fullmatch(request.name)
+        ):
             return CommandValidation(
                 False,
                 ErrorCode.INVALID_COMMAND_FORMAT,
-                {"command_id": request.command_id, "name": request.name},
             )
         if request.expected_state_sequence is not None and (
             not isinstance(request.expected_state_sequence, int)
