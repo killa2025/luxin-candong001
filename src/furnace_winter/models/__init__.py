@@ -30,6 +30,7 @@ from furnace_winter.models.state import (
     PopulationState,
     PromiseState,
     ResourceState,
+    SurfaceResourcePointState,
     TechState,
     TrustPanicState,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "PromiseState",
     "RandomState",
     "ResourceState",
+    "SurfaceResourcePointState",
     "SaveDataError",
     "SaveMigrationRegistry",
     "TechState",

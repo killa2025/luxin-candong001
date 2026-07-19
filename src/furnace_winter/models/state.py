@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 3
+CURRENT_SAVE_DATA_VERSION = 4
 FINAL_DAY = 55
 
 
@@ -138,6 +138,19 @@ class BuildingState:
     effective_temperature: int = 0
     is_shutdown_by_temperature: bool = False
     bound_resource_id: str | None = None
+    production_remainder_numerator: int = 0
+
+
+@dataclass(slots=True)
+class SurfaceResourcePointState:
+    resource_point_id: str
+    resource_type: str
+    remaining_amount: int
+    staff_capacity: int
+    assigned_workers: int = 0
+    assigned_engineers: int = 0
+    production_remainder_numerator: int = 0
+    is_depleted: bool = False
 
 
 @dataclass(slots=True)
@@ -165,6 +178,7 @@ class BuildingManagementState:
     total_hunting_areas: int = 2
     forest_zones: int = 2
     woodfuel_confirmed_today: bool = False
+    heat_uses_today: int = 0
 
 
 @dataclass(slots=True)
@@ -228,6 +242,9 @@ class GameState:
     trust_panic: TrustPanicState = field(default_factory=TrustPanicState)
     furnace: FurnaceState = field(default_factory=FurnaceState)
     buildings: dict[str, BuildingState] = field(default_factory=dict)
+    surface_resource_points: dict[str, SurfaceResourcePointState] = field(
+        default_factory=dict
+    )
     building_management: BuildingManagementState = field(
         default_factory=BuildingManagementState
     )

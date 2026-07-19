@@ -1,15 +1,25 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
-from furnace_winter.config import load_building_rules, load_survival_rules
+from furnace_winter.config import (
+    BuildingConfigError,
+    load_building_rules,
+    load_survival_rules,
+)
 from furnace_winter.gameplay import (
     ASSIGN_COMMAND,
+    ASSIGN_RESOURCE_COMMAND,
     BUILD_COMMAND,
+    CONFIRM_END_DAY_COMMAND,
     END_DAY_COMMAND,
     HEAT_COMMAND,
     UNASSIGN_COMMAND,
+    UNASSIGN_RESOURCE_COMMAND,
     UPGRADE_COMMAND,
     WOODFUEL_COMMAND,
     BuildingSystem,
@@ -18,7 +28,13 @@ from furnace_winter.gameplay import (
     create_initial_survival_state,
 )
 from furnace_winter.interface import CommandRequest, ErrorCode
-from furnace_winter.models import decode_game_state, encode_game_state
+from furnace_winter.models import (
+    CURRENT_SAVE_DATA_VERSION,
+    SaveDataError,
+    decode_game_state,
+    encode_game_state,
+    validate_game_state,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +47,9 @@ class BuildingPatchTests(unittest.TestCase):
         cls.building_rules = load_building_rules(REPOSITORY_ROOT / "data" / "buildings.json")
 
     def make_state(self):
-        return create_initial_survival_state(self.survival_rules, random_seed=4004)
+        return create_initial_survival_state(
+            self.survival_rules, self.building_rules, random_seed=4004
+        )
 
     def make_system(self) -> BuildingSystem:
         return BuildingSystem(self.building_rules, self.survival_rules)
@@ -52,6 +70,32 @@ class BuildingPatchTests(unittest.TestCase):
                 expected_state_sequence=state.command_sequence,
             ),
         )
+
+    @staticmethod
+    def confirm(engine, state, preview, command_id: str = "confirm"):
+        return engine.execute(
+            state,
+            CommandRequest(
+                command_id,
+                CONFIRM_END_DAY_COMMAND,
+                preview.result.data["confirmation"],
+                expected_state_sequence=state.command_sequence,
+            ),
+        )
+
+    def settle_day(self, state, engine=None, command_id: str = "end"):
+        engine = engine or self.make_engine()
+        execution = engine.execute(
+            state,
+            CommandRequest(
+                command_id,
+                END_DAY_COMMAND,
+                expected_state_sequence=state.command_sequence,
+            ),
+        )
+        if execution.result.code is ErrorCode.END_DAY_CONFIRMATION_REQUIRED:
+            execution = self.confirm(engine, state, execution, f"confirm-{command_id}")
+        return execution
 
     def test_four_prebuilt_residences_are_independent_and_use_inner_slots(self) -> None:
         state = self.make_state()
@@ -190,7 +234,7 @@ class BuildingPatchTests(unittest.TestCase):
         invalid = self.execute(
             state,
             ASSIGN_COMMAND,
-            {"building_id": building_id, "population_type": "engineers", "count": 1},
+            {"building_id": building_id, "population_type": "children", "count": 1},
         )
 
         self.assertTrue(assigned.accepted)
@@ -220,8 +264,12 @@ class BuildingPatchTests(unittest.TestCase):
         self.assertEqual(state.building_management.zone_slots_used["inner_ring"], 4)
         self.assertEqual((state.resources.wood, state.resources.steel), (85, 30))
 
-    def test_heat_costs_coal_once_and_is_closed_after_end_day(self) -> None:
+    def test_heat_reserves_furnace_coal_costs_once_and_resets_after_end_day(self) -> None:
         state = self.make_state()
+        state.calendar.current_day = 55
+        state.resources.coal = 105
+        state.furnace.mode_id = "level_2"
+        state.furnace.is_active = True
         built = self.execute(
             state,
             BUILD_COMMAND,
@@ -232,13 +280,16 @@ class BuildingPatchTests(unittest.TestCase):
         repeated = self.execute(state, HEAT_COMMAND, {"building_id": building_id})
 
         self.assertTrue(heated.accepted)
-        self.assertEqual(state.resources.coal, 50)
+        self.assertEqual(state.resources.coal, 85)
+        self.assertEqual(heated.data["remaining_city_heat_uses"], 1)
         self.assertEqual(repeated.data["reason"], "building_already_heated_today")
 
-        execution = self.make_engine().execute(state, CommandRequest("end", END_DAY_COMMAND))
+        execution = self.settle_day(state)
         self.assertTrue(execution.result.accepted)
-        self.assertEqual(state.buildings[building_id].effective_temperature, 29)
+        self.assertEqual(state.daily_survival.effective_furnace_level, 2)
+        self.assertEqual(state.buildings[building_id].effective_temperature, -23)
         self.assertFalse(state.buildings[building_id].heated_today)
+        self.assertEqual(state.building_management.heat_uses_today, 0)
 
     def test_same_day_hunting_and_canteen_production_precedes_food_consumption(self) -> None:
         state = self.make_state()
@@ -295,16 +346,440 @@ class BuildingPatchTests(unittest.TestCase):
         legacy = encode_game_state(state)
         legacy["save_data_version"] = 2
         del legacy["building_management"]
+        del legacy["surface_resource_points"]
         del legacy["daily_survival"]["woodfuel_wood_burned"]
         del legacy["daily_survival"]["woodfuel_contribution"]
         for building in legacy["buildings"].values():
             del building["bound_resource_id"]
+            del building["production_remainder_numerator"]
 
         migrated = decode_game_state(legacy)
 
-        self.assertEqual(migrated.save_data_version, 3)
+        self.assertEqual(migrated.save_data_version, CURRENT_SAVE_DATA_VERSION)
         self.assertEqual(migrated.building_management.zone_slots_used["inner_ring"], 4)
         self.assertEqual(len(migrated.buildings), 4)
+
+    def test_surface_resource_points_collect_deplete_and_report_bound_shelter(self) -> None:
+        state = self.make_state()
+        point_id = "surface-steel-1"
+        point = state.surface_resource_points[point_id]
+        self.assertEqual(len(state.surface_resource_points), 12)
+        self.assertEqual(
+            sum(item.remaining_amount for item in state.surface_resource_points.values()),
+            1100,
+        )
+        point.remaining_amount = 1
+        shelter = self.execute(
+            state,
+            BUILD_COMMAND,
+            {
+                "building_type": "gathering_shelter",
+                "zone": "outer_ring",
+                "binding_id": point_id,
+            },
+        )
+        assigned = self.execute(
+            state,
+            ASSIGN_RESOURCE_COMMAND,
+            {
+                "resource_point_id": point_id,
+                "population_type": "engineers",
+                "count": 1,
+            },
+        )
+
+        execution = self.settle_day(state)
+        production_log = next(
+            item for item in execution.logs if item.code == "buildings.production.settled"
+        )
+
+        self.assertTrue(shelter.accepted)
+        self.assertTrue(assigned.accepted)
+        self.assertTrue(execution.result.accepted)
+        self.assertEqual(state.resources.steel, 36)
+        point = state.surface_resource_points[point_id]
+        self.assertTrue(point.is_depleted)
+        self.assertEqual((point.assigned_workers, point.assigned_engineers), (0, 0))
+        self.assertIn(point_id, production_log.payload["depleted_resource_point_ids"])
+        self.assertIn(point_id, production_log.payload["shelter_removal_suggested_ids"])
+        rejected = self.execute(
+            state,
+            ASSIGN_RESOURCE_COMMAND,
+            {
+                "resource_point_id": point_id,
+                "population_type": "workers",
+                "count": 1,
+            },
+        )
+        self.assertEqual(rejected.data["reason"], "resource_point_depleted")
+
+    def test_fractional_production_uses_saved_integer_remainder(self) -> None:
+        state = self.make_state()
+        state.furnace.mode_id = "off"
+        state.furnace.is_active = False
+        state.technologies.researched_tech_ids.append("tech_wood_processing_1")
+        built = self.execute(
+            state,
+            BUILD_COMMAND,
+            {
+                "building_type": "logging_camp",
+                "zone": "outer_ring",
+                "binding_id": "forest-zone-1",
+            },
+        )
+        building_id = built.data["building_id"]
+        self.execute(
+            state,
+            ASSIGN_COMMAND,
+            {"building_id": building_id, "population_type": "workers", "count": 1},
+        )
+
+        outputs: list[int] = []
+        remainders: list[int] = []
+        previous_wood = state.resources.wood
+        engine = self.make_engine()
+        for day in range(1, 4):
+            execution = self.settle_day(state, engine, f"fraction-{day}")
+            self.assertTrue(execution.result.accepted)
+            outputs.append(state.resources.wood - previous_wood)
+            previous_wood = state.resources.wood
+            remainders.append(
+                state.buildings[building_id].production_remainder_numerator
+            )
+
+        self.assertEqual(outputs, [3, 4, 4])
+        self.assertEqual(remainders, [10, 5, 0])
+        restored = decode_game_state(encode_game_state(state))
+        self.assertEqual(
+            restored.buildings[building_id].production_remainder_numerator, 0
+        )
+
+    def test_engineers_can_fill_ordinary_jobs_but_workers_cannot_fill_research(self) -> None:
+        state = self.make_state()
+        canteen = self.execute(
+            state, BUILD_COMMAND, {"building_type": "canteen", "zone": "inner_ring"}
+        )
+        research = self.execute(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "research_institute", "zone": "middle_ring"},
+        )
+        ordinary = self.execute(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": canteen.data["building_id"],
+                "population_type": "engineers",
+                "count": 1,
+            },
+        )
+        professional = self.execute(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": research.data["building_id"],
+                "population_type": "workers",
+                "count": 1,
+            },
+        )
+
+        self.assertTrue(ordinary.accepted)
+        self.assertEqual(professional.data["reason"], "population_type_not_allowed")
+
+    def test_heat_rejects_sufficient_temperature_and_exact_threshold(self) -> None:
+        for day in (1, 36):
+            with self.subTest(day=day):
+                state = self.make_state()
+                state.calendar.current_day = day
+                built = self.execute(
+                    state,
+                    BUILD_COMMAND,
+                    {"building_type": "canteen", "zone": "inner_ring"},
+                )
+                coal_before = state.resources.coal
+                result = self.execute(
+                    state, HEAT_COMMAND, {"building_id": built.data["building_id"]}
+                )
+                self.assertEqual(result.data["reason"], "temperature_already_sufficient")
+                self.assertEqual(state.resources.coal, coal_before)
+
+    def test_heat_requires_spare_coal_after_full_furnace_reserve(self) -> None:
+        state = self.make_state()
+        state.calendar.current_day = 55
+        state.furnace.mode_id = "level_2"
+        state.furnace.is_active = True
+        state.resources.coal = 100
+        built = self.execute(
+            state, BUILD_COMMAND, {"building_type": "canteen", "zone": "inner_ring"}
+        )
+        before = deepcopy(state)
+        result = self.execute(
+            state, HEAT_COMMAND, {"building_id": built.data["building_id"]}
+        )
+
+        self.assertEqual(result.data["reason"], "insufficient_coal_after_furnace_reserve")
+        self.assertEqual(result.data["furnace_coal_reserved"], 85)
+        self.assertEqual(state, before)
+
+    def test_heat_city_limit_is_two_and_school_is_heat_eligible(self) -> None:
+        state = self.make_state()
+        state.calendar.current_day = 49
+        state.resources.coal = 500
+        state.resources.wood = 500
+        state.resources.steel = 500
+        state.laws.signed_law_ids.extend(
+            ["basic_medical_law", "child_school_law"]
+        )
+        ids = []
+        for building_type, zone in (
+            ("canteen", "inner_ring"),
+            ("medical_station", "inner_ring"),
+            ("school", "inner_ring"),
+        ):
+            built = self.execute(
+                state,
+                BUILD_COMMAND,
+                {"building_type": building_type, "zone": zone},
+            )
+            ids.append(built.data["building_id"])
+
+        first = self.execute(state, HEAT_COMMAND, {"building_id": ids[0]}, "heat-1")
+        second = self.execute(state, HEAT_COMMAND, {"building_id": ids[1]}, "heat-2")
+        third = self.execute(state, HEAT_COMMAND, {"building_id": ids[2]}, "heat-3")
+
+        self.assertTrue(first.accepted)
+        self.assertTrue(second.accepted)
+        self.assertEqual(second.data["remaining_city_heat_uses"], 0)
+        self.assertEqual(third.data["reason"], "daily_heat_limit_reached")
+        self.assertTrue(self.building_rules.buildings["school"].can_heat)
+
+    def test_residences_and_research_institute_cannot_heat(self) -> None:
+        state = self.make_state()
+        state.calendar.current_day = 49
+        research = self.execute(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "research_institute", "zone": "middle_ring"},
+        )
+        for building_id in ("residence-start-001", research.data["building_id"]):
+            with self.subTest(building_id=building_id):
+                result = self.execute(state, HEAT_COMMAND, {"building_id": building_id})
+                self.assertEqual(result.data["reason"], "building_cannot_heat")
+
+    def test_config_aware_validation_rejects_tampering_and_rolls_back(self) -> None:
+        state = self.make_state()
+        state.buildings["residence-start-001"].assigned_workers = 51
+        with self.assertRaises(SaveDataError):
+            validate_game_state(state, self.building_rules)
+        before = deepcopy(state)
+        result = self.execute(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        self.assertEqual(result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(state, before)
+
+        heat_tampered = self.make_state()
+        heat_tampered.calendar.current_day = 49
+        heat_tampered.buildings["residence-start-001"].can_heat = True
+        coal_before = heat_tampered.resources.coal
+        result = self.execute(
+            heat_tampered,
+            HEAT_COMMAND,
+            {"building_id": "residence-start-001"},
+        )
+        self.assertEqual(result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(heat_tampered.resources.coal, coal_before)
+
+    def test_duplicate_bindings_and_tampered_map_capacity_are_rejected(self) -> None:
+        state = self.make_state()
+        first = self.execute(
+            state,
+            BUILD_COMMAND,
+            {
+                "building_type": "gathering_shelter",
+                "zone": "outer_ring",
+                "binding_id": "surface-coal-1",
+            },
+        )
+        second = self.execute(
+            state,
+            BUILD_COMMAND,
+            {
+                "building_type": "gathering_shelter",
+                "zone": "outer_ring",
+                "binding_id": "surface-coal-2",
+            },
+        )
+        state.buildings[second.data["building_id"]].bound_resource_id = "surface-coal-1"
+        with self.assertRaises(SaveDataError):
+            validate_game_state(state, self.building_rules)
+
+        state = self.make_state()
+        state.building_management.forest_zones = 99
+        with self.assertRaises(SaveDataError):
+            validate_game_state(state, self.building_rules)
+        self.assertTrue(first.accepted)
+
+    def test_end_day_rejects_config_tampering_without_mutating_state(self) -> None:
+        state = self.make_state()
+        state.buildings["residence-start-001"].slot_size = 0
+        before = deepcopy(state)
+        execution = self.settle_day(state)
+        self.assertEqual(execution.result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(state, before)
+
+    def test_v2_migration_preserves_non_contiguous_and_custom_residence_ids(self) -> None:
+        for existing_id in ("residence-start-004", "custom-start-home"):
+            with self.subTest(existing_id=existing_id):
+                state = self.make_state()
+                legacy = encode_game_state(state)
+                legacy["save_data_version"] = 2
+                del legacy["building_management"]
+                del legacy["surface_resource_points"]
+                del legacy["daily_survival"]["woodfuel_wood_burned"]
+                del legacy["daily_survival"]["woodfuel_contribution"]
+                source = legacy["buildings"]["residence-start-004"]
+                source["building_id"] = existing_id
+                del source["bound_resource_id"]
+                del source["production_remainder_numerator"]
+                legacy["buildings"] = {existing_id: source}
+
+                migrated = decode_game_state(legacy)
+
+                self.assertIn(existing_id, migrated.buildings)
+                self.assertEqual(len(migrated.buildings), 4)
+                self.assertEqual(
+                    sum(
+                        building.building_type == "basic_residence"
+                        for building in migrated.buildings.values()
+                    ),
+                    4,
+                )
+
+    def test_building_config_cross_field_validation(self) -> None:
+        source = json.loads((REPOSITORY_ROOT / "data" / "buildings.json").read_text(encoding="utf-8"))
+
+        def assert_invalid(mutator) -> None:
+            document = deepcopy(source)
+            mutator(document)
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "buildings.json"
+                path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+                with self.assertRaises(BuildingConfigError):
+                    load_building_rules(path)
+
+        mutations = (
+            lambda item: item["buildings"]["logging_camp"].__setitem__("output_resource", "credits"),
+            lambda item: item["buildings"]["canteen"].__setitem__("allowed_staff_types", ["aliens"]),
+            lambda item: item["buildings"]["canteen"].update({"staff_capacity": 0, "allowed_staff_types": []}),
+            lambda item: item["buildings"]["improved_residence"].__setitem__("slot_size", 2),
+            lambda item: item["heat"].__setitem__("enhanced_temperature_bonus", 1),
+            lambda item: item["woodfuel"].__setitem__("minimum_wood_unit", 3),
+        )
+        for index, mutator in enumerate(mutations):
+            with self.subTest(index=index):
+                assert_invalid(mutator)
+
+    def test_boolean_command_sequence_never_leaks_as_machine_sequence(self) -> None:
+        state = self.make_state()
+        state.command_sequence = True
+        result = self.make_system().execute(
+            state,
+            CommandRequest("bad", BUILD_COMMAND, {}),
+        )
+        self.assertEqual(result.state_sequence, 0)
+        self.assertIsNot(result.state_sequence, True)
+
+    def test_production_technology_hooks_use_configured_integer_outputs(self) -> None:
+        cases = (
+            ("logging_camp", "outer_ring", "forest-zone-1", "tech_wood_processing_1", "tech_wood_processing_2", "wood", 70, 15),
+            ("small_coal_miner", "outer_ring", None, "tech_coal_seam_support", "tech_small_coal_mining_improvement", "coal", 90, 10),
+            ("small_steel_miner", "outer_ring", None, "tech_steel_screening", "tech_small_steel_mining_improvement", "steel", 30, 10),
+        )
+        for building_type, zone, binding_id, prerequisite, enhancement, resource, expected, staff in cases:
+            with self.subTest(building_type=building_type):
+                state = self.make_state()
+                state.resources.wood = 500
+                state.resources.steel = 500
+                state.technologies.researched_tech_ids.extend([prerequisite, enhancement])
+                arguments = {"building_type": building_type, "zone": zone}
+                if binding_id is not None:
+                    arguments["binding_id"] = binding_id
+                built = self.execute(state, BUILD_COMMAND, arguments)
+                self.execute(
+                    state,
+                    ASSIGN_COMMAND,
+                    {"building_id": built.data["building_id"], "population_type": "workers", "count": staff},
+                )
+                execution = self.settle_day(state)
+                production_log = next(
+                    item for item in execution.logs if item.code == "buildings.production.settled"
+                )
+                self.assertEqual(production_log.payload["production"][resource], expected)
+
+        state = self.make_state()
+        state.resources.raw_food = 500
+        state.technologies.researched_tech_ids.append("tech_canteen_process_improvement")
+        canteen = self.execute(
+            state, BUILD_COMMAND, {"building_type": "canteen", "zone": "inner_ring"}
+        )
+        self.execute(
+            state,
+            ASSIGN_COMMAND,
+            {"building_id": canteen.data["building_id"], "population_type": "workers", "count": 5},
+        )
+        execution = self.settle_day(state)
+        production_log = next(
+            item for item in execution.logs if item.code == "buildings.production.settled"
+        )
+        self.assertEqual(production_log.payload["raw_food_processed"], 80)
+
+    def test_building_economy_runs_all_55_days_deterministically(self) -> None:
+        def run(seed: int):
+            state = create_initial_survival_state(
+                self.survival_rules, self.building_rules, random_seed=seed
+            )
+            lodge = self.execute(
+                state,
+                BUILD_COMMAND,
+                {"building_type": "hunting_lodge", "zone": "outer_ring"},
+            )
+            canteen = self.execute(
+                state,
+                BUILD_COMMAND,
+                {"building_type": "canteen", "zone": "inner_ring"},
+            )
+            self.execute(
+                state,
+                ASSIGN_COMMAND,
+                {"building_id": lodge.data["building_id"], "population_type": "workers", "count": 15},
+            )
+            self.execute(
+                state,
+                ASSIGN_COMMAND,
+                {"building_id": canteen.data["building_id"], "population_type": "workers", "count": 5},
+            )
+            self.execute(
+                state,
+                ASSIGN_RESOURCE_COMMAND,
+                {"resource_point_id": "surface-coal-1", "population_type": "workers", "count": 15},
+            )
+            engine = self.make_engine()
+            all_logs = []
+            for day in range(1, 56):
+                execution = self.settle_day(state, engine, f"d{day}")
+                self.assertTrue(execution.result.accepted)
+                all_logs.extend(execution.logs)
+            return state, all_logs
+
+        first_state, first_logs = run(404)
+        second_state, second_logs = run(404)
+        self.assertEqual(first_state, second_state)
+        self.assertEqual(first_logs, second_logs)
+        self.assertEqual(first_state.calendar.current_day, 55)
+        self.assertTrue(first_state.calendar.is_day_locked)
 
 
 if __name__ == "__main__":

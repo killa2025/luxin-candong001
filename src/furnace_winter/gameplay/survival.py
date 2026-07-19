@@ -31,6 +31,7 @@ from furnace_winter.models import (
     PopulationState,
     ResourceState,
     SaveDataError,
+    SurfaceResourcePointState,
     TrustPanicState,
     validate_game_state,
 )
@@ -70,6 +71,7 @@ def is_over_capacity(resources: ResourceState) -> bool:
 
 def create_initial_survival_state(
     rules: SurvivalRules,
+    building_rules: BuildingRules | None = None,
     *,
     random_seed: int = 0,
 ) -> GameState:
@@ -102,6 +104,26 @@ def create_initial_survival_state(
         basic_residences=rules.basic_residences,
         capacity=housing_capacity,
     )
+    if building_rules is not None:
+        state.building_management.zone_slot_capacity = dict(
+            building_rules.zone_slot_capacity
+        )
+        state.building_management.total_hunting_areas = len(
+            building_rules.resource_anchors["hunting_area"]
+        )
+        state.building_management.available_hunting_areas = 1
+        state.building_management.forest_zones = len(
+            building_rules.resource_anchors["forest_zone"]
+        )
+        state.surface_resource_points = {
+            resource_point_id: SurfaceResourcePointState(
+                resource_point_id=resource_point_id,
+                resource_type=point_rule.resource_type,
+                remaining_amount=point_rule.total_amount,
+                staff_capacity=point_rule.staff_capacity,
+            )
+            for resource_point_id, point_rule in building_rules.surface_resource_points.items()
+        }
     for index in range(1, rules.basic_residences + 1):
         building_id = f"residence-start-{index:03d}"
         state.buildings[building_id] = BuildingState(
@@ -122,7 +144,7 @@ def create_initial_survival_state(
     )
     state.daily_survival.storage_used = storage_used(state.resources)
     state.daily_survival.is_over_capacity = is_over_capacity(state.resources)
-    validate_game_state(state)
+    validate_game_state(state, building_rules)
     return state
 
 

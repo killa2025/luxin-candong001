@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     state_parser = subparsers.add_parser(
         "state",
-        help="输出 Patch 003 封存开局的机器可读状态",
+        help="输出 Patch 004 建筑与采集闭环的机器可读开局状态",
     )
     state_parser.add_argument(
         "--seed",
@@ -77,7 +77,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "state":
         rules = load_survival_rules(args.config)
         building_rules = load_building_rules(args.buildings_config)
-        state = create_initial_survival_state(rules, random_seed=args.seed)
+        state = create_initial_survival_state(
+            rules, building_rules, random_seed=args.seed
+        )
         survival = SurvivalSystem(rules, building_rules)
         buildings = BuildingSystem(building_rules, rules)
         command_specs = (

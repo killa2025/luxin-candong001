@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "config_status": "TEST_NUMERIC",
   "zone_slot_capacity": {
     "inner_ring": 18,
@@ -13,7 +13,22 @@
       "surface-wood-1", "surface-wood-2", "surface-wood-3", "surface-wood-4", "surface-wood-5",
       "surface-steel-1", "surface-steel-2", "surface-steel-3"
     ],
-    "forest_zone": ["forest-zone-1", "forest-zone-2"]
+    "forest_zone": ["forest-zone-1", "forest-zone-2"],
+    "hunting_area": ["hunting-area-1", "hunting-area-2"]
+  },
+  "surface_resource_points": {
+    "surface-coal-1": {"resource_type": "coal", "total_amount": 120, "staff_capacity": 15, "output_per_day": 45},
+    "surface-coal-2": {"resource_type": "coal", "total_amount": 120, "staff_capacity": 15, "output_per_day": 45},
+    "surface-coal-3": {"resource_type": "coal", "total_amount": 120, "staff_capacity": 15, "output_per_day": 45},
+    "surface-coal-4": {"resource_type": "coal", "total_amount": 120, "staff_capacity": 15, "output_per_day": 45},
+    "surface-wood-1": {"resource_type": "wood", "total_amount": 100, "staff_capacity": 15, "output_per_day": 35},
+    "surface-wood-2": {"resource_type": "wood", "total_amount": 100, "staff_capacity": 15, "output_per_day": 35},
+    "surface-wood-3": {"resource_type": "wood", "total_amount": 100, "staff_capacity": 15, "output_per_day": 35},
+    "surface-wood-4": {"resource_type": "wood", "total_amount": 100, "staff_capacity": 15, "output_per_day": 35},
+    "surface-wood-5": {"resource_type": "wood", "total_amount": 100, "staff_capacity": 15, "output_per_day": 35},
+    "surface-steel-1": {"resource_type": "steel", "total_amount": 40, "staff_capacity": 10, "output_per_day": 12},
+    "surface-steel-2": {"resource_type": "steel", "total_amount": 40, "staff_capacity": 10, "output_per_day": 12},
+    "surface-steel-3": {"resource_type": "steel", "total_amount": 40, "staff_capacity": 10, "output_per_day": 12}
   },
   "buildings": {
     "basic_residence": {
@@ -55,7 +70,7 @@
       "allowed_zones": ["inner_ring", "middle_ring"],
       "max_buildings": 1, "max_count_source": "fixed",
       "required_law_ids": [], "required_tech_ids": [],
-      "staff_capacity": 5, "allowed_staff_types": ["workers"],
+      "staff_capacity": 5, "allowed_staff_types": ["workers", "engineers"],
       "housing_capacity": 0, "storage_capacity_add": 0,
       "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 60,
       "min_operating_temperature": -35, "can_heat": true, "binding_kind": null
@@ -66,7 +81,7 @@
       "allowed_zones": ["outer_ring"],
       "max_buildings": null, "max_count_source": "hunting_areas",
       "required_law_ids": [], "required_tech_ids": [],
-      "staff_capacity": 15, "allowed_staff_types": ["workers"],
+      "staff_capacity": 15, "allowed_staff_types": ["workers", "engineers"],
       "housing_capacity": 0, "storage_capacity_add": 0,
       "output_resource": "raw_food", "output_per_day": 40, "raw_food_processing_cap": 0,
       "min_operating_temperature": null, "can_heat": false, "binding_kind": null
@@ -222,7 +237,7 @@
       "allowed_zones": ["outer_ring"],
       "max_buildings": null, "max_count_source": "forest_zones",
       "required_law_ids": [], "required_tech_ids": ["tech_wood_processing_1"],
-      "staff_capacity": 15, "allowed_staff_types": ["workers"],
+      "staff_capacity": 15, "allowed_staff_types": ["workers", "engineers"],
       "housing_capacity": 0, "storage_capacity_add": 0,
       "output_resource": "wood", "output_per_day": 55, "raw_food_processing_cap": 0,
       "min_operating_temperature": null, "can_heat": false, "binding_kind": "forest_zone"
@@ -233,7 +248,7 @@
       "allowed_zones": ["outer_ring"],
       "max_buildings": null, "max_count_source": "fixed",
       "required_law_ids": [], "required_tech_ids": ["tech_coal_seam_support"],
-      "staff_capacity": 10, "allowed_staff_types": ["workers"],
+      "staff_capacity": 10, "allowed_staff_types": ["workers", "engineers"],
       "housing_capacity": 0, "storage_capacity_add": 0,
       "output_resource": "coal", "output_per_day": 60, "raw_food_processing_cap": 0,
       "min_operating_temperature": null, "can_heat": false, "binding_kind": null
@@ -244,7 +259,7 @@
       "allowed_zones": ["outer_ring"],
       "max_buildings": null, "max_count_source": "fixed",
       "required_law_ids": [], "required_tech_ids": ["tech_steel_screening"],
-      "staff_capacity": 10, "allowed_staff_types": ["workers"],
+      "staff_capacity": 10, "allowed_staff_types": ["workers", "engineers"],
       "housing_capacity": 0, "storage_capacity_add": 0,
       "output_resource": "steel", "output_per_day": 20, "raw_food_processing_cap": 0,
       "min_operating_temperature": null, "can_heat": false, "binding_kind": null
@@ -271,7 +286,8 @@
     "coal_cost": 20,
     "temperature_bonus": 18,
     "enhanced_temperature_bonus": 24,
-    "enhancement_tech_id": "tech_emergency_heating_device"
+    "enhancement_tech_id": "tech_emergency_heating_device",
+    "daily_city_limit": 2
   },
   "woodfuel": {
     "wood_per_fuel": 4,

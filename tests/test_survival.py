@@ -330,7 +330,7 @@ class SurvivalPatchTests(unittest.TestCase):
         self.assertFalse(first.final_result.is_finalized)
         self.assertEqual(first.daily_survival.settled_day, 55)
 
-    def test_save_v3_round_trip_and_v1_migration(self) -> None:
+    def test_save_v4_round_trip_and_v1_migration(self) -> None:
         state = self.make_state()
         restored = decode_game_state(encode_game_state(state))
         self.assertEqual(restored, state)
@@ -338,15 +338,17 @@ class SurvivalPatchTests(unittest.TestCase):
         legacy = encode_game_state(state)
         legacy["save_data_version"] = 1
         del legacy["building_management"]
+        del legacy["surface_resource_points"]
         del legacy["housing"]
         del legacy["hunger"]
         del legacy["daily_survival"]
         for building in legacy["buildings"].values():
             del building["bound_resource_id"]
+            del building["production_remainder_numerator"]
         legacy["furnace"]["mode_id"] = None
         migrated = decode_game_state(legacy)
 
-        self.assertEqual(migrated.save_data_version, 3)
+        self.assertEqual(migrated.save_data_version, 4)
         self.assertEqual(migrated.housing.capacity, 40)
         self.assertEqual(migrated.furnace.mode_id, "level_1")
 

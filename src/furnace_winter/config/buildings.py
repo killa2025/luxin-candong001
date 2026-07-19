@@ -49,11 +49,21 @@ class UpgradeRule:
 
 
 @dataclass(frozen=True, slots=True)
+class SurfaceResourcePointRule:
+    resource_point_id: str
+    resource_type: str
+    total_amount: int
+    staff_capacity: int
+    output_per_day: int
+
+
+@dataclass(frozen=True, slots=True)
 class HeatRule:
     coal_cost: int
     temperature_bonus: int
     enhanced_temperature_bonus: int
     enhancement_tech_id: str
+    daily_city_limit: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +78,7 @@ class WoodfuelRule:
 class BuildingRules:
     zone_slot_capacity: Mapping[str, int]
     resource_anchors: Mapping[str, tuple[str, ...]]
+    surface_resource_points: Mapping[str, SurfaceResourcePointRule]
     buildings: Mapping[str, BuildingRule]
     upgrades: Mapping[str, UpgradeRule]
     heat: HeatRule
@@ -76,6 +87,11 @@ class BuildingRules:
     def __post_init__(self) -> None:
         object.__setattr__(self, "zone_slot_capacity", MappingProxyType(dict(self.zone_slot_capacity)))
         object.__setattr__(self, "resource_anchors", MappingProxyType(dict(self.resource_anchors)))
+        object.__setattr__(
+            self,
+            "surface_resource_points",
+            MappingProxyType(dict(self.surface_resource_points)),
+        )
         object.__setattr__(self, "buildings", MappingProxyType(dict(self.buildings)))
         object.__setattr__(self, "upgrades", MappingProxyType(dict(self.upgrades)))
 
@@ -131,6 +147,21 @@ _BUILDING_KEYS = {
     "binding_kind",
 }
 
+_RESOURCE_TYPES = {"coal", "wood", "steel", "raw_food", "cooked_food"}
+_STAFF_TYPES = {
+    "workers",
+    "engineers",
+    "children",
+    "medical_apprentices",
+    "engineering_apprentices",
+}
+_SURFACE_RESOURCE_POINT_KEYS = {
+    "resource_type",
+    "total_amount",
+    "staff_capacity",
+    "output_per_day",
+}
+
 
 def load_building_rules(path: Path) -> BuildingRules:
     loaded = load_config_file(path)
@@ -139,11 +170,12 @@ def load_building_rules(path: Path) -> BuildingRules:
         data,
         {
             "schema_version", "config_status", "zone_slot_capacity",
-            "resource_anchors", "buildings", "upgrades", "heat", "woodfuel",
+            "resource_anchors", "surface_resource_points", "buildings",
+            "upgrades", "heat", "woodfuel",
         },
         "$",
     )
-    if _integer(data["schema_version"], "$.schema_version", minimum=1) != 1:
+    if _integer(data["schema_version"], "$.schema_version", minimum=1) != 2:
         raise BuildingConfigError("unsupported building schema_version")
 
     raw_zones = _object(data["zone_slot_capacity"], "$.zone_slot_capacity")
@@ -156,6 +188,51 @@ def load_building_rules(path: Path) -> BuildingRules:
 
     raw_anchors = _object(data["resource_anchors"], "$.resource_anchors")
     anchors = {key: _strings(value, f"$.resource_anchors.{key}") for key, value in raw_anchors.items()}
+    if set(anchors) != {"surface_resource_point", "forest_zone", "hunting_area"}:
+        raise BuildingConfigError("resource_anchors must define surface, forest, and hunting areas")
+    all_anchor_ids = [anchor_id for values in anchors.values() for anchor_id in values]
+    if len(all_anchor_ids) != len(set(all_anchor_ids)):
+        raise BuildingConfigError("resource anchor ids must be globally unique")
+
+    raw_points = _object(data["surface_resource_points"], "$.surface_resource_points")
+    surface_resource_points: dict[str, SurfaceResourcePointRule] = {}
+    for resource_point_id, raw_value in raw_points.items():
+        checked_id = _string(resource_point_id, "$.surface_resource_points key")
+        assert isinstance(checked_id, str)
+        item = _object(raw_value, f"$.surface_resource_points.{checked_id}")
+        _exact(item, _SURFACE_RESOURCE_POINT_KEYS, f"$.surface_resource_points.{checked_id}")
+        resource_type = _string(
+            item["resource_type"],
+            f"$.surface_resource_points.{checked_id}.resource_type",
+        )
+        assert isinstance(resource_type, str)
+        if resource_type not in {"coal", "wood", "steel"}:
+            raise BuildingConfigError(
+                f"$.surface_resource_points.{checked_id}.resource_type is unsupported"
+            )
+        surface_resource_points[checked_id] = SurfaceResourcePointRule(
+            resource_point_id=checked_id,
+            resource_type=resource_type,
+            total_amount=_integer(
+                item["total_amount"],
+                f"$.surface_resource_points.{checked_id}.total_amount",
+                minimum=1,
+            ),
+            staff_capacity=_integer(
+                item["staff_capacity"],
+                f"$.surface_resource_points.{checked_id}.staff_capacity",
+                minimum=1,
+            ),
+            output_per_day=_integer(
+                item["output_per_day"],
+                f"$.surface_resource_points.{checked_id}.output_per_day",
+                minimum=1,
+            ),
+        )
+    if set(surface_resource_points) != set(anchors["surface_resource_point"]):
+        raise BuildingConfigError(
+            "surface_resource_points must exactly match surface_resource_point anchors"
+        )
 
     raw_buildings = _object(data["buildings"], "$.buildings")
     buildings: dict[str, BuildingRule] = {}
@@ -171,6 +248,10 @@ def load_building_rules(path: Path) -> BuildingRules:
         output_resource = _string(
             item["output_resource"], f"$.buildings.{building_type}.output_resource", optional=True
         )
+        if output_resource is not None and output_resource not in _RESOURCE_TYPES:
+            raise BuildingConfigError(
+                f"$.buildings.{building_type}.output_resource is unsupported"
+            )
         minimum_temperature = item["min_operating_temperature"]
         if minimum_temperature is not None and (
             not isinstance(minimum_temperature, int) or isinstance(minimum_temperature, bool)
@@ -194,6 +275,40 @@ def load_building_rules(path: Path) -> BuildingRules:
         binding_kind = _string(item["binding_kind"], f"$.buildings.{building_type}.binding_kind", optional=True)
         if binding_kind is not None and binding_kind not in anchors:
             raise BuildingConfigError(f"unknown binding_kind: {binding_kind}")
+        staff_capacity = _integer(
+            item["staff_capacity"], f"$.buildings.{building_type}.staff_capacity"
+        )
+        allowed_staff_types = _strings(
+            item["allowed_staff_types"],
+            f"$.buildings.{building_type}.allowed_staff_types",
+        )
+        if not set(allowed_staff_types) <= _STAFF_TYPES:
+            raise BuildingConfigError(
+                f"$.buildings.{building_type}.allowed_staff_types contains an unknown type"
+            )
+        if (staff_capacity == 0) != (not allowed_staff_types):
+            raise BuildingConfigError(
+                f"$.buildings.{building_type} staff capacity and allowed types disagree"
+            )
+        output_per_day = _integer(
+            item["output_per_day"], f"$.buildings.{building_type}.output_per_day"
+        )
+        raw_food_processing_cap = _integer(
+            item["raw_food_processing_cap"],
+            f"$.buildings.{building_type}.raw_food_processing_cap",
+        )
+        if output_per_day > 0 and (output_resource is None or staff_capacity == 0):
+            raise BuildingConfigError(
+                f"$.buildings.{building_type} output requires a resource and staffed capacity"
+            )
+        if raw_food_processing_cap > 0 and staff_capacity == 0:
+            raise BuildingConfigError(
+                f"$.buildings.{building_type} processing requires staffed capacity"
+            )
+        if can_heat and minimum_temperature is None:
+            raise BuildingConfigError(
+                f"$.buildings.{building_type} heat requires an operating temperature threshold"
+            )
         buildings[checked_type] = BuildingRule(
             building_type=checked_type,
             display_name=str(_string(item["display_name"], f"$.buildings.{building_type}.display_name")),
@@ -206,13 +321,13 @@ def load_building_rules(path: Path) -> BuildingRules:
             max_count_source=max_count_source,
             required_law_ids=_strings(item["required_law_ids"], f"$.buildings.{building_type}.required_law_ids"),
             required_tech_ids=_strings(item["required_tech_ids"], f"$.buildings.{building_type}.required_tech_ids"),
-            staff_capacity=_integer(item["staff_capacity"], f"$.buildings.{building_type}.staff_capacity"),
-            allowed_staff_types=_strings(item["allowed_staff_types"], f"$.buildings.{building_type}.allowed_staff_types"),
+            staff_capacity=staff_capacity,
+            allowed_staff_types=allowed_staff_types,
             housing_capacity=_integer(item["housing_capacity"], f"$.buildings.{building_type}.housing_capacity"),
             storage_capacity_add=_integer(item["storage_capacity_add"], f"$.buildings.{building_type}.storage_capacity_add"),
             output_resource=output_resource,
-            output_per_day=_integer(item["output_per_day"], f"$.buildings.{building_type}.output_per_day"),
-            raw_food_processing_cap=_integer(item["raw_food_processing_cap"], f"$.buildings.{building_type}.raw_food_processing_cap"),
+            output_per_day=output_per_day,
+            raw_food_processing_cap=raw_food_processing_cap,
             min_operating_temperature=minimum_temperature,
             can_heat=can_heat,
             binding_kind=binding_kind,
@@ -228,6 +343,10 @@ def load_building_rules(path: Path) -> BuildingRules:
         to_type = str(_string(item["to_type"], f"$.upgrades.{upgrade_id}.to_type"))
         if from_type not in buildings or to_type not in buildings:
             raise BuildingConfigError(f"$.upgrades.{upgrade_id} references an unknown building")
+        if buildings[from_type].slot_size != buildings[to_type].slot_size:
+            raise BuildingConfigError(
+                f"$.upgrades.{upgrade_id} cannot change slot_size in Patch 004"
+            )
         upgrades[upgrade_id] = UpgradeRule(
             upgrade_id=upgrade_id,
             from_type=from_type,
@@ -238,24 +357,49 @@ def load_building_rules(path: Path) -> BuildingRules:
         )
 
     heat_data = _object(data["heat"], "$.heat")
-    _exact(heat_data, {"coal_cost", "temperature_bonus", "enhanced_temperature_bonus", "enhancement_tech_id"}, "$.heat")
+    _exact(heat_data, {"coal_cost", "temperature_bonus", "enhanced_temperature_bonus", "enhancement_tech_id", "daily_city_limit"}, "$.heat")
     woodfuel_data = _object(data["woodfuel"], "$.woodfuel")
     _exact(woodfuel_data, {"wood_per_fuel", "daily_wood_limit", "minimum_wood_unit", "cooldown_days"}, "$.woodfuel")
+    heat_bonus = _integer(heat_data["temperature_bonus"], "$.heat.temperature_bonus", minimum=1)
+    enhanced_heat_bonus = _integer(
+        heat_data["enhanced_temperature_bonus"],
+        "$.heat.enhanced_temperature_bonus",
+        minimum=1,
+    )
+    if enhanced_heat_bonus < heat_bonus:
+        raise BuildingConfigError("$.heat.enhanced_temperature_bonus cannot be lower than base")
+    wood_per_fuel = _integer(
+        woodfuel_data["wood_per_fuel"], "$.woodfuel.wood_per_fuel", minimum=1
+    )
+    daily_wood_limit = _integer(
+        woodfuel_data["daily_wood_limit"], "$.woodfuel.daily_wood_limit", minimum=1
+    )
+    minimum_wood_unit = _integer(
+        woodfuel_data["minimum_wood_unit"], "$.woodfuel.minimum_wood_unit", minimum=1
+    )
+    if minimum_wood_unit % wood_per_fuel or daily_wood_limit % minimum_wood_unit:
+        raise BuildingConfigError(
+            "woodfuel units must divide evenly into the minimum and daily limit"
+        )
     return BuildingRules(
         zone_slot_capacity=zones,
         resource_anchors=anchors,
+        surface_resource_points=surface_resource_points,
         buildings=buildings,
         upgrades=upgrades,
         heat=HeatRule(
             coal_cost=_integer(heat_data["coal_cost"], "$.heat.coal_cost", minimum=1),
-            temperature_bonus=_integer(heat_data["temperature_bonus"], "$.heat.temperature_bonus", minimum=1),
-            enhanced_temperature_bonus=_integer(heat_data["enhanced_temperature_bonus"], "$.heat.enhanced_temperature_bonus", minimum=1),
+            temperature_bonus=heat_bonus,
+            enhanced_temperature_bonus=enhanced_heat_bonus,
             enhancement_tech_id=str(_string(heat_data["enhancement_tech_id"], "$.heat.enhancement_tech_id")),
+            daily_city_limit=_integer(
+                heat_data["daily_city_limit"], "$.heat.daily_city_limit", minimum=1
+            ),
         ),
         woodfuel=WoodfuelRule(
-            wood_per_fuel=_integer(woodfuel_data["wood_per_fuel"], "$.woodfuel.wood_per_fuel", minimum=1),
-            daily_wood_limit=_integer(woodfuel_data["daily_wood_limit"], "$.woodfuel.daily_wood_limit", minimum=1),
-            minimum_wood_unit=_integer(woodfuel_data["minimum_wood_unit"], "$.woodfuel.minimum_wood_unit", minimum=1),
+            wood_per_fuel=wood_per_fuel,
+            daily_wood_limit=daily_wood_limit,
+            minimum_wood_unit=minimum_wood_unit,
             cooldown_days=_integer(woodfuel_data["cooldown_days"], "$.woodfuel.cooldown_days"),
         ),
     )

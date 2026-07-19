@@ -216,13 +216,16 @@ class MachineStartupTests(unittest.TestCase):
                 "game.end_day",
                 "game.set_furnace",
                 "game.assign",
+                "game.assign_resource",
                 "game.build",
                 "game.heat",
                 "game.unassign",
+                "game.unassign_resource",
                 "game.upgrade",
                 "game.woodfuel",
             ],
         )
+        self.assertEqual(len(document["state"]["surface_resource_points"]), 12)
 
 
 if __name__ == "__main__":
