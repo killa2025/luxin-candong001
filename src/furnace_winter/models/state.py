@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 1
+CURRENT_SAVE_DATA_VERSION = 2
 FINAL_DAY = 55
 
 
@@ -55,6 +55,46 @@ class ResourceState:
 
 
 @dataclass(slots=True)
+class HousingState:
+    """Aggregate housing only; residents are not assigned to individual homes."""
+
+    basic_residences: int = 0
+    capacity: int = 0
+
+
+@dataclass(slots=True)
+class HungerState:
+    """Population-pool hunger tiers.
+
+    Patch 003 establishes the machine-readable pools. Their day-to-day
+    progression and recovery timing remain pending balance rules.
+    """
+
+    mild_population: int = 0
+    severe_population: int = 0
+    starving_population: int = 0
+
+
+@dataclass(slots=True)
+class DailySurvivalState:
+    """Last settled day's deterministic resource and heating summary."""
+
+    settled_day: int | None = None
+    base_temperature: int | None = None
+    target_furnace_level: int = 0
+    effective_furnace_level: int = 0
+    required_coal: int = 0
+    coal_paid: int = 0
+    heating_shortfall: bool = False
+    zone_temperatures: dict[str, int] = field(default_factory=dict)
+    cooked_food_eaten: int = 0
+    raw_food_eaten: int = 0
+    unfed_population: int = 0
+    storage_used: int = 0
+    is_over_capacity: bool = False
+
+
+@dataclass(slots=True)
 class TrustPanicState:
     """Uninitialized until a later Patch loads confirmed starting values."""
 
@@ -74,7 +114,7 @@ class TrustPanicState:
 @dataclass(slots=True)
 class FurnaceState:
     is_active: bool = False
-    mode_id: str | None = None
+    mode_id: str = "off"
     pressure: int = 0
 
 
@@ -152,6 +192,9 @@ class GameState:
     calendar: CalendarState = field(default_factory=CalendarState)
     population: PopulationState = field(default_factory=PopulationState)
     resources: ResourceState = field(default_factory=ResourceState)
+    housing: HousingState = field(default_factory=HousingState)
+    hunger: HungerState = field(default_factory=HungerState)
+    daily_survival: DailySurvivalState = field(default_factory=DailySurvivalState)
     trust_panic: TrustPanicState = field(default_factory=TrustPanicState)
     furnace: FurnaceState = field(default_factory=FurnaceState)
     buildings: dict[str, BuildingState] = field(default_factory=dict)
