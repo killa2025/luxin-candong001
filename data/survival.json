@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "config_status": "FINAL",
+  "starting_state": {
+    "population": {
+      "workers": 50,
+      "engineers": 15,
+      "children": 15
+    },
+    "resources": {
+      "coal": 70,
+      "wood": 100,
+      "steel": 35,
+      "raw_food": 40,
+      "cooked_food": 160,
+      "storage_capacity": 800
+    },
+    "basic_residences": 4,
+    "basic_residence_capacity": 10,
+    "furnace_level": 1,
+    "trust": 70,
+    "panic": 20
+  },
+  "food": {
+    "per_person": 1,
+    "raw_to_cooked_ratio": 2
+  },
+  "furnace_levels": {
+    "0": {"coal_cost": 0, "heating": 0},
+    "1": {"coal_cost": 45, "heating": 18},
+    "2": {"coal_cost": 85, "heating": 30},
+    "3": {"coal_cost": 150, "heating": 42}
+  },
+  "weather_temperatures": [
+    -12, -15, -18, -14, -20, -16, -22,
+    -24, -28, -32, -35, -26, -30, -34, -28, -36,
+    -38, -32, -40, -42, -35, -44, -46, -38, -45, -48, -40,
+    -50, -46, -52, -55, -48, -52, -56, -50, -58, -54, -60,
+    -58, -62, -60, -64, -61, -42, -38, -58, -62, -65,
+    -66, -68, -70, -66, -72, -74, -76
+  ],
+  "zone_modifiers": {
+    "inner_ring": 5,
+    "middle_ring": 0,
+    "outer_ring": -6
+  }
+}

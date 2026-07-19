@@ -205,11 +205,13 @@ class MachineStartupTests(unittest.TestCase):
         self.assertEqual(document["protocol_version"], 1)
         self.assertEqual(document["state"]["random"]["seed"], 31415)
         self.assertEqual(
-            document["state"]["trust_panic"], {"panic": None, "trust": None}
+            document["state"]["trust_panic"], {"panic": 20, "trust": 70}
         )
+        self.assertEqual(document["state"]["population"]["population_alive"], 80)
+        self.assertEqual(document["state"]["resources"]["coal"], 70)
         self.assertEqual(
             [item["name"] for item in document["available_commands"]],
-            ["game.confirm_end_day", "game.end_day"],
+            ["game.confirm_end_day", "game.end_day", "game.set_furnace"],
         )
 
 

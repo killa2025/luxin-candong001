@@ -4,10 +4,14 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from furnace_winter.config import validate_config_tree
-from furnace_winter.gameplay import EndDayEngine
+from furnace_winter.config import load_survival_rules, validate_config_tree
+from furnace_winter.gameplay import (
+    EndDayEngine,
+    SurvivalSystem,
+    create_initial_survival_state,
+)
 from furnace_winter.interface import Observation
-from furnace_winter.models import GameState, dumps
+from furnace_winter.models import dumps
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,13 +35,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     state_parser = subparsers.add_parser(
         "state",
-        help="输出未运行玩法机制的初始机器可读状态",
+        help="输出 Patch 003 封存开局的机器可读状态",
     )
     state_parser.add_argument(
         "--seed",
         type=int,
         default=0,
         help="统一随机种子，默认 0",
+    )
+    state_parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("data/survival.json"),
+        help="Patch 003 生存规则配置，默认 data/survival.json",
     )
     return parser
 
@@ -58,8 +68,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     if args.command == "state":
-        state = GameState.initial(random_seed=args.seed)
-        print(dumps(Observation.from_state(state, EndDayEngine().command_specs())))
+        rules = load_survival_rules(args.config)
+        state = create_initial_survival_state(rules, random_seed=args.seed)
+        survival = SurvivalSystem(rules)
+        command_specs = EndDayEngine().command_specs() + survival.command_specs()
+        print(dumps(Observation.from_state(state, command_specs)))
         return 0
 
     parser.print_help()

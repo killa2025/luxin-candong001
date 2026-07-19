@@ -13,6 +13,17 @@ from furnace_winter.gameplay.end_day import (
     RiskWarningLevel,
     build_end_day_catalog,
 )
+from furnace_winter.gameplay.survival import (
+    FURNACE_LEVEL_ARGUMENT,
+    SET_FURNACE_COMMAND,
+    SurvivalSystem,
+    build_survival_catalog,
+    create_initial_survival_state,
+    furnace_level,
+    furnace_mode_id,
+    is_over_capacity,
+    storage_used,
+)
 
 __all__ = [
     "AUTOSAVE_END_DAY_SLOT",
@@ -28,4 +39,13 @@ __all__ = [
     "RiskWarning",
     "RiskWarningLevel",
     "build_end_day_catalog",
+    "FURNACE_LEVEL_ARGUMENT",
+    "SET_FURNACE_COMMAND",
+    "SurvivalSystem",
+    "build_survival_catalog",
+    "create_initial_survival_state",
+    "furnace_level",
+    "furnace_mode_id",
+    "is_over_capacity",
+    "storage_used",
 ]

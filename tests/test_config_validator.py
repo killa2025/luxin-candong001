@@ -225,6 +225,54 @@ class ConfigValidatorTests(unittest.TestCase):
         self.assertFalse(report.is_valid)
         self.assertEqual(report.files_checked, 0)
 
+    def test_survival_schema_errors_are_rejected_by_tree_validator(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "survival.json"
+            path.write_text(
+                json.dumps(runtime_document(schema_version=1)),
+                encoding="utf-8",
+            )
+
+            report = validate_config_tree(Path(temp_dir))
+
+        self.assertFalse(report.is_valid)
+        self.assertTrue(
+            any("生存规则结构校验失败" in issue.message for issue in report.issues)
+        )
+
+    def test_survival_schema_rejects_an_unpayable_off_level(self) -> None:
+        document = json.loads(
+            (self.PROJECT_ROOT / "data" / "survival.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["furnace_levels"]["0"]["coal_cost"] = 1
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "survival.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+
+            report = validate_config_tree(Path(temp_dir))
+
+        self.assertFalse(report.is_valid)
+        self.assertTrue(any("level 0" in issue.message for issue in report.issues))
+
+    def test_manifest_references_must_exist_inside_config_tree(self) -> None:
+        manifests = (
+            runtime_document(schema_version=1, configs=["survival.json"]),
+            runtime_document(schema_version=1, configs=["../outside.json"]),
+        )
+        for manifest in manifests:
+            with self.subTest(manifest=manifest), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                (root / "manifest.json").write_text(
+                    json.dumps(manifest),
+                    encoding="utf-8",
+                )
+
+                report = validate_config_tree(root)
+
+            self.assertFalse(report.is_valid)
+
 
 if __name__ == "__main__":
     unittest.main()

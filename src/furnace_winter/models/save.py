@@ -12,11 +12,14 @@ from furnace_winter.models.state import (
     FINAL_DAY,
     BuildingState,
     CalendarState,
+    DailySurvivalState,
     EventState,
     FinalResultState,
     FurnaceState,
     GameState,
     HardFailType,
+    HousingState,
+    HungerState,
     LawState,
     OldCityState,
     PopulationState,
@@ -147,6 +150,17 @@ def _nonnegative_int_object(value: Any, path: str) -> dict[str, int]:
     return result
 
 
+def _integer_object(value: Any, path: str) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        raise SaveDataError(f"{path} must be an object")
+    result: dict[str, int] = {}
+    for key, item in value.items():
+        checked_key = _string(key, f"{path} key")
+        assert isinstance(checked_key, str)
+        result[checked_key] = _integer(item, f"{path}.{checked_key}")
+    return result
+
+
 def _decode_random(value: Any) -> RandomState:
     data = _object(value, "random", _field_names(RandomState))
     state = RandomState(
@@ -209,10 +223,107 @@ def _decode_trust_panic(value: Any) -> TrustPanicState:
 
 def _decode_furnace(value: Any) -> FurnaceState:
     data = _object(value, "furnace", _field_names(FurnaceState))
-    return FurnaceState(
+    state = FurnaceState(
         is_active=_boolean(data["is_active"], "furnace.is_active"),
-        mode_id=_string(data["mode_id"], "furnace.mode_id", optional=True),
+        mode_id=_string(data["mode_id"], "furnace.mode_id"),
         pressure=_integer(data["pressure"], "furnace.pressure", minimum=0),
+    )
+    if state.mode_id not in {"off", "level_1", "level_2", "level_3"}:
+        raise SaveDataError(f"unsupported furnace.mode_id: {state.mode_id}")
+    if state.is_active != (state.mode_id != "off"):
+        raise SaveDataError("furnace.is_active must match furnace.mode_id")
+    return state
+
+
+def _decode_housing(value: Any) -> HousingState:
+    data = _object(value, "housing", _field_names(HousingState))
+    return HousingState(
+        basic_residences=_integer(
+            data["basic_residences"], "housing.basic_residences", minimum=0
+        ),
+        capacity=_integer(data["capacity"], "housing.capacity", minimum=0),
+    )
+
+
+def _decode_hunger(value: Any) -> HungerState:
+    data = _object(value, "hunger", _field_names(HungerState))
+    return HungerState(
+        mild_population=_integer(
+            data["mild_population"], "hunger.mild_population", minimum=0
+        ),
+        severe_population=_integer(
+            data["severe_population"], "hunger.severe_population", minimum=0
+        ),
+        starving_population=_integer(
+            data["starving_population"], "hunger.starving_population", minimum=0
+        ),
+    )
+
+
+def _decode_daily_survival(value: Any) -> DailySurvivalState:
+    data = _object(value, "daily_survival", _field_names(DailySurvivalState))
+    settled_day_value = data["settled_day"]
+    settled_day = (
+        None
+        if settled_day_value is None
+        else _integer(settled_day_value, "daily_survival.settled_day", minimum=1)
+    )
+    base_temperature_value = data["base_temperature"]
+    base_temperature = (
+        None
+        if base_temperature_value is None
+        else _integer(base_temperature_value, "daily_survival.base_temperature")
+    )
+    zone_temperatures = {
+        key: _integer(item, f"daily_survival.zone_temperatures.{key}")
+        for key, item in _integer_object(
+            data["zone_temperatures"], "daily_survival.zone_temperatures"
+        ).items()
+    }
+    return DailySurvivalState(
+        settled_day=settled_day,
+        base_temperature=base_temperature,
+        target_furnace_level=_integer(
+            data["target_furnace_level"],
+            "daily_survival.target_furnace_level",
+            minimum=0,
+            maximum=3,
+        ),
+        effective_furnace_level=_integer(
+            data["effective_furnace_level"],
+            "daily_survival.effective_furnace_level",
+            minimum=0,
+            maximum=3,
+        ),
+        required_coal=_integer(
+            data["required_coal"], "daily_survival.required_coal", minimum=0
+        ),
+        coal_paid=_integer(
+            data["coal_paid"], "daily_survival.coal_paid", minimum=0
+        ),
+        heating_shortfall=_boolean(
+            data["heating_shortfall"], "daily_survival.heating_shortfall"
+        ),
+        zone_temperatures=zone_temperatures,
+        cooked_food_eaten=_integer(
+            data["cooked_food_eaten"],
+            "daily_survival.cooked_food_eaten",
+            minimum=0,
+        ),
+        raw_food_eaten=_integer(
+            data["raw_food_eaten"], "daily_survival.raw_food_eaten", minimum=0
+        ),
+        unfed_population=_integer(
+            data["unfed_population"],
+            "daily_survival.unfed_population",
+            minimum=0,
+        ),
+        storage_used=_integer(
+            data["storage_used"], "daily_survival.storage_used", minimum=0
+        ),
+        is_over_capacity=_boolean(
+            data["is_over_capacity"], "daily_survival.is_over_capacity"
+        ),
     )
 
 
@@ -360,7 +471,10 @@ def decode_game_state(
     document: Mapping[str, Any],
     migrations: SaveMigrationRegistry | None = None,
 ) -> GameState:
-    data = (migrations or SaveMigrationRegistry()).migrate(document)
+    if migrations is None:
+        migrations = SaveMigrationRegistry()
+        migrations.register(1, _migrate_v1_to_v2)
+    data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
         save_data_version = _integer(
@@ -370,7 +484,7 @@ def decode_game_state(
             raise SaveDataError(
                 f"save version {save_data_version} does not match current schema"
             )
-        return GameState(
+        state = GameState(
             save_data_version=save_data_version,
             random=_decode_random(data["random"]),
             command_sequence=_integer(
@@ -383,6 +497,9 @@ def decode_game_state(
             resources=_decode_nonnegative_int_state(
                 data["resources"], "resources", ResourceState
             ),
+            housing=_decode_housing(data["housing"]),
+            hunger=_decode_hunger(data["hunger"]),
+            daily_survival=_decode_daily_survival(data["daily_survival"]),
             trust_panic=_decode_trust_panic(data["trust_panic"]),
             furnace=_decode_furnace(data["furnace"]),
             buildings=_decode_buildings(data["buildings"]),
@@ -393,10 +510,127 @@ def decode_game_state(
             old_city=_decode_old_city(data["old_city"]),
             final_result=_decode_final_result(data["final_result"]),
         )
+        _validate_state_invariants(state)
+        return state
     except SaveDataError:
         raise
     except (TypeError, ValueError) as exc:
         raise SaveDataError(f"invalid save data: {exc}") from exc
+
+
+def _migrate_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
+    v2_only_fields = {"housing", "hunger", "daily_survival"}
+    legacy = _object(document, "$", set(_field_names(GameState)) - v2_only_fields)
+    legacy_furnace = _object(
+        legacy["furnace"],
+        "furnace",
+        {"is_active", "mode_id", "pressure"},
+    )
+    furnace_active = _boolean(legacy_furnace["is_active"], "furnace.is_active")
+    _string(legacy_furnace["mode_id"], "furnace.mode_id", optional=True)
+    _integer(legacy_furnace["pressure"], "furnace.pressure", minimum=0)
+
+    migrated = deepcopy(legacy)
+    population = migrated.get("population")
+    housed = 0
+    if isinstance(population, Mapping):
+        housed_value = population.get("housed_population", 0)
+        if isinstance(housed_value, int) and not isinstance(housed_value, bool):
+            housed = max(housed_value, 0)
+    migrated["housing"] = {"basic_residences": 0, "capacity": housed}
+    migrated["hunger"] = {
+        "mild_population": 0,
+        "severe_population": 0,
+        "starving_population": 0,
+    }
+    migrated["daily_survival"] = {
+        "settled_day": None,
+        "base_temperature": None,
+        "target_furnace_level": 0,
+        "effective_furnace_level": 0,
+        "required_coal": 0,
+        "coal_paid": 0,
+        "heating_shortfall": False,
+        "zone_temperatures": {},
+        "cooked_food_eaten": 0,
+        "raw_food_eaten": 0,
+        "unfed_population": 0,
+        "storage_used": 0,
+        "is_over_capacity": False,
+    }
+    furnace = migrated.get("furnace")
+    if isinstance(furnace, Mapping):
+        normalized = dict(furnace)
+        normalized["mode_id"] = "level_1" if furnace_active else "off"
+        migrated["furnace"] = normalized
+    migrated["save_data_version"] = 2
+    return migrated
+
+
+def _validate_state_invariants(state: GameState) -> None:
+    population = state.population
+    if population.population_total != (
+        population.population_alive + population.population_dead
+    ):
+        raise SaveDataError("population_total must equal alive plus dead")
+    if population.population_alive != (
+        population.healthy_population
+        + population.sick_population
+        + population.critical_population
+        + population.disabled_population
+    ):
+        raise SaveDataError(
+            "population_alive must equal healthy, sick, critical, and disabled pools"
+        )
+    occupation_total = population.workers + population.engineers + population.children
+    if occupation_total > population.population_alive:
+        raise SaveDataError("occupation and child pools must not exceed living population")
+    if (
+        population.medical_apprentices + population.engineering_apprentices
+        > population.children
+    ):
+        raise SaveDataError("apprentices must remain a subset of children")
+
+    expected_housed = min(population.population_alive, state.housing.capacity)
+    if population.housed_population != expected_housed:
+        raise SaveDataError("housed_population must match aggregate housing capacity")
+    if population.homeless_population != population.population_alive - expected_housed:
+        raise SaveDataError("homeless_population must match aggregate housing capacity")
+
+    hunger_total = (
+        state.hunger.mild_population
+        + state.hunger.severe_population
+        + state.hunger.starving_population
+    )
+    if hunger_total > population.population_alive:
+        raise SaveDataError("hunger pools must not exceed living population")
+
+    daily = state.daily_survival
+    if daily.effective_furnace_level > daily.target_furnace_level:
+        raise SaveDataError("effective furnace level cannot exceed the target level")
+    if daily.coal_paid > daily.required_coal:
+        raise SaveDataError("coal_paid cannot exceed required_coal")
+    if daily.heating_shortfall != (
+        daily.effective_furnace_level < daily.target_furnace_level
+    ):
+        raise SaveDataError("heating_shortfall must match target and effective levels")
+    if daily.settled_day is None:
+        if daily.base_temperature is not None or daily.zone_temperatures:
+            raise SaveDataError("unsettled survival summary cannot contain temperatures")
+    else:
+        if daily.base_temperature is None:
+            raise SaveDataError("settled survival summary requires base_temperature")
+        if set(daily.zone_temperatures) != {
+            "inner_ring",
+            "middle_ring",
+            "outer_ring",
+        }:
+            raise SaveDataError("settled survival summary requires three zone temperatures")
+        if daily.settled_day not in {
+            state.calendar.current_day,
+            state.calendar.current_day - 1,
+        }:
+            raise SaveDataError("survival summary must describe the current or previous day")
 
 
 def validate_game_state(state: GameState) -> None:

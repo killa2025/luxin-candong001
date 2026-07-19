@@ -19,9 +19,9 @@ class ConfigLoaderTests(unittest.TestCase):
     def test_repository_manifest_loads(self) -> None:
         documents = load_config_tree(self.PROJECT_ROOT / "data")
 
-        self.assertEqual(len(documents), 1)
-        self.assertEqual(documents[0].status, ConfigStatus.FINAL)
-        self.assertEqual(documents[0].data["schema_version"], 1)
+        self.assertEqual(len(documents), 2)
+        self.assertTrue(all(item.status is ConfigStatus.FINAL for item in documents))
+        self.assertTrue(all(item.data["schema_version"] == 1 for item in documents))
 
     def test_test_numeric_status_is_explicitly_identifiable(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

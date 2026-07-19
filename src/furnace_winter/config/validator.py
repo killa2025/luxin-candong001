@@ -184,7 +184,74 @@ def validate_config_tree(root: Path) -> ValidationReport:
     config_files = sorted(root.rglob("*.json"))
     issues: list[ValidationIssue] = []
     for path in config_files:
-        issues.extend(validate_config_file(path))
+        file_issues = validate_config_file(path)
+        issues.extend(file_issues)
+        if not file_issues and path.name == "survival.json":
+            try:
+                from furnace_winter.config.survival import load_survival_rules
+
+                load_survival_rules(path)
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(path, "$", f"生存规则结构校验失败：{exc}")
+                )
+
+    manifest_path = root / "manifest.json"
+    if manifest_path in config_files and not validate_config_file(manifest_path):
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+        configs = manifest.get("configs")
+        if not isinstance(configs, list):
+            issues.append(
+                ValidationIssue(
+                    manifest_path,
+                    "$.configs",
+                    "configs 必须是配置文件相对路径数组",
+                )
+            )
+        else:
+            root_resolved = root.resolve()
+            seen: set[str] = set()
+            for index, item in enumerate(configs):
+                location = f"$.configs[{index}]"
+                if not isinstance(item, str) or not item.strip():
+                    issues.append(
+                        ValidationIssue(
+                            manifest_path,
+                            location,
+                            "配置文件路径必须是非空字符串",
+                        )
+                    )
+                    continue
+                relative = Path(item)
+                target = (root / relative).resolve()
+                if (
+                    relative.is_absolute()
+                    or target == root_resolved
+                    or not target.is_relative_to(root_resolved)
+                ):
+                    issues.append(
+                        ValidationIssue(
+                            manifest_path,
+                            location,
+                            "配置文件路径必须位于配置目录内",
+                        )
+                    )
+                    continue
+                normalized = target.as_posix().casefold()
+                if normalized in seen:
+                    issues.append(
+                        ValidationIssue(manifest_path, location, "配置文件路径不得重复")
+                    )
+                    continue
+                seen.add(normalized)
+                if not target.is_file():
+                    issues.append(
+                        ValidationIssue(
+                            manifest_path,
+                            location,
+                            f"配置文件不存在：{item}",
+                        )
+                    )
     return ValidationReport(
         files_checked=len(config_files),
         issues=tuple(issues),
