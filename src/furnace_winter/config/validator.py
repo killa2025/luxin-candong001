@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,17 +17,25 @@ DEPRECATED_KEYS = frozenset(
     }
 )
 
-PLACEHOLDER_VALUES = frozenset(
-    {
-        "DEPRECATED",
-        "PENDING",
-        "TODO_TEXT",
-        "TODO_VALUE",
-        "TODO_SYSTEM",
-        "待判定",
-        "待确认",
-    }
+NON_RUNTIME_MARKER_PATTERN = re.compile(
+    r"^(?:"
+    r"PENDING(?:_[A-Z][A-Z0-9_]*)?"
+    r"|DEPRECATED"
+    r"|TODO_(?:TEXT|VALUE|SYSTEM)"
+    r"|待确认"
+    r"|待判定"
+    r")(?=$|[\s:：,，;；.!！?？\-–—/／(（\[【])"
 )
+
+
+class _NonFiniteNumberError(ValueError):
+    def __init__(self, token: str) -> None:
+        super().__init__(token)
+        self.token = token
+
+
+def _reject_non_finite_number(token: str) -> None:
+    raise _NonFiniteNumberError(token)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +84,7 @@ def _validate_value(path: Path, data: Any) -> list[ValidationIssue]:
                     )
         elif isinstance(value, str):
             marker = value.strip()
-            if marker in PLACEHOLDER_VALUES or marker.startswith("PENDING_"):
+            if NON_RUNTIME_MARKER_PATTERN.match(marker):
                 issues.append(
                     ValidationIssue(
                         path,
@@ -88,14 +97,22 @@ def _validate_value(path: Path, data: Any) -> list[ValidationIssue]:
 
 def validate_config_file(path: Path) -> list[ValidationIssue]:
     try:
-        source = path.read_text(encoding="utf-8")
+        source = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError as exc:
         return [ValidationIssue(path, "", f"文件不是有效 UTF-8：{exc}")]
     except OSError as exc:
         return [ValidationIssue(path, "", f"无法读取文件：{exc}")]
 
     try:
-        data = json.loads(source)
+        data = json.loads(source, parse_constant=_reject_non_finite_number)
+    except _NonFiniteNumberError as exc:
+        return [
+            ValidationIssue(
+                path,
+                "",
+                f"JSON 包含非标准数值：{exc.token}",
+            )
+        ]
     except json.JSONDecodeError as exc:
         return [
             ValidationIssue(

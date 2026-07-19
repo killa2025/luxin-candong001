@@ -27,9 +27,9 @@ python -m furnace_winter validate-config data
 当前校验器只负责：
 
 1. 遍历 `data/` 下的 JSON 文件。
-2. 校验 UTF-8 和 JSON 格式。
+2. 校验 UTF-8（兼容有无 BOM）和标准 JSON 格式，拒绝非有限数值。
 3. 阻止作废字段进入正式运行配置。
-4. 阻止 PENDING、TODO 和待确认占位值进入正式运行配置。
+4. 阻止 PENDING、DEPRECATED、TODO、待确认和待判定标记及其带说明形式进入正式运行配置。
 
 当前校验器不负责：
 
