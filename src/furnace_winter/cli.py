@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from furnace_winter.config import validate_config_tree
+from furnace_winter.gameplay import EndDayEngine
 from furnace_winter.interface import Observation
 from furnace_winter.models import GameState, dumps
 
@@ -12,7 +13,7 @@ from furnace_winter.models import GameState, dumps
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="furnace-winter",
-        description="《炉心残冬》机器接口入口（Patch 001）",
+        description="《炉心残冬》机器接口入口",
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -58,7 +59,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "state":
         state = GameState.initial(random_seed=args.seed)
-        print(dumps(Observation.from_state(state)))
+        print(dumps(Observation.from_state(state, EndDayEngine().command_specs())))
         return 0
 
     parser.print_help()

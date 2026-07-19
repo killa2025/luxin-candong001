@@ -207,7 +207,10 @@ class MachineStartupTests(unittest.TestCase):
         self.assertEqual(
             document["state"]["trust_panic"], {"panic": None, "trust": None}
         )
-        self.assertEqual(document["available_commands"], [])
+        self.assertEqual(
+            [item["name"] for item in document["available_commands"]],
+            ["game.confirm_end_day", "game.end_day"],
+        )
 
 
 if __name__ == "__main__":

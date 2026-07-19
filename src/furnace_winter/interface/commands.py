@@ -20,6 +20,8 @@ class ErrorCode(StrEnum):
     INVALID_ARGUMENTS = "INVALID_ARGUMENTS"
     STALE_STATE = "STALE_STATE"
     ILLEGAL_COMMAND = "ILLEGAL_COMMAND"
+    END_DAY_CONFIRMATION_REQUIRED = "END_DAY_CONFIRMATION_REQUIRED"
+    END_DAY_BLOCKED = "END_DAY_BLOCKED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
@@ -63,7 +65,7 @@ LegalityCheck = Callable[[GameState, CommandRequest], CommandValidation]
 
 
 class CommandCatalog:
-    """Holds schemas only; Patch 001 registers no gameplay commands."""
+    """Holds machine-readable command schemas without strategy metadata."""
 
     def __init__(self) -> None:
         self._specs: dict[str, CommandSpec] = {}

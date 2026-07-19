@@ -24,6 +24,7 @@
 - JSON 运行配置使用 UTF-8，兼容有无 BOM；顶层必须是对象并声明合法的运行态 `config_status`。
 - 所有未来随机性必须使用统一的 `DeterministicRandom`；随机种子及生成器状态可以保存和恢复。
 - 相同初始状态、相同随机种子和相同行动序列必须得到相同结果。
+- `game.end_day` 与 `game.confirm_end_day` 提供 Patch 002 的机器可读日结入口；日结按固定阶段运行，具体资源、人口、建筑、炉律、科技、事件与终局算法由后续 Patch 接入。
 
 ## 开发命令
 
@@ -49,4 +50,4 @@ python -m furnace_winter validate-config data
 python -m furnace_winter state --seed 2025
 ```
 
-Patch 001 的交付范围、字段与边界见 `docs/handoff/PATCH-001：实现记录.md`。Patch 000 的技术决策、边界和冲突处理记录见 `docs/handoff/PATCH-000：仓库初始化与施工规则验证.md`。
+Patch 002 的日结编排、风险分级、自动保存接口与施工边界见 `docs/handoff/PATCH-002：日结主流程实现记录.md`。Patch 001 的交付范围、字段与边界见 `docs/handoff/PATCH-001：实现记录.md`。Patch 000 的技术决策、边界和冲突处理记录见 `docs/handoff/PATCH-000：仓库初始化与施工规则验证.md`。
