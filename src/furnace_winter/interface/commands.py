@@ -47,6 +47,7 @@ class CommandSpec:
     name: str
     required_arguments: Mapping[str, ArgumentKind] = field(default_factory=dict)
     optional_arguments: Mapping[str, ArgumentKind] = field(default_factory=dict)
+    argument_options: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     allow_extra_arguments: bool = False
 
 
@@ -78,6 +79,18 @@ class CommandCatalog:
         overlap = set(spec.required_arguments) & set(spec.optional_arguments)
         if overlap:
             raise ValueError(f"arguments cannot be both required and optional: {overlap}")
+        known_arguments = set(spec.required_arguments) | set(spec.optional_arguments)
+        unknown_options = set(spec.argument_options) - known_arguments
+        if unknown_options:
+            raise ValueError(f"argument options reference unknown arguments: {unknown_options}")
+        for argument, options in spec.argument_options.items():
+            if not options or any(
+                not isinstance(option, str)
+                or not option.strip()
+                or option != option.strip()
+                for option in options
+            ):
+                raise ValueError(f"argument options must be normalized strings: {argument}")
         self._specs[spec.name] = spec
 
     def get(self, name: str) -> CommandSpec | None:

@@ -10,6 +10,7 @@ from furnace_winter.models.serialization import to_primitive
 from furnace_winter.models.state import (
     CURRENT_SAVE_DATA_VERSION,
     FINAL_DAY,
+    BuildingManagementState,
     BuildingState,
     CalendarState,
     DailySurvivalState,
@@ -301,6 +302,16 @@ def _decode_daily_survival(value: Any) -> DailySurvivalState:
         coal_paid=_integer(
             data["coal_paid"], "daily_survival.coal_paid", minimum=0
         ),
+        woodfuel_wood_burned=_integer(
+            data["woodfuel_wood_burned"],
+            "daily_survival.woodfuel_wood_burned",
+            minimum=0,
+        ),
+        woodfuel_contribution=_integer(
+            data["woodfuel_contribution"],
+            "daily_survival.woodfuel_contribution",
+            minimum=0,
+        ),
         heating_shortfall=_boolean(
             data["heating_shortfall"], "daily_survival.heating_shortfall"
         ),
@@ -367,6 +378,11 @@ def _decode_building(value: Any, path: str, expected_id: str) -> BuildingState:
             data["is_shutdown_by_temperature"],
             f"{path}.is_shutdown_by_temperature",
         ),
+        bound_resource_id=_string(
+            data["bound_resource_id"],
+            f"{path}.bound_resource_id",
+            optional=True,
+        ),
     )
 
 
@@ -381,6 +397,40 @@ def _decode_buildings(value: Any) -> dict[str, BuildingState]:
             item, f"buildings.{building_id}", building_id
         )
     return result
+
+
+def _decode_building_management(value: Any) -> BuildingManagementState:
+    data = _object(value, "building_management", _field_names(BuildingManagementState))
+    return BuildingManagementState(
+        zone_slot_capacity=_nonnegative_int_object(
+            data["zone_slot_capacity"], "building_management.zone_slot_capacity"
+        ),
+        zone_slots_used=_nonnegative_int_object(
+            data["zone_slots_used"], "building_management.zone_slots_used"
+        ),
+        next_building_sequence=_integer(
+            data["next_building_sequence"],
+            "building_management.next_building_sequence",
+            minimum=1,
+        ),
+        available_hunting_areas=_integer(
+            data["available_hunting_areas"],
+            "building_management.available_hunting_areas",
+            minimum=1,
+        ),
+        total_hunting_areas=_integer(
+            data["total_hunting_areas"],
+            "building_management.total_hunting_areas",
+            minimum=1,
+        ),
+        forest_zones=_integer(
+            data["forest_zones"], "building_management.forest_zones", minimum=0
+        ),
+        woodfuel_confirmed_today=_boolean(
+            data["woodfuel_confirmed_today"],
+            "building_management.woodfuel_confirmed_today",
+        ),
+    )
 
 
 def _decode_laws(value: Any) -> LawState:
@@ -474,6 +524,7 @@ def decode_game_state(
     if migrations is None:
         migrations = SaveMigrationRegistry()
         migrations.register(1, _migrate_v1_to_v2)
+        migrations.register(2, _migrate_v2_to_v3)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -503,6 +554,9 @@ def decode_game_state(
             trust_panic=_decode_trust_panic(data["trust_panic"]),
             furnace=_decode_furnace(data["furnace"]),
             buildings=_decode_buildings(data["buildings"]),
+            building_management=_decode_building_management(
+                data["building_management"]
+            ),
             laws=_decode_laws(data["laws"]),
             technologies=_decode_technologies(data["technologies"]),
             events=_decode_events(data["events"]),
@@ -519,7 +573,7 @@ def decode_game_state(
 
 
 def _migrate_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
-    v2_only_fields = {"housing", "hunger", "daily_survival"}
+    v2_only_fields = {"housing", "hunger", "daily_survival", "building_management"}
     legacy = _object(document, "$", set(_field_names(GameState)) - v2_only_fields)
     legacy_furnace = _object(
         legacy["furnace"],
@@ -567,6 +621,93 @@ def _migrate_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
+    legacy = _object(document, "$", set(_field_names(GameState)) - {"building_management"})
+    migrated = deepcopy(legacy)
+
+    daily = _object(
+        migrated["daily_survival"],
+        "daily_survival",
+        set(_field_names(DailySurvivalState))
+        - {"woodfuel_wood_burned", "woodfuel_contribution"},
+    )
+    daily["woodfuel_wood_burned"] = 0
+    daily["woodfuel_contribution"] = 0
+    migrated["daily_survival"] = daily
+
+    raw_buildings = migrated.get("buildings")
+    if not isinstance(raw_buildings, Mapping):
+        raise SaveDataError("buildings must be an object")
+    buildings: dict[str, Any] = {}
+    old_building_fields = set(_field_names(BuildingState)) - {"bound_resource_id"}
+    for key, raw_building in raw_buildings.items():
+        building = _object(raw_building, f"buildings.{key}", old_building_fields)
+        building["bound_resource_id"] = None
+        buildings[key] = building
+
+    housing = migrated.get("housing")
+    basic_residences = 0
+    if isinstance(housing, Mapping):
+        value = housing.get("basic_residences", 0)
+        if isinstance(value, int) and not isinstance(value, bool):
+            basic_residences = max(value, 0)
+    represented_residences = sum(
+        1
+        for building in buildings.values()
+        if isinstance(building, Mapping)
+        and building.get("building_type") == "basic_residence"
+    )
+    for index in range(represented_residences + 1, basic_residences + 1):
+        building_id = f"residence-start-{index:03d}"
+        if building_id in buildings:
+            raise SaveDataError(f"cannot migrate duplicate building id: {building_id}")
+        buildings[building_id] = {
+            "building_id": building_id,
+            "building_type": "basic_residence",
+            "zone": "inner_ring",
+            "slot_size": 1,
+            "is_built": True,
+            "is_operational": True,
+            "assigned_workers": 0,
+            "assigned_engineers": 0,
+            "assigned_children": 0,
+            "assigned_medical_apprentices": 0,
+            "assigned_engineering_apprentices": 0,
+            "can_heat": False,
+            "heated_today": False,
+            "effective_temperature": 0,
+            "is_shutdown_by_temperature": False,
+            "bound_resource_id": None,
+        }
+    migrated["buildings"] = buildings
+
+    slot_capacity = {
+        "inner_ring": 18,
+        "middle_ring": 30,
+        "outer_ring": 36,
+        "storage_outer": 12,
+    }
+    slots_used = {zone: 0 for zone in slot_capacity}
+    for building in buildings.values():
+        if not isinstance(building, Mapping):
+            continue
+        zone = building.get("zone")
+        size = building.get("slot_size")
+        if zone in slots_used and isinstance(size, int) and not isinstance(size, bool):
+            slots_used[zone] += max(size, 0)
+    migrated["building_management"] = {
+        "zone_slot_capacity": slot_capacity,
+        "zone_slots_used": slots_used,
+        "next_building_sequence": 1,
+        "available_hunting_areas": 1,
+        "total_hunting_areas": 2,
+        "forest_zones": 2,
+        "woodfuel_confirmed_today": False,
+    }
+    migrated["save_data_version"] = 3
+    return migrated
+
+
 def _validate_state_invariants(state: GameState) -> None:
     population = state.population
     if population.population_total != (
@@ -610,6 +751,8 @@ def _validate_state_invariants(state: GameState) -> None:
         raise SaveDataError("effective furnace level cannot exceed the target level")
     if daily.coal_paid > daily.required_coal:
         raise SaveDataError("coal_paid cannot exceed required_coal")
+    if daily.woodfuel_wood_burned < daily.woodfuel_contribution:
+        raise SaveDataError("woodfuel burned wood cannot be less than its contribution")
     if daily.heating_shortfall != (
         daily.effective_furnace_level < daily.target_furnace_level
     ):
@@ -631,6 +774,29 @@ def _validate_state_invariants(state: GameState) -> None:
             state.calendar.current_day - 1,
         }:
             raise SaveDataError("survival summary must describe the current or previous day")
+
+    management = state.building_management
+    official_zones = {"inner_ring", "middle_ring", "outer_ring", "storage_outer"}
+    if set(management.zone_slot_capacity) != official_zones:
+        raise SaveDataError("building slot capacity must use the four official regions")
+    if set(management.zone_slots_used) != official_zones:
+        raise SaveDataError("building slot usage must use the four official regions")
+    calculated_slots = {zone: 0 for zone in official_zones}
+    for building_id, building in state.buildings.items():
+        if building.building_id != building_id:
+            raise SaveDataError("building_id must match its map key")
+        if building.zone not in official_zones:
+            raise SaveDataError(f"unsupported building zone: {building.zone}")
+        calculated_slots[building.zone] += building.slot_size
+    if management.zone_slots_used != calculated_slots:
+        raise SaveDataError("building slot usage must match built buildings")
+    if any(
+        management.zone_slots_used[zone] > management.zone_slot_capacity[zone]
+        for zone in official_zones
+    ):
+        raise SaveDataError("building slot usage cannot exceed capacity")
+    if management.available_hunting_areas > management.total_hunting_areas:
+        raise SaveDataError("available hunting areas cannot exceed total hunting areas")
 
 
 def validate_game_state(state: GameState) -> None:

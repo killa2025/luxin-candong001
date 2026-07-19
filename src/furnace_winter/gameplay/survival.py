@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import fields
 
-from furnace_winter.config import SurvivalRules
+from furnace_winter.config import BuildingRules, SurvivalRules
 from furnace_winter.gameplay.end_day import (
     EndDayContext,
     EndDayEngine,
@@ -24,6 +24,7 @@ from furnace_winter.interface import (
     FeedbackLevel,
 )
 from furnace_winter.models import (
+    BuildingState,
     DailySurvivalState,
     GameState,
     HousingState,
@@ -101,6 +102,18 @@ def create_initial_survival_state(
         basic_residences=rules.basic_residences,
         capacity=housing_capacity,
     )
+    for index in range(1, rules.basic_residences + 1):
+        building_id = f"residence-start-{index:03d}"
+        state.buildings[building_id] = BuildingState(
+            building_id=building_id,
+            building_type="basic_residence",
+            zone="inner_ring",
+            slot_size=1,
+            is_built=True,
+            is_operational=True,
+            can_heat=False,
+        )
+    state.building_management.zone_slots_used["inner_ring"] = rules.basic_residences
     state.furnace.is_active = rules.starting_furnace_level > 0
     state.furnace.mode_id = furnace_mode_id(rules.starting_furnace_level)
     state.trust_panic = TrustPanicState(
@@ -127,8 +140,13 @@ def build_survival_catalog() -> CommandCatalog:
 class SurvivalSystem:
     """Patch 003 population, resource, food, housing, and furnace foundation."""
 
-    def __init__(self, rules: SurvivalRules) -> None:
+    def __init__(
+        self,
+        rules: SurvivalRules,
+        building_rules: BuildingRules | None = None,
+    ) -> None:
         self.rules = rules
+        self.building_rules = building_rules
         self._catalog = build_survival_catalog()
         self._validator = CommandValidator(self._catalog)
 
@@ -281,7 +299,7 @@ class SurvivalSystem:
         warnings: list[RiskWarning] = []
         target_level = furnace_level(state.furnace.mode_id)
         required_coal = self.rules.furnace_levels[target_level].coal_cost
-        affordable_level = self._affordable_level(target_level, state.resources.coal)
+        affordable_level = self._affordable_level(target_level, state)
         if target_level == 0:
             warnings.append(
                 RiskWarning(
@@ -339,27 +357,49 @@ class SurvivalSystem:
             )
         return tuple(warnings)
 
-    def _affordable_level(self, target_level: int, available_coal: int) -> int:
+    def _affordable_level(self, target_level: int, state: GameState) -> int:
+        available_fuel = state.resources.coal + self._woodfuel_available(state)
         return max(
             level
             for level in range(target_level + 1)
-            if self.rules.furnace_levels[level].coal_cost <= available_coal
+            if self.rules.furnace_levels[level].coal_cost <= available_fuel
         )
+
+    def _woodfuel_available(self, state: GameState) -> int:
+        if (
+            self.building_rules is None
+            or not state.building_management.woodfuel_confirmed_today
+        ):
+            return 0
+        rule = self.building_rules.woodfuel
+        usable_wood = min(state.resources.wood, rule.daily_wood_limit)
+        usable_wood -= usable_wood % rule.minimum_wood_unit
+        return usable_wood // rule.wood_per_fuel
 
     def settle_heating(self, context: EndDayContext) -> None:
         state = context.state
         target_level = furnace_level(state.furnace.mode_id)
         target_rule = self.rules.furnace_levels[target_level]
-        effective_level = self._affordable_level(target_level, state.resources.coal)
+        effective_level = self._affordable_level(target_level, state)
         effective_rule = self.rules.furnace_levels[effective_level]
-        state.resources.coal -= effective_rule.coal_cost
+        coal_paid = min(state.resources.coal, effective_rule.coal_cost)
+        contribution = effective_rule.coal_cost - coal_paid
+        wood_burned = 0
+        if contribution:
+            if self.building_rules is None:
+                context.abort(ErrorCode.INTERNAL_ERROR, {"reason": "woodfuel_rules_missing"})
+            wood_burned = contribution * self.building_rules.woodfuel.wood_per_fuel
+            state.resources.wood -= wood_burned
+        state.resources.coal -= coal_paid
         state.daily_survival = DailySurvivalState(
             settled_day=context.settled_day,
             base_temperature=self.rules.weather_for_day(context.settled_day),
             target_furnace_level=target_level,
             effective_furnace_level=effective_level,
             required_coal=target_rule.coal_cost,
-            coal_paid=effective_rule.coal_cost,
+            coal_paid=coal_paid,
+            woodfuel_wood_burned=wood_burned,
+            woodfuel_contribution=contribution,
             heating_shortfall=effective_level < target_level,
             storage_used=storage_used(state.resources),
             is_over_capacity=is_over_capacity(state.resources),
@@ -370,7 +410,9 @@ class SurvivalSystem:
                 "target_level": target_level,
                 "effective_level": effective_level,
                 "required_coal": target_rule.coal_cost,
-                "coal_paid": effective_rule.coal_cost,
+                "coal_paid": coal_paid,
+                "woodfuel_wood_burned": wood_burned,
+                "woodfuel_contribution": contribution,
                 "heating_shortfall": effective_level < target_level,
             },
         )

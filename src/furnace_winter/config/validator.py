@@ -195,6 +195,15 @@ def validate_config_tree(root: Path) -> ValidationReport:
                 issues.append(
                     ValidationIssue(path, "$", f"生存规则结构校验失败：{exc}")
                 )
+        elif not file_issues and path.name == "buildings.json":
+            try:
+                from furnace_winter.config.buildings import load_building_rules
+
+                load_building_rules(path)
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(path, "$", f"建筑规则结构校验失败：{exc}")
+                )
 
     manifest_path = root / "manifest.json"
     if manifest_path in config_files and not validate_config_file(manifest_path):

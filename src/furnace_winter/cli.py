@@ -4,8 +4,9 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from furnace_winter.config import load_survival_rules, validate_config_tree
+from furnace_winter.config import load_building_rules, load_survival_rules, validate_config_tree
 from furnace_winter.gameplay import (
+    BuildingSystem,
     EndDayEngine,
     SurvivalSystem,
     create_initial_survival_state,
@@ -44,6 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="统一随机种子，默认 0",
     )
     state_parser.add_argument(
+        "--buildings-config",
+        type=Path,
+        default=Path("data/buildings.json"),
+        help="Patch 004 建筑规则配置，默认 data/buildings.json",
+    )
+    state_parser.add_argument(
         "--config",
         type=Path,
         default=Path("data/survival.json"),
@@ -69,9 +76,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "state":
         rules = load_survival_rules(args.config)
+        building_rules = load_building_rules(args.buildings_config)
         state = create_initial_survival_state(rules, random_seed=args.seed)
-        survival = SurvivalSystem(rules)
-        command_specs = EndDayEngine().command_specs() + survival.command_specs()
+        survival = SurvivalSystem(rules, building_rules)
+        buildings = BuildingSystem(building_rules, rules)
+        command_specs = (
+            EndDayEngine().command_specs()
+            + survival.command_specs()
+            + buildings.command_specs()
+        )
         print(dumps(Observation.from_state(state, command_specs)))
         return 0
 

@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 2
+CURRENT_SAVE_DATA_VERSION = 3
 FINAL_DAY = 55
 
 
@@ -85,6 +85,8 @@ class DailySurvivalState:
     effective_furnace_level: int = 0
     required_coal: int = 0
     coal_paid: int = 0
+    woodfuel_wood_burned: int = 0
+    woodfuel_contribution: int = 0
     heating_shortfall: bool = False
     zone_temperatures: dict[str, int] = field(default_factory=dict)
     cooked_food_eaten: int = 0
@@ -135,6 +137,34 @@ class BuildingState:
     heated_today: bool = False
     effective_temperature: int = 0
     is_shutdown_by_temperature: bool = False
+    bound_resource_id: str | None = None
+
+
+@dataclass(slots=True)
+class BuildingManagementState:
+    """Machine-readable building and map capacity state for Patch 004."""
+
+    zone_slot_capacity: dict[str, int] = field(
+        default_factory=lambda: {
+            "inner_ring": 18,
+            "middle_ring": 30,
+            "outer_ring": 36,
+            "storage_outer": 12,
+        }
+    )
+    zone_slots_used: dict[str, int] = field(
+        default_factory=lambda: {
+            "inner_ring": 0,
+            "middle_ring": 0,
+            "outer_ring": 0,
+            "storage_outer": 0,
+        }
+    )
+    next_building_sequence: int = 1
+    available_hunting_areas: int = 1
+    total_hunting_areas: int = 2
+    forest_zones: int = 2
+    woodfuel_confirmed_today: bool = False
 
 
 @dataclass(slots=True)
@@ -198,6 +228,9 @@ class GameState:
     trust_panic: TrustPanicState = field(default_factory=TrustPanicState)
     furnace: FurnaceState = field(default_factory=FurnaceState)
     buildings: dict[str, BuildingState] = field(default_factory=dict)
+    building_management: BuildingManagementState = field(
+        default_factory=BuildingManagementState
+    )
     laws: LawState = field(default_factory=LawState)
     technologies: TechState = field(default_factory=TechState)
     events: EventState = field(default_factory=EventState)

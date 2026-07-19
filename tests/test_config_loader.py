@@ -19,8 +19,11 @@ class ConfigLoaderTests(unittest.TestCase):
     def test_repository_manifest_loads(self) -> None:
         documents = load_config_tree(self.PROJECT_ROOT / "data")
 
-        self.assertEqual(len(documents), 2)
-        self.assertTrue(all(item.status is ConfigStatus.FINAL for item in documents))
+        self.assertEqual(len(documents), 3)
+        self.assertEqual(
+            [item.status for item in documents],
+            [ConfigStatus.TEST_NUMERIC, ConfigStatus.FINAL, ConfigStatus.FINAL],
+        )
         self.assertTrue(all(item.data["schema_version"] == 1 for item in documents))
 
     def test_test_numeric_status_is_explicitly_identifiable(self) -> None:

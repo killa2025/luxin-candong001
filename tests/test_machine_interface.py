@@ -211,7 +211,17 @@ class MachineStartupTests(unittest.TestCase):
         self.assertEqual(document["state"]["resources"]["coal"], 70)
         self.assertEqual(
             [item["name"] for item in document["available_commands"]],
-            ["game.confirm_end_day", "game.end_day", "game.set_furnace"],
+            [
+                "game.confirm_end_day",
+                "game.end_day",
+                "game.set_furnace",
+                "game.assign",
+                "game.build",
+                "game.heat",
+                "game.unassign",
+                "game.upgrade",
+                "game.woodfuel",
+            ],
         )
 
 
