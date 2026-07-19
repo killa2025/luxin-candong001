@@ -137,7 +137,12 @@ class SurvivalSystem:
 
     def execute(self, state: GameState, request: CommandRequest) -> CommandResult:
         request_validation = self._validator.validate(request)
-        command_id = request.command_id if isinstance(request, CommandRequest) else ""
+        command_id = (
+            request.command_id
+            if isinstance(request, CommandRequest)
+            and isinstance(request.command_id, str)
+            else ""
+        )
         state_sequence = (
             state.command_sequence
             if isinstance(state, GameState)
@@ -228,6 +233,12 @@ class SurvivalSystem:
     ) -> CommandValidation:
         if request.name != SET_FURNACE_COMMAND:
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND)
+        if state.final_result.hard_fail_type is not None:
+            return CommandValidation(
+                False,
+                ErrorCode.ILLEGAL_COMMAND,
+                {"reason": "game_already_failed"},
+            )
         if state.calendar.is_day_locked or state.final_result.is_finalized:
             return CommandValidation(
                 False,
@@ -248,6 +259,10 @@ class SurvivalSystem:
         engine.register_stage_handler(
             EndDayStage.PAY_HEATING_AND_OVERLOAD,
             self.settle_heating,
+        )
+        engine.register_stage_handler(
+            EndDayStage.RESOLVE_ACTUAL_HEATING,
+            self.resolve_actual_heating,
         )
         engine.register_stage_handler(
             EndDayStage.CALCULATE_ZONE_TEMPERATURE,
@@ -358,6 +373,19 @@ class SurvivalSystem:
                 "coal_paid": effective_rule.coal_cost,
                 "heating_shortfall": effective_level < target_level,
             },
+        )
+
+    @staticmethod
+    def resolve_actual_heating(context: EndDayContext) -> None:
+        summary = context.state.daily_survival
+        if summary.settled_day != context.settled_day:
+            context.abort(ErrorCode.INTERNAL_ERROR, {"reason": "heating_not_settled"})
+        effective_level = summary.effective_furnace_level
+        context.state.furnace.mode_id = furnace_mode_id(effective_level)
+        context.state.furnace.is_active = effective_level > 0
+        context.emit(
+            "survival.heating.actual_level_resolved",
+            {"effective_level": effective_level},
         )
 
     def calculate_zone_temperatures(self, context: EndDayContext) -> None:

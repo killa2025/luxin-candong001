@@ -519,7 +519,18 @@ def decode_game_state(
 
 
 def _migrate_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
-    migrated = deepcopy(document)
+    v2_only_fields = {"housing", "hunger", "daily_survival"}
+    legacy = _object(document, "$", set(_field_names(GameState)) - v2_only_fields)
+    legacy_furnace = _object(
+        legacy["furnace"],
+        "furnace",
+        {"is_active", "mode_id", "pressure"},
+    )
+    furnace_active = _boolean(legacy_furnace["is_active"], "furnace.is_active")
+    _string(legacy_furnace["mode_id"], "furnace.mode_id", optional=True)
+    _integer(legacy_furnace["pressure"], "furnace.pressure", minimum=0)
+
+    migrated = deepcopy(legacy)
     population = migrated.get("population")
     housed = 0
     if isinstance(population, Mapping):
@@ -550,7 +561,7 @@ def _migrate_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
     furnace = migrated.get("furnace")
     if isinstance(furnace, Mapping):
         normalized = dict(furnace)
-        normalized["mode_id"] = "level_1" if normalized.get("is_active") else "off"
+        normalized["mode_id"] = "level_1" if furnace_active else "off"
         migrated["furnace"] = normalized
     migrated["save_data_version"] = 2
     return migrated
@@ -571,8 +582,9 @@ def _validate_state_invariants(state: GameState) -> None:
         raise SaveDataError(
             "population_alive must equal healthy, sick, critical, and disabled pools"
         )
-    if population.workers + population.engineers + population.children > population.population_total:
-        raise SaveDataError("occupation and child pools must not exceed total population")
+    occupation_total = population.workers + population.engineers + population.children
+    if occupation_total > population.population_alive:
+        raise SaveDataError("occupation and child pools must not exceed living population")
     if (
         population.medical_apprentices + population.engineering_apprentices
         > population.children

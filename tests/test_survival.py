@@ -18,6 +18,7 @@ from furnace_winter.gameplay import (
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
     GameState,
+    HardFailType,
     SaveDataError,
     decode_game_state,
     encode_game_state,
@@ -92,7 +93,15 @@ class SurvivalPatchTests(unittest.TestCase):
         self.assertEqual((state.trust_panic.trust, state.trust_panic.panic), (70, 20))
 
     def test_fixed_weather_uses_all_55_real_integer_temperatures(self) -> None:
-        self.assertEqual(len(self.rules.weather_temperatures), 55)
+        expected = (
+            -12, -15, -18, -14, -20, -16, -22,
+            -24, -28, -32, -35, -26, -30, -34, -28, -36,
+            -38, -32, -40, -42, -35, -44, -46, -38, -45, -48, -40,
+            -50, -46, -52, -55, -48, -52, -56, -50, -58, -54, -60,
+            -58, -62, -60, -64, -61, -42, -38, -58, -62, -65,
+            -66, -68, -70, -66, -72, -74, -76,
+        )
+        self.assertEqual(self.rules.weather_temperatures, expected)
         self.assertEqual(self.rules.weather_for_day(1), -12)
         self.assertEqual(self.rules.weather_for_day(44), -42)
         self.assertEqual(self.rules.weather_for_day(49), -66)
@@ -147,6 +156,27 @@ class SurvivalPatchTests(unittest.TestCase):
         self.assertEqual(result.data["failed_stage"], "input_state_validation")
         self.assertEqual(state, before)
 
+    def test_furnace_command_failures_keep_state_and_machine_identity_safe(self) -> None:
+        state = self.make_state()
+        before = deepcopy(state)
+
+        malformed = SurvivalSystem(self.rules).execute(
+            state,
+            CommandRequest(None, "game.set_furnace", {"level": 2}),  # type: ignore[arg-type]
+        )
+        self.assertEqual(malformed.command_id, "")
+        self.assertEqual(state, before)
+
+        state.final_result.hard_fail_type = HardFailType.POPULATION_ZERO
+        failed_before = deepcopy(state)
+        failed = SurvivalSystem(self.rules).execute(
+            state,
+            CommandRequest("furnace-failed", "game.set_furnace", {"level": 2}),
+        )
+        self.assertEqual(failed.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(failed.data["reason"], "game_already_failed")
+        self.assertEqual(state, failed_before)
+
     def test_day_one_heating_food_housing_and_zone_temperatures(self) -> None:
         state = self.make_state()
         execution = self.make_engine().execute(
@@ -197,6 +227,13 @@ class SurvivalPatchTests(unittest.TestCase):
         self.assertEqual(state.daily_survival.target_furnace_level, 2)
         self.assertEqual(state.daily_survival.effective_furnace_level, 1)
         self.assertTrue(state.daily_survival.heating_shortfall)
+        self.assertEqual(state.furnace.mode_id, "level_1")
+        self.assertTrue(state.furnace.is_active)
+        log_codes = [item.code for item in execution.logs]
+        self.assertLess(
+            log_codes.index("survival.heating.actual_level_resolved"),
+            log_codes.index("survival.temperature.calculated"),
+        )
 
     def test_today_production_cannot_pay_today_heating_shortfall(self) -> None:
         state = self.make_state()
@@ -261,6 +298,38 @@ class SurvivalPatchTests(unittest.TestCase):
         self.assertEqual(first_execution.logs, second_execution.logs)
         self.assertEqual(first_execution.random_after, second_execution.random_after)
 
+    def test_survival_foundation_completes_all_55_days_deterministically(self) -> None:
+        def run(seed: int) -> GameState:
+            state = self.make_state(seed=seed)
+            engine = self.make_engine()
+            for day in range(1, 56):
+                execution = engine.execute(
+                    state,
+                    CommandRequest(
+                        f"end-{day}",
+                        END_DAY_COMMAND,
+                        expected_state_sequence=state.command_sequence,
+                    ),
+                )
+                if execution.result.code is ErrorCode.END_DAY_CONFIRMATION_REQUIRED:
+                    execution = self.confirm(
+                        engine,
+                        state,
+                        execution,
+                        command_id=f"confirm-{day}",
+                    )
+                self.assertTrue(execution.result.accepted)
+            return state
+
+        first = run(91)
+        second = run(91)
+
+        self.assertEqual(first, second)
+        self.assertEqual(first.calendar.current_day, 55)
+        self.assertTrue(first.calendar.is_day_locked)
+        self.assertFalse(first.final_result.is_finalized)
+        self.assertEqual(first.daily_survival.settled_day, 55)
+
     def test_save_v2_round_trip_and_v1_migration(self) -> None:
         state = self.make_state()
         restored = decode_game_state(encode_game_state(state))
@@ -278,6 +347,13 @@ class SurvivalPatchTests(unittest.TestCase):
         self.assertEqual(migrated.housing.capacity, 40)
         self.assertEqual(migrated.furnace.mode_id, "level_1")
 
+        for corrupt in (
+            {**legacy, "housing": {"basic_residences": 4, "capacity": 40}},
+            {**legacy, "furnace": {"is_active": "yes", "mode_id": None, "pressure": 0}},
+        ):
+            with self.subTest(corrupt=corrupt), self.assertRaises(SaveDataError):
+                decode_game_state(corrupt)
+
     def test_invalid_population_housing_hunger_and_furnace_invariants_are_rejected(self) -> None:
         invalid_states = []
         for mutate in (
@@ -293,6 +369,22 @@ class SurvivalPatchTests(unittest.TestCase):
         for state in invalid_states:
             with self.subTest(state=state), self.assertRaises(SaveDataError):
                 validate_game_state(state)
+
+    def test_dead_population_cannot_remain_in_living_occupation_pools(self) -> None:
+        state = self.make_state()
+        state.population.population_alive = 79
+        state.population.population_dead = 1
+        state.population.healthy_population = 79
+        state.population.homeless_population = 39
+
+        with self.assertRaises(SaveDataError):
+            validate_game_state(state)
+
+    def test_loaded_rule_mappings_cannot_be_mutated_at_runtime(self) -> None:
+        with self.assertRaises(TypeError):
+            self.rules.furnace_levels[1] = self.rules.furnace_levels[0]  # type: ignore[index]
+        with self.assertRaises(TypeError):
+            self.rules.zone_modifiers["inner_ring"] = 99  # type: ignore[index]
 
 
 if __name__ == "__main__":

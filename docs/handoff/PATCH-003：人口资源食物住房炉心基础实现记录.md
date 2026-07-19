@@ -55,4 +55,4 @@ python -m furnace_winter validate-config data
 python -m compileall -q src tests
 ```
 
-结果：95 项测试全部通过；运行配置校验通过（2 个 JSON 文件）；源码编译检查通过。
+结果：102 项测试全部通过；运行配置校验通过（2 个 JSON 文件）；源码编译检查通过。

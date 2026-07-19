@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from furnace_winter.config.loader import load_config_file
@@ -55,9 +56,28 @@ class SurvivalRules:
     zone_modifiers: Mapping[str, int]
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "furnace_levels",
+            MappingProxyType(dict(self.furnace_levels)),
+        )
+        object.__setattr__(
+            self,
+            "zone_modifiers",
+            MappingProxyType(dict(self.zone_modifiers)),
+        )
         expected_levels = {0, 1, 2, 3}
         if set(self.furnace_levels) != expected_levels:
             raise SurvivalConfigError("furnace levels must be exactly 0, 1, 2, and 3")
+        if self.furnace_levels[0] != FurnaceLevelRule(coal_cost=0, heating=0):
+            raise SurvivalConfigError("furnace level 0 must cost 0 coal and provide 0 heat")
+        for level in range(1, 4):
+            previous = self.furnace_levels[level - 1]
+            current = self.furnace_levels[level]
+            if current.coal_cost <= previous.coal_cost:
+                raise SurvivalConfigError("furnace coal costs must increase by level")
+            if current.heating <= previous.heating:
+                raise SurvivalConfigError("furnace heating must increase by level")
         if len(self.weather_temperatures) != 55:
             raise SurvivalConfigError("weather table must contain exactly 55 days")
         if set(self.zone_modifiers) != {"inner_ring", "middle_ring", "outer_ring"}:
