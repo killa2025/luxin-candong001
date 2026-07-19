@@ -2,7 +2,7 @@
 
 本目录保存《炉心残冬》的数值、建筑、科技与文案等运行配置。
 
-Patch 000 不录入游戏配置，只建立 JSON 配置校验入口。正式运行配置必须：
+Patch 001 只新增不含游戏机制的 `manifest.json`，尚未录入数值、建筑、科技或文案正文。正式运行配置必须：
 
 - 使用 UTF-8 编码（兼容有无 BOM）和标准 JSON；`NaN`、`Infinity`、`-Infinity` 均为非法值；
 - 不包含 `terminal_fail`、`trust_fail`、`panic_fail`、`hope_state` 等作废字段；
