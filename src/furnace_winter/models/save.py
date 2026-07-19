@@ -9,12 +9,14 @@ from furnace_winter.models.randomness import RANDOM_ALGORITHM, RandomState
 from furnace_winter.models.serialization import to_primitive
 from furnace_winter.models.state import (
     CURRENT_SAVE_DATA_VERSION,
+    FINAL_DAY,
     BuildingState,
     CalendarState,
     EventState,
     FinalResultState,
     FurnaceState,
     GameState,
+    HardFailType,
     LawState,
     OldCityState,
     PopulationState,
@@ -162,6 +164,8 @@ def _decode_calendar(value: Any) -> CalendarState:
     data = _object(value, "calendar", _field_names(CalendarState))
     current_day = _integer(data["current_day"], "calendar.current_day", minimum=1)
     max_day = _integer(data["max_day"], "calendar.max_day", minimum=1)
+    if max_day != FINAL_DAY:
+        raise SaveDataError(f"calendar.max_day must equal {FINAL_DAY}")
     if current_day > max_day:
         raise SaveDataError("calendar.current_day must not exceed calendar.max_day")
     return CalendarState(
@@ -333,12 +337,21 @@ def _decode_old_city(value: Any) -> OldCityState:
 
 def _decode_final_result(value: Any) -> FinalResultState:
     data = _object(value, "final_result", _field_names(FinalResultState))
+    hard_fail_value = _string(
+        data["hard_fail_type"], "final_result.hard_fail_type", optional=True
+    )
+    try:
+        hard_fail_type = (
+            None if hard_fail_value is None else HardFailType(hard_fail_value)
+        )
+    except ValueError as exc:
+        raise SaveDataError(
+            f"unsupported hard_fail_type: {hard_fail_value}"
+        ) from exc
     return FinalResultState(
         is_finalized=_boolean(data["is_finalized"], "final_result.is_finalized"),
         ending_id=_string(data["ending_id"], "final_result.ending_id", optional=True),
-        hard_fail_type=_string(
-            data["hard_fail_type"], "final_result.hard_fail_type", optional=True
-        ),
+        hard_fail_type=hard_fail_type,
         ending_tags=_string_list(data["ending_tags"], "final_result.ending_tags"),
     )
 
@@ -384,3 +397,21 @@ def decode_game_state(
         raise
     except (TypeError, ValueError) as exc:
         raise SaveDataError(f"invalid save data: {exc}") from exc
+
+
+def validate_game_state(state: GameState) -> None:
+    """Validate an in-memory state with the same rules used at the save boundary."""
+
+    if not isinstance(state, GameState):
+        raise SaveDataError("state must be GameState")
+    hard_fail_type = state.final_result.hard_fail_type
+    if hard_fail_type is not None and not isinstance(hard_fail_type, HardFailType):
+        raise SaveDataError("final_result.hard_fail_type must use HardFailType")
+    try:
+        restored = decode_game_state(encode_game_state(state))
+    except SaveDataError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise SaveDataError(f"invalid game state: {exc}") from exc
+    if restored != state:
+        raise SaveDataError("game state does not match the canonical runtime schema")

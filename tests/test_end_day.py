@@ -9,6 +9,7 @@ from furnace_winter.gameplay import (
     END_DAY_COMMAND,
     EndDayContext,
     EndDayEngine,
+    EndDayExecution,
     EndDayStage,
     RiskWarning,
     RiskWarningLevel,
@@ -19,11 +20,36 @@ from furnace_winter.interface import (
     ReplayEntry,
     ReplayLog,
 )
-from furnace_winter.models import GameState, encode_game_state
+from furnace_winter.models import GameState, HardFailType, encode_game_state
 
 
 def request(name: str, command_id: str = "command-1") -> CommandRequest:
     return CommandRequest(command_id, name)
+
+
+def confirmation_request(
+    preview: EndDayExecution,
+    command_id: str = "confirm",
+) -> CommandRequest:
+    confirmation = preview.result.data["confirmation"]
+    return CommandRequest(
+        command_id,
+        CONFIRM_END_DAY_COMMAND,
+        arguments=confirmation,
+        expected_state_sequence=confirmation["state_sequence"],
+    )
+
+
+def fabricated_confirmation(command_id: str = "confirm") -> CommandRequest:
+    return CommandRequest(
+        command_id,
+        CONFIRM_END_DAY_COMMAND,
+        arguments={
+            "confirmation_token": "not-issued",
+            "state_sequence": 0,
+            "warning_signature": "not-issued",
+        },
+    )
 
 
 class EndDayWarningTests(unittest.TestCase):
@@ -55,7 +81,7 @@ class EndDayWarningTests(unittest.TestCase):
 
         confirmed = engine.execute(
             state,
-            request(CONFIRM_END_DAY_COMMAND, "confirm"),
+            confirmation_request(preview),
         )
 
         self.assertEqual(confirmed.result.code, ErrorCode.OK)
@@ -70,14 +96,124 @@ class EndDayWarningTests(unittest.TestCase):
             )
         )
 
-        for index, name in enumerate((END_DAY_COMMAND, CONFIRM_END_DAY_COMMAND)):
-            with self.subTest(name=name):
-                result = engine.execute(state, request(name, f"command-{index}"))
-                self.assertEqual(result.result.code, ErrorCode.END_DAY_BLOCKED)
-                self.assertFalse(result.result.state_changed)
+        preview = engine.execute(state, request(END_DAY_COMMAND, "command-0"))
+        confirmed = engine.execute(state, fabricated_confirmation("command-1"))
+
+        for result in (preview, confirmed):
+            self.assertEqual(result.result.code, ErrorCode.END_DAY_BLOCKED)
+            self.assertFalse(result.result.state_changed)
 
         self.assertEqual(state.calendar.current_day, 1)
         self.assertEqual(state.command_sequence, 0)
+        self.assertIsNone(engine.last_autosave())
+
+    def test_confirmation_without_preview_is_rejected(self) -> None:
+        state = GameState.initial()
+        engine = EndDayEngine()
+        engine.register_risk_evaluator(
+            lambda _state: (RiskWarning("risk.fuel", RiskWarningLevel.B_STRONG),)
+        )
+
+        execution = engine.execute(state, fabricated_confirmation())
+
+        self.assertEqual(execution.result.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(execution.result.data["reason"], "end_day_preview_required")
+        self.assertEqual(state.calendar.current_day, 1)
+
+    def test_confirmation_is_invalid_after_state_sequence_changes(self) -> None:
+        state = GameState.initial()
+        engine = EndDayEngine()
+        engine.register_risk_evaluator(
+            lambda _state: (RiskWarning("risk.fuel", RiskWarningLevel.B_STRONG),)
+        )
+        preview = engine.execute(state, request(END_DAY_COMMAND, "preview"))
+        state.command_sequence += 1
+
+        execution = engine.execute(state, confirmation_request(preview))
+
+        self.assertEqual(execution.result.code, ErrorCode.STALE_STATE)
+        self.assertEqual(state.calendar.current_day, 1)
+
+    def test_confirmation_is_invalid_after_unsequenced_state_changes(self) -> None:
+        state = GameState.initial()
+        engine = EndDayEngine()
+        engine.register_risk_evaluator(
+            lambda _state: (RiskWarning("risk.fuel", RiskWarningLevel.B_STRONG),)
+        )
+        preview = engine.execute(state, request(END_DAY_COMMAND, "preview"))
+        state.resources.coal = 1
+
+        execution = engine.execute(state, confirmation_request(preview))
+
+        self.assertEqual(execution.result.code, ErrorCode.STALE_STATE)
+        self.assertEqual(state.calendar.current_day, 1)
+
+    def test_confirmation_is_invalid_after_warning_changes(self) -> None:
+        for changed_warning in (
+            RiskWarning("risk.food", RiskWarningLevel.B_STRONG),
+            RiskWarning("risk.fuel", RiskWarningLevel.A_INFO),
+        ):
+            with self.subTest(changed_warning=changed_warning):
+                state = GameState.initial()
+                current = [RiskWarning("risk.fuel", RiskWarningLevel.B_STRONG)]
+                engine = EndDayEngine()
+                engine.register_risk_evaluator(lambda _state: tuple(current))
+                preview = engine.execute(state, request(END_DAY_COMMAND, "preview"))
+                current[:] = [changed_warning]
+
+                execution = engine.execute(state, confirmation_request(preview))
+
+                self.assertEqual(execution.result.code, ErrorCode.STALE_STATE)
+                self.assertEqual(state.calendar.current_day, 1)
+
+    def test_confirmation_rejects_altered_token(self) -> None:
+        state = GameState.initial()
+        engine = EndDayEngine()
+        engine.register_risk_evaluator(
+            lambda _state: (RiskWarning("risk.fuel", RiskWarningLevel.B_STRONG),)
+        )
+        preview = engine.execute(state, request(END_DAY_COMMAND, "preview"))
+        arguments = dict(preview.result.data["confirmation"])
+        arguments["confirmation_token"] = "altered"
+
+        execution = engine.execute(
+            state,
+            CommandRequest(
+                "confirm",
+                CONFIRM_END_DAY_COMMAND,
+                arguments=arguments,
+            ),
+        )
+
+        self.assertEqual(execution.result.code, ErrorCode.STALE_STATE)
+        self.assertEqual(state.calendar.current_day, 1)
+
+    def test_locked_recheck_hard_block_rolls_back(self) -> None:
+        state = GameState.initial(random_seed=19)
+        before = encode_game_state(state)
+        calls = 0
+        engine = EndDayEngine()
+
+        def evaluator(_state: GameState) -> tuple[RiskWarning, ...]:
+            nonlocal calls
+            calls += 1
+            if calls >= 3:
+                return (
+                    RiskWarning("event.major_pending", RiskWarningLevel.C_HARD_BLOCK),
+                )
+            return (RiskWarning("risk.fuel", RiskWarningLevel.B_STRONG),)
+
+        engine.register_risk_evaluator(evaluator)
+        preview = engine.execute(state, request(END_DAY_COMMAND, "preview"))
+
+        execution = engine.execute(state, confirmation_request(preview))
+
+        self.assertEqual(execution.result.code, ErrorCode.END_DAY_BLOCKED)
+        self.assertEqual(
+            execution.result.data["failed_stage"],
+            EndDayStage.VALIDATE_HARD_BLOCKS.value,
+        )
+        self.assertEqual(encode_game_state(state), before)
         self.assertIsNone(engine.last_autosave())
 
     def test_information_warning_does_not_require_confirmation(self) -> None:
@@ -109,6 +245,55 @@ class EndDayWarningTests(unittest.TestCase):
 
 
 class EndDaySettlementTests(unittest.TestCase):
+    def test_invalid_handler_state_rolls_back_before_autosave_sink(self) -> None:
+        mutators = (
+            lambda state: setattr(state.resources, "coal", -7),
+            lambda state: setattr(state.trust_panic, "trust", 101),
+            lambda state: setattr(state, "command_sequence", -1),
+            lambda state: setattr(state, "save_data_version", 999),
+            lambda state: setattr(state.resources, "coal", "bad"),
+            lambda state: setattr(state.laws, "signed_law_ids", ("law.example",)),
+            lambda state: setattr(state.calendar, "current_day", 3),
+            lambda state: setattr(state.calendar, "max_day", 56),
+            lambda state: setattr(state.final_result, "hard_fail_type", "trust_fail"),
+        )
+        for mutator in mutators:
+            with self.subTest(mutator=mutator):
+                sink_records: list[object] = []
+                state = GameState.initial(random_seed=31)
+                engine = EndDayEngine(autosave_sink=sink_records.append)
+                first = engine.execute(state, request(END_DAY_COMMAND, "day-1"))
+                self.assertEqual(first.result.code, ErrorCode.OK)
+                before = deepcopy(state)
+                previous_autosave = engine.last_autosave()
+                engine.register_stage_handler(
+                    EndDayStage.RESOLVE_COLLECTION_AND_PRODUCTION,
+                    lambda context, mutator=mutator: mutator(context.state),
+                )
+
+                execution = engine.execute(state, request(END_DAY_COMMAND, "day-2"))
+
+                self.assertEqual(execution.result.code, ErrorCode.INTERNAL_ERROR)
+                self.assertEqual(state, before)
+                self.assertEqual(execution.random_before, execution.random_after)
+                self.assertEqual(engine.last_autosave(), previous_autosave)
+                self.assertEqual(len(sink_records), 1)
+
+    def test_invalid_input_state_is_rejected_before_settlement(self) -> None:
+        state = GameState.initial(random_seed=8)
+        state.resources.coal = -1
+        before = deepcopy(state)
+        sink_records: list[object] = []
+        engine = EndDayEngine(autosave_sink=sink_records.append)
+
+        execution = engine.execute(state, request(END_DAY_COMMAND))
+
+        self.assertEqual(execution.result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(execution.result.data["failed_stage"], "input_state_validation")
+        self.assertEqual(state, before)
+        self.assertEqual(execution.random_before, execution.random_after)
+        self.assertEqual(sink_records, [])
+
     def test_stages_run_in_fixed_order_and_advance_exactly_one_day(self) -> None:
         state = GameState.initial()
         engine = EndDayEngine()
@@ -252,13 +437,84 @@ class EndDaySettlementTests(unittest.TestCase):
         assert execution.autosave is not None
         self.assertEqual(execution.autosave.resume_stage, "final_settlement")
 
+    def test_exactly_55_days_settle_and_day_56_is_rejected(self) -> None:
+        state = GameState.initial(random_seed=55)
+        sink_records: list[object] = []
+        engine = EndDayEngine(autosave_sink=sink_records.append)
+
+        for settled_day in range(1, 56):
+            execution = engine.execute(
+                state,
+                request(END_DAY_COMMAND, f"day-{settled_day}"),
+            )
+            self.assertEqual(execution.result.code, ErrorCode.OK)
+            self.assertEqual(execution.result.data["settled_day"], settled_day)
+
+        self.assertEqual(state.calendar.current_day, 55)
+        self.assertTrue(state.calendar.is_day_locked)
+        self.assertEqual(len(sink_records), 55)
+        previous_autosave = engine.last_autosave()
+
+        rejected = engine.execute(state, request(END_DAY_COMMAND, "day-56"))
+
+        self.assertEqual(rejected.result.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertFalse(rejected.result.state_changed)
+        self.assertEqual(len(sink_records), 55)
+        self.assertEqual(engine.last_autosave(), previous_autosave)
+
+    def test_two_full_55_day_runs_are_deterministic(self) -> None:
+        def run() -> tuple[dict[str, object], list[object]]:
+            state = GameState.initial(random_seed=2025)
+            engine = EndDayEngine()
+            boundaries: list[object] = []
+            for settled_day in range(1, 56):
+                execution = engine.execute(
+                    state,
+                    request(END_DAY_COMMAND, f"day-{settled_day}"),
+                )
+                boundaries.append(
+                    (
+                        execution.random_before,
+                        execution.random_after,
+                        execution.logs,
+                    )
+                )
+            return encode_game_state(state), boundaries
+
+        first_state, first_boundaries = run()
+        second_state, second_boundaries = run()
+
+        self.assertEqual(first_state, second_state)
+        self.assertEqual(first_boundaries, second_boundaries)
+
+    def test_all_official_hard_fail_types_can_cross_commit_boundary(self) -> None:
+        for hard_fail_type in HardFailType:
+            with self.subTest(hard_fail_type=hard_fail_type):
+                state = GameState.initial()
+                engine = EndDayEngine()
+                engine.register_stage_handler(
+                    EndDayStage.CHECK_HARD_FAILS,
+                    lambda context, hard_fail_type=hard_fail_type: setattr(
+                        context.state.final_result,
+                        "hard_fail_type",
+                        hard_fail_type,
+                    ),
+                )
+
+                execution = engine.execute(state, request(END_DAY_COMMAND))
+
+                self.assertEqual(execution.result.code, ErrorCode.OK)
+                self.assertIs(state.final_result.hard_fail_type, hard_fail_type)
+
     def test_hard_fail_is_saved_and_does_not_advance(self) -> None:
         state = GameState.initial()
         engine = EndDayEngine()
         engine.register_stage_handler(
             EndDayStage.CHECK_HARD_FAILS,
             lambda context: setattr(
-                context.state.final_result, "hard_fail_type", "population_zero"
+                context.state.final_result,
+                "hard_fail_type",
+                HardFailType.POPULATION_ZERO,
             ),
         )
 

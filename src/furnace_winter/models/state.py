@@ -1,17 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from furnace_winter.models.randomness import RandomState
 
 
 CURRENT_SAVE_DATA_VERSION = 1
+FINAL_DAY = 55
+
+
+class HardFailType(StrEnum):
+    POPULATION_ZERO = "population_zero"
+    CORE_COLLAPSE = "core_collapse"
+    TRUST_EXILE = "trust_exile"
+    PANIC_EXPELLED = "panic_expelled"
 
 
 @dataclass(slots=True)
 class CalendarState:
     current_day: int = 1
-    max_day: int = 55
+    max_day: int = FINAL_DAY
     current_phase: str | None = None
     is_day_locked: bool = False
     is_end_day_confirmed: bool = False
@@ -125,8 +134,14 @@ class OldCityState:
 class FinalResultState:
     is_finalized: bool = False
     ending_id: str | None = None
-    hard_fail_type: str | None = None
+    hard_fail_type: HardFailType | None = None
     ending_tags: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.hard_fail_type is not None and not isinstance(
+            self.hard_fail_type, HardFailType
+        ):
+            raise TypeError("hard_fail_type must be HardFailType or None")
 
 
 @dataclass(slots=True)

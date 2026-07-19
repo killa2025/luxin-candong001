@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import unittest
+from copy import deepcopy
 
 from furnace_winter.models import (
     CURRENT_SAVE_DATA_VERSION,
+    FINAL_DAY,
     BuildingState,
     DeterministicRandom,
     GameState,
+    HardFailType,
     SaveDataError,
     SaveMigrationRegistry,
     TrustPanicState,
     decode_game_state,
     encode_game_state,
+    validate_game_state,
 )
 
 
@@ -21,7 +25,7 @@ class GameStateTests(unittest.TestCase):
 
         self.assertEqual(state.save_data_version, CURRENT_SAVE_DATA_VERSION)
         self.assertEqual(state.random.seed, 2025)
-        self.assertEqual(state.calendar.max_day, 55)
+        self.assertEqual(state.calendar.max_day, FINAL_DAY)
         self.assertEqual(state.population.population_total, 0)
         self.assertEqual(state.resources.coal, 0)
         self.assertIsNone(state.trust_panic.trust)
@@ -94,6 +98,61 @@ class GameStateTests(unittest.TestCase):
 
                 with self.assertRaises(SaveDataError):
                     decode_game_state(document)
+
+    def test_max_day_is_fixed_and_cannot_be_loaded_from_save(self) -> None:
+        for value in (1, 54, 56, 100):
+            with self.subTest(value=value):
+                document = encode_game_state(GameState.initial())
+                document["calendar"]["max_day"] = value
+
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(document)
+
+    def test_only_four_official_hard_fail_types_can_be_loaded(self) -> None:
+        for hard_fail_type in HardFailType:
+            with self.subTest(hard_fail_type=hard_fail_type):
+                state = GameState.initial()
+                state.final_result.hard_fail_type = hard_fail_type
+
+                restored = decode_game_state(encode_game_state(state))
+
+                self.assertIs(restored.final_result.hard_fail_type, hard_fail_type)
+
+        for invalid in (
+            "trust_fail",
+            "panic_fail",
+            "terminal_fail",
+            "collapse_survival",
+            "anything_else",
+        ):
+            with self.subTest(invalid=invalid):
+                document = encode_game_state(GameState.initial())
+                document["final_result"]["hard_fail_type"] = invalid
+
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(document)
+
+    def test_runtime_validator_uses_full_save_boundary_rules(self) -> None:
+        valid = GameState.initial()
+        validate_game_state(valid)
+        invalid_states = []
+        for mutate in (
+            lambda state: setattr(state.resources, "coal", -1),
+            lambda state: setattr(state.trust_panic, "trust", 101),
+            lambda state: setattr(state, "command_sequence", -1),
+            lambda state: setattr(state, "save_data_version", 999),
+            lambda state: setattr(state.resources, "coal", "bad"),
+            lambda state: setattr(state.laws, "signed_law_ids", ("law.example",)),
+            lambda state: setattr(state.calendar, "max_day", 56),
+            lambda state: setattr(state.final_result, "hard_fail_type", "trust_fail"),
+        ):
+            state = deepcopy(valid)
+            mutate(state)
+            invalid_states.append(state)
+
+        for state in invalid_states:
+            with self.subTest(state=state), self.assertRaises(SaveDataError):
+                validate_game_state(state)
 
     def test_unknown_random_algorithm_is_rejected(self) -> None:
         document = encode_game_state(GameState.initial())

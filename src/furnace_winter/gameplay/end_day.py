@@ -5,9 +5,11 @@ from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
+from hashlib import sha256
 from typing import Any
 
 from furnace_winter.interface import (
+    ArgumentKind,
     CommandCatalog,
     CommandRequest,
     CommandResult,
@@ -21,16 +23,23 @@ from furnace_winter.interface import (
 )
 from furnace_winter.models import (
     DeterministicRandom,
+    FINAL_DAY,
     GameState,
     RandomState,
+    SaveDataError,
+    dumps,
     encode_game_state,
     snapshot_json,
+    validate_game_state,
 )
 
 
 END_DAY_COMMAND = "game.end_day"
 CONFIRM_END_DAY_COMMAND = "game.confirm_end_day"
 AUTOSAVE_END_DAY_SLOT = "autosave_end_day"
+CONFIRMATION_TOKEN_ARGUMENT = "confirmation_token"
+CONFIRMATION_STATE_SEQUENCE_ARGUMENT = "state_sequence"
+CONFIRMATION_WARNING_SIGNATURE_ARGUMENT = "warning_signature"
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*$")
 
 
@@ -124,6 +133,21 @@ class EndDayExecution:
     autosave: AutosaveRecord | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class EndDayConfirmation:
+    token: str
+    state_sequence: int
+    warning_signature: str
+    state_signature: str
+
+    def as_data(self) -> dict[str, Any]:
+        return {
+            CONFIRMATION_TOKEN_ARGUMENT: self.token,
+            CONFIRMATION_STATE_SEQUENCE_ARGUMENT: self.state_sequence,
+            CONFIRMATION_WARNING_SIGNATURE_ARGUMENT: self.warning_signature,
+        }
+
+
 class EndDayAbort(RuntimeError):
     def __init__(
         self,
@@ -183,6 +207,18 @@ def _warning_data(warnings: tuple[RiskWarning, ...]) -> list[dict[str, Any]]:
     ]
 
 
+def _warning_signature(warnings: tuple[RiskWarning, ...]) -> str:
+    normalized = sorted(
+        _warning_data(warnings),
+        key=lambda item: (item["warning_id"], item["level"]),
+    )
+    return sha256(dumps(normalized).encode("utf-8")).hexdigest()
+
+
+def _state_signature(state: GameState) -> str:
+    return sha256(dumps(encode_game_state(state)).encode("utf-8")).hexdigest()
+
+
 def _replace_state(target: GameState, source: GameState) -> None:
     for item in fields(GameState):
         setattr(target, item.name, deepcopy(getattr(source, item.name)))
@@ -194,10 +230,31 @@ def _result_command_id(request: Any) -> str:
     return ""
 
 
+def _safe_state_sequence(state: Any) -> int:
+    value = getattr(state, "command_sequence", 0)
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return 0
+
+
+def _safe_random_state(state: Any) -> RandomState:
+    value = getattr(state, "random", None)
+    return value if isinstance(value, RandomState) else RandomState.initial(0)
+
+
 def build_end_day_catalog() -> CommandCatalog:
     catalog = CommandCatalog()
     catalog.register(CommandSpec(name=END_DAY_COMMAND))
-    catalog.register(CommandSpec(name=CONFIRM_END_DAY_COMMAND))
+    catalog.register(
+        CommandSpec(
+            name=CONFIRM_END_DAY_COMMAND,
+            required_arguments={
+                CONFIRMATION_TOKEN_ARGUMENT: ArgumentKind.STRING,
+                CONFIRMATION_STATE_SEQUENCE_ARGUMENT: ArgumentKind.INTEGER,
+                CONFIRMATION_WARNING_SIGNATURE_ARGUMENT: ArgumentKind.STRING,
+            },
+        )
+    )
     return catalog
 
 
@@ -213,6 +270,7 @@ class EndDayEngine:
         }
         self._autosave_sink = autosave_sink
         self._last_autosave: AutosaveRecord | None = None
+        self._pending_confirmation: EndDayConfirmation | None = None
 
     def command_specs(self) -> tuple[CommandSpec, ...]:
         return self._catalog.specs()
@@ -237,8 +295,8 @@ class EndDayEngine:
         return deepcopy(self._last_autosave)
 
     def execute(self, state: GameState, request: CommandRequest) -> EndDayExecution:
-        random_before = state.random
-        validation = self._validator.validate(request, state)
+        random_before = _safe_random_state(state)
+        validation = self._validator.validate(request)
         if not validation.is_valid:
             return self._rejected(
                 state,
@@ -248,7 +306,35 @@ class EndDayEngine:
                 validation.details,
                 random_before,
             )
+        try:
+            validate_game_state(state)
+        except (SaveDataError, TypeError, ValueError) as exc:
+            self._pending_confirmation = None
+            return self._rejected(
+                state,
+                request,
+                ErrorCode.INTERNAL_ERROR,
+                (),
+                {
+                    "failed_stage": "input_state_validation",
+                    "exception_type": type(exc).__name__,
+                },
+                random_before,
+            )
+        validation = self._validator.validate(request, state)
+        if not validation.is_valid:
+            if isinstance(request, CommandRequest) and request.name == CONFIRM_END_DAY_COMMAND:
+                self._pending_confirmation = None
+            return self._rejected(
+                state,
+                request,
+                validation.code,
+                (),
+                validation.details,
+                random_before,
+            )
         if state.calendar.is_day_locked or state.final_result.is_finalized:
+            self._pending_confirmation = None
             return self._rejected(
                 state,
                 request,
@@ -258,6 +344,7 @@ class EndDayEngine:
                 random_before,
             )
         if state.final_result.hard_fail_type is not None:
+            self._pending_confirmation = None
             return self._rejected(
                 state,
                 request,
@@ -270,6 +357,7 @@ class EndDayEngine:
         try:
             warnings = self._evaluate_warnings(state)
         except Exception as exc:  # evaluator is an extension boundary
+            self._pending_confirmation = None
             return self._rejected(
                 state,
                 request,
@@ -285,6 +373,7 @@ class EndDayEngine:
             if warning.level is RiskWarningLevel.C_HARD_BLOCK
         )
         if hard_blocks:
+            self._pending_confirmation = None
             return self._rejected(
                 state,
                 request,
@@ -300,16 +389,112 @@ class EndDayEngine:
             if warning.level is RiskWarningLevel.B_STRONG
         )
         if request.name == END_DAY_COMMAND and strong_warnings:
+            confirmation = self._create_confirmation(state, request, warnings)
+            self._pending_confirmation = confirmation
             return self._rejected(
                 state,
                 request,
                 ErrorCode.END_DAY_CONFIRMATION_REQUIRED,
                 warnings,
-                {"strong_warning_ids": [item.warning_id for item in strong_warnings]},
+                {
+                    "strong_warning_ids": [item.warning_id for item in strong_warnings],
+                    "confirmation": confirmation.as_data(),
+                },
                 random_before,
             )
 
-        return self._settle(state, request, warnings, random_before)
+        warning_signature = _warning_signature(warnings)
+        if request.name == CONFIRM_END_DAY_COMMAND:
+            confirmation = self._pending_confirmation
+            if confirmation is None:
+                return self._rejected(
+                    state,
+                    request,
+                    ErrorCode.ILLEGAL_COMMAND,
+                    warnings,
+                    {"reason": "end_day_preview_required"},
+                    random_before,
+                )
+            supplied = request.arguments
+            if (
+                supplied[CONFIRMATION_TOKEN_ARGUMENT] != confirmation.token
+                or supplied[CONFIRMATION_STATE_SEQUENCE_ARGUMENT]
+                != confirmation.state_sequence
+                or supplied[CONFIRMATION_WARNING_SIGNATURE_ARGUMENT]
+                != confirmation.warning_signature
+            ):
+                self._pending_confirmation = None
+                return self._rejected(
+                    state,
+                    request,
+                    ErrorCode.STALE_STATE,
+                    warnings,
+                    {"reason": "confirmation_mismatch"},
+                    random_before,
+                )
+            if state.command_sequence != confirmation.state_sequence:
+                self._pending_confirmation = None
+                return self._rejected(
+                    state,
+                    request,
+                    ErrorCode.STALE_STATE,
+                    warnings,
+                    {"reason": "confirmation_state_changed"},
+                    random_before,
+                )
+            if _state_signature(state) != confirmation.state_signature:
+                self._pending_confirmation = None
+                return self._rejected(
+                    state,
+                    request,
+                    ErrorCode.STALE_STATE,
+                    warnings,
+                    {"reason": "confirmation_state_changed"},
+                    random_before,
+                )
+            if warning_signature != confirmation.warning_signature or not strong_warnings:
+                self._pending_confirmation = None
+                return self._rejected(
+                    state,
+                    request,
+                    ErrorCode.STALE_STATE,
+                    warnings,
+                    {"reason": "confirmation_risks_changed"},
+                    random_before,
+                )
+        else:
+            self._pending_confirmation = None
+
+        self._pending_confirmation = None
+        return self._settle(
+            state,
+            request,
+            warnings,
+            warning_signature,
+            random_before,
+        )
+
+    @staticmethod
+    def _create_confirmation(
+        state: GameState,
+        request: CommandRequest,
+        warnings: tuple[RiskWarning, ...],
+    ) -> EndDayConfirmation:
+        warning_signature = _warning_signature(warnings)
+        state_signature = _state_signature(state)
+        token_material = {
+            "command_id": request.command_id,
+            "state_sequence": state.command_sequence,
+            "state_signature": state_signature,
+            "warning_signature": warning_signature,
+        }
+        token = sha256(dumps(token_material).encode("utf-8")).hexdigest()
+        return EndDayConfirmation(
+            token=token,
+            state_sequence=state.command_sequence,
+            warning_signature=warning_signature,
+            state_signature=state_signature,
+        )
 
     def _evaluate_warnings(self, state: GameState) -> tuple[RiskWarning, ...]:
         warnings: list[RiskWarning] = []
@@ -330,6 +515,7 @@ class EndDayEngine:
         state: GameState,
         request: CommandRequest,
         warnings: tuple[RiskWarning, ...],
+        expected_warning_signature: str,
         random_before: RandomState,
     ) -> EndDayExecution:
         working = deepcopy(state)
@@ -359,21 +545,48 @@ class EndDayEngine:
                     working.calendar.is_day_locked = True
                     working.calendar.is_end_day_confirmed = True
                 elif current_stage is EndDayStage.VALIDATE_HARD_BLOCKS:
-                    pass
+                    rechecked_warnings = self._evaluate_warnings(working)
+                    hard_blocks = tuple(
+                        warning
+                        for warning in rechecked_warnings
+                        if warning.level is RiskWarningLevel.C_HARD_BLOCK
+                    )
+                    if hard_blocks:
+                        raise EndDayAbort(
+                            ErrorCode.END_DAY_BLOCKED,
+                            {
+                                "reason": "hard_block_after_input_lock",
+                                "hard_block_ids": [
+                                    warning.warning_id for warning in hard_blocks
+                                ],
+                            },
+                        )
+                    if (
+                        _warning_signature(rechecked_warnings)
+                        != expected_warning_signature
+                    ):
+                        raise EndDayAbort(
+                            ErrorCode.STALE_STATE,
+                            {"reason": "risks_changed_after_input_lock"},
+                        )
+                    warnings = rechecked_warnings
                 elif current_stage is EndDayStage.WRITE_AUTOSAVE:
                     if working.calendar.current_day != settled_day:
                         raise RuntimeError("stage handler changed current_day")
-                    if working.calendar.max_day != state.calendar.max_day:
+                    if working.calendar.max_day != FINAL_DAY:
                         raise RuntimeError("stage handler changed max_day")
+                    if working.command_sequence != state.command_sequence:
+                        raise RuntimeError("stage handler changed command_sequence")
                     working.calendar.is_day_locked = True
                     working.calendar.is_end_day_confirmed = True
                     working.random = random.snapshot()
                     working.command_sequence = state.command_sequence + 1
+                    validate_game_state(working)
                     resume_stage = (
                         "terminal_state"
                         if working.final_result.hard_fail_type is not None
                         else "final_settlement"
-                        if settled_day == working.calendar.max_day
+                        if settled_day == FINAL_DAY
                         else EndDayStage.ADVANCE_DAY.value
                     )
                     pending_autosave = AutosaveRecord(
@@ -422,13 +635,28 @@ class EndDayEngine:
             )
 
         working.random = random.snapshot()
+        try:
+            validate_game_state(working)
+        except (SaveDataError, TypeError, ValueError) as exc:
+            return self._rejected(
+                state,
+                request,
+                ErrorCode.INTERNAL_ERROR,
+                warnings,
+                {
+                    "failed_stage": "commit_state_validation",
+                    "exception_type": type(exc).__name__,
+                },
+                random_before,
+                tuple(logs),
+            )
         _replace_state(state, working)
         self._last_autosave = deepcopy(pending_autosave)
         transition = (
             "hard_fail"
             if state.final_result.hard_fail_type is not None
             else "final_settlement"
-            if settled_day == state.calendar.max_day
+            if settled_day == FINAL_DAY
             else "next_day"
         )
         result = CommandResult(
@@ -436,7 +664,7 @@ class EndDayEngine:
             accepted=True,
             code=ErrorCode.OK,
             state_changed=True,
-            state_sequence=state.command_sequence,
+            state_sequence=_safe_state_sequence(state),
             feedback=(
                 FeedbackItem(
                     FeedbackLevel.INFO,
@@ -464,7 +692,7 @@ class EndDayEngine:
     def _advance_after_settlement(state: GameState) -> None:
         if state.final_result.hard_fail_type is not None:
             return
-        if state.calendar.current_day >= state.calendar.max_day:
+        if state.calendar.current_day >= FINAL_DAY:
             return
         state.calendar.current_day += 1
         state.calendar.is_day_locked = False
@@ -485,7 +713,7 @@ class EndDayEngine:
             accepted=False,
             code=code,
             state_changed=False,
-            state_sequence=state.command_sequence,
+            state_sequence=_safe_state_sequence(state),
             feedback=(
                 FeedbackItem(
                     FeedbackLevel.ERROR
@@ -501,5 +729,5 @@ class EndDayEngine:
             warnings=warnings,
             logs=deepcopy(logs),
             random_before=random_before,
-            random_after=state.random,
+            random_after=_safe_random_state(state),
         )

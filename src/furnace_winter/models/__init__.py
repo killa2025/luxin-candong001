@@ -8,16 +8,19 @@ from furnace_winter.models.save import (
     SaveMigrationRegistry,
     decode_game_state,
     encode_game_state,
+    validate_game_state,
 )
 from furnace_winter.models.serialization import dumps, snapshot_json, to_primitive
 from furnace_winter.models.state import (
     CURRENT_SAVE_DATA_VERSION,
+    FINAL_DAY,
     BuildingState,
     CalendarState,
     EventState,
     FinalResultState,
     FurnaceState,
     GameState,
+    HardFailType,
     LawState,
     OldCityState,
     PopulationState,
@@ -30,6 +33,7 @@ from furnace_winter.models.state import (
 __all__ = [
     "RANDOM_ALGORITHM",
     "CURRENT_SAVE_DATA_VERSION",
+    "FINAL_DAY",
     "BuildingState",
     "CalendarState",
     "DeterministicRandom",
@@ -37,6 +41,7 @@ __all__ = [
     "FinalResultState",
     "FurnaceState",
     "GameState",
+    "HardFailType",
     "LawState",
     "OldCityState",
     "PopulationState",
@@ -52,4 +57,5 @@ __all__ = [
     "encode_game_state",
     "snapshot_json",
     "to_primitive",
+    "validate_game_state",
 ]
