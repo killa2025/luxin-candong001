@@ -1063,6 +1063,154 @@ class LawPatchTests(unittest.TestCase):
                     migrated.social_policy.consecutive_ration_days, 5
                 )
 
+    def test_v6_emergency_restore_state_is_strictly_validated(self) -> None:
+        state = self.make_state()
+        canteen = self.execute_building(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        self.execute_building(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": canteen.data["building_id"],
+                "population_type": "workers",
+                "count": 5,
+            },
+        )
+        state.laws.signed_law_ids = [
+            "coarse_soup_law",
+            "emergency_ration_law",
+        ]
+        state.social_policy.current_ration_mode = "coarse_soup"
+        state.social_policy.ration_food_numerator = 70
+        state.social_policy.ration_food_denominator = 100
+        state.social_policy.consecutive_ration_days = 5
+        state.social_policy.consecutive_ration_mode = "coarse_soup"
+        self.assertTrue(
+            self.execute_law(
+                state,
+                SET_RATION_COMMAND,
+                {"mode": "emergency", "confirm": True},
+            ).accepted
+        )
+        valid = encode_game_state(state)
+        restored = decode_game_state(valid)
+        self.law_system().validate_state(restored)
+
+        locked_restore = deepcopy(valid)
+        locked_restore["social_policy"]["previous_ration_mode"] = (
+            "rice_porridge"
+        )
+        decoded_locked = decode_game_state(locked_restore)
+        with self.assertRaisesRegex(
+            SaveDataError, "restored ration mode is not unlocked"
+        ):
+            self.law_system().validate_state(decoded_locked)
+
+        mismatched_days = deepcopy(valid)
+        mismatched_days["social_policy"]["previous_ration_days"] = 4
+        with self.assertRaisesRegex(
+            SaveDataError,
+            "emergency ration must preserve the current ration streak days",
+        ):
+            decode_game_state(mismatched_days)
+
+    def test_v5_migration_rejects_invalid_emergency_restore_state(self) -> None:
+        state = self.make_state()
+        state.laws.signed_law_ids = [
+            "coarse_soup_law",
+            "emergency_ration_law",
+        ]
+        state.social_policy.current_ration_mode = "emergency"
+        state.social_policy.ration_food_numerator = 50
+        state.social_policy.ration_food_denominator = 100
+        state.social_policy.previous_ration_mode = "coarse_soup"
+        state.social_policy.previous_ration_days = 5
+        state.social_policy.consecutive_ration_days = 5
+        state.social_policy.consecutive_ration_mode = "coarse_soup"
+        legacy = encode_game_state(state)
+        legacy["save_data_version"] = 5
+        del legacy["social_policy"]["consecutive_ration_mode"]
+
+        locked_restore = deepcopy(legacy)
+        locked_restore["social_policy"]["previous_ration_mode"] = (
+            "rice_porridge"
+        )
+        decoded_locked = decode_game_state(locked_restore)
+        with self.assertRaisesRegex(
+            SaveDataError, "restored ration mode is not unlocked"
+        ):
+            self.law_system().validate_state(decoded_locked)
+
+        mismatched_days = deepcopy(legacy)
+        mismatched_days["social_policy"]["previous_ration_days"] = 4
+        with self.assertRaisesRegex(
+            SaveDataError,
+            "emergency ration must preserve the current ration streak days",
+        ):
+            decode_game_state(mismatched_days)
+
+    def test_same_day_normal_then_emergency_restore_state_remains_valid(self) -> None:
+        state = self.make_state()
+        canteen = self.execute_building(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        self.execute_building(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": canteen.data["building_id"],
+                "population_type": "workers",
+                "count": 5,
+            },
+        )
+        state.laws.signed_law_ids = [
+            "coarse_soup_law",
+            "emergency_ration_law",
+        ]
+        state.social_policy.current_ration_mode = "coarse_soup"
+        state.social_policy.ration_food_numerator = 70
+        state.social_policy.ration_food_denominator = 100
+        state.social_policy.consecutive_ration_days = 5
+        state.social_policy.consecutive_ration_mode = "coarse_soup"
+        self.assertTrue(
+            self.execute_law(
+                state, SET_RATION_COMMAND, {"mode": "normal"}
+            ).accepted
+        )
+        self.assertTrue(
+            self.execute_law(
+                state,
+                SET_RATION_COMMAND,
+                {"mode": "emergency", "confirm": True},
+            ).accepted
+        )
+        self.assertEqual(state.social_policy.previous_ration_mode, "normal")
+        self.assertEqual(state.social_policy.previous_ration_days, 5)
+        self.assertEqual(state.social_policy.consecutive_ration_days, 5)
+
+        restored = decode_game_state(encode_game_state(state))
+        self.law_system().validate_state(restored)
+        legacy = encode_game_state(state)
+        legacy["save_data_version"] = 5
+        del legacy["social_policy"]["consecutive_ration_mode"]
+        migrated = decode_game_state(legacy)
+        self.law_system().validate_state(migrated)
+        self.assertEqual(
+            migrated.social_policy.consecutive_ration_mode, "coarse_soup"
+        )
+
+        self.assertTrue(self.settle(self.engine(), restored).result.accepted)
+        self.assertEqual(restored.social_policy.current_ration_mode, "normal")
+        self.assertEqual(restored.social_policy.consecutive_ration_days, 5)
+        self.assertEqual(
+            restored.social_policy.consecutive_ration_mode, "coarse_soup"
+        )
+
     def test_custom_valid_overtime_ratio_is_config_owned(self) -> None:
         custom_rules = replace(
             self.law_rules,

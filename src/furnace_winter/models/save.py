@@ -1265,6 +1265,13 @@ def _validate_state_invariants(state: GameState) -> None:
         social.previous_ration_mode is not None
     ):
         raise SaveDataError("emergency ration must retain exactly one previous mode")
+    if (
+        social.current_ration_mode == "emergency"
+        and social.previous_ration_days != social.consecutive_ration_days
+    ):
+        raise SaveDataError(
+            "emergency ration must preserve the current ration streak days"
+        )
     if social.previous_ration_mode is None and social.previous_ration_days != 0:
         raise SaveDataError("inactive emergency ration cannot retain previous days")
     if social.consecutive_ration_mode not in {

@@ -431,6 +431,15 @@ class LawSystem:
         ration = self.rules.rations[state.social_policy.current_ration_mode]
         if ration.required_law_id and ration.required_law_id not in signed:
             raise SaveDataError("active ration mode is not unlocked")
+        if state.social_policy.current_ration_mode == "emergency":
+            previous_mode = state.social_policy.previous_ration_mode
+            assert previous_mode is not None
+            previous_ration = self.rules.rations[previous_mode]
+            if (
+                previous_ration.required_law_id
+                and previous_ration.required_law_id not in signed
+            ):
+                raise SaveDataError("restored ration mode is not unlocked")
         if (
             state.social_policy.ration_food_numerator != ration.food_numerator
             or state.social_policy.ration_food_denominator != ration.food_denominator
