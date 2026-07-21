@@ -119,6 +119,28 @@ class LawRules:
                 raise LawConfigError(f"law {law_id!r} references unknown laws: {sorted(missing)}")
             if law_id in referenced:
                 raise LawConfigError(f"law {law_id!r} cannot reference itself")
+            for conflicting_id in rule.mutually_exclusive:
+                if law_id not in self.laws[conflicting_id].mutually_exclusive:
+                    raise LawConfigError(
+                        "mutually exclusive law references must be symmetric"
+                    )
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit_required_all(law_id: str) -> None:
+            if law_id in visiting:
+                raise LawConfigError("required_all law prerequisites must be acyclic")
+            if law_id in visited:
+                return
+            visiting.add(law_id)
+            for prerequisite_id in self.laws[law_id].required_all:
+                visit_required_all(prerequisite_id)
+            visiting.remove(law_id)
+            visited.add(law_id)
+
+        for law_id in self.laws:
+            visit_required_all(law_id)
         if set(self.rations) != {"normal", "coarse_soup", "rice_porridge", "emergency"}:
             raise LawConfigError("ration catalog must contain the four V1 modes")
         for mode_id, ration in self.rations.items():

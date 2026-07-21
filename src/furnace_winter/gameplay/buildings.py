@@ -7,7 +7,16 @@ from typing import Any
 
 from furnace_winter.config import BuildingRule, BuildingRules, SurvivalRules
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage
-from furnace_winter.gameplay.survival import furnace_level, is_over_capacity, storage_used
+from furnace_winter.gameplay.survival import (
+    furnace_level,
+    is_over_capacity,
+    projected_building_insulation_bonus,
+    projected_building_temperature,
+    projected_furnace_level,
+    projected_heat_bonus,
+    projected_woodfuel_available,
+    storage_used,
+)
 from furnace_winter.interface import (
     ArgumentKind,
     CommandCatalog,
@@ -310,6 +319,15 @@ class BuildingSystem:
             ):
                 return CommandValidation(False, ErrorCode.INVALID_ARGUMENTS, {"reason": "invalid_unassign_count", "assigned_count": current})
             target = 0 if remove_count is None else current - remove_count
+            if (
+                state.social_policy.overtime_building_id == building_id
+                and target < current
+            ):
+                return CommandValidation(
+                    False,
+                    ErrorCode.ILLEGAL_COMMAND,
+                    {"reason": "overtime_staff_locked"},
+                )
         else:
             target = request.arguments.get("count")
         if request.name == ASSIGN_COMMAND and (
@@ -754,16 +772,10 @@ class BuildingSystem:
         return rule.max_buildings
 
     def _heat_bonus(self, state: GameState) -> int:
-        return self.rules.heat.enhanced_temperature_bonus if self.rules.heat.enhancement_tech_id in state.technologies.researched_tech_ids else self.rules.heat.temperature_bonus
+        return projected_heat_bonus(state, self.rules)
 
     def _projected_furnace_level(self, state: GameState) -> int:
-        target_level = furnace_level(state.furnace.mode_id)
-        available_fuel = state.resources.coal + self._woodfuel_available(state)
-        return max(
-            level
-            for level in range(target_level + 1)
-            if self.survival_rules.furnace_levels[level].coal_cost <= available_fuel
-        )
+        return projected_furnace_level(state, self.survival_rules, self.rules)
 
     @staticmethod
     def _production_multiplier(state: GameState, building_id: str) -> tuple[int, int]:
@@ -778,12 +790,7 @@ class BuildingSystem:
         )
 
     def _woodfuel_available(self, state: GameState) -> int:
-        if not state.building_management.woodfuel_confirmed_today:
-            return 0
-        rule = self.rules.woodfuel
-        usable_wood = min(state.resources.wood, rule.daily_wood_limit)
-        usable_wood -= usable_wood % rule.minimum_wood_unit
-        return usable_wood // rule.wood_per_fuel
+        return projected_woodfuel_available(state, self.rules)
 
     def _coal_reserved_for_level(self, state: GameState, level: int) -> int:
         required_fuel = self.survival_rules.furnace_levels[level].coal_cost
@@ -792,31 +799,7 @@ class BuildingSystem:
     def _building_insulation_bonus(
         self, state: GameState, building: BuildingState
     ) -> int:
-        bonus = 0
-        researched = set(state.technologies.researched_tech_ids)
-        if building.building_type in {
-            "basic_residence",
-            "improved_residence",
-            "advanced_residence",
-        }:
-            if "tech_housing_insulation_1" in researched:
-                bonus += 4
-        elif building.building_type not in {
-            "small_warehouse",
-            "cemetery",
-            "cold_pit",
-            "gathering_shelter",
-        }:
-            if "tech_building_insulation_2" in researched:
-                bonus += 12
-            elif "tech_building_insulation_1" in researched:
-                bonus += 6
-        if (
-            building.building_type in {"medical_station", "hospital"}
-            and "tech_medical_building_insulation" in researched
-        ):
-            bonus += 8
-        return bonus
+        return projected_building_insulation_bonus(state, building)
 
     def _projected_building_temperature(
         self,
@@ -826,13 +809,13 @@ class BuildingSystem:
         *,
         include_heat: bool,
     ) -> int:
-        zone = "outer_ring" if building.zone == "storage_outer" else building.zone
-        return (
-            self.survival_rules.weather_for_day(state.calendar.current_day)
-            + self.survival_rules.furnace_levels[effective_furnace_level].heating
-            + self.survival_rules.zone_modifiers[zone]
-            + self._building_insulation_bonus(state, building)
-            + (self._heat_bonus(state) if include_heat else 0)
+        return projected_building_temperature(
+            state,
+            building,
+            self.rules,
+            self.survival_rules,
+            effective_furnace_level,
+            include_heat=include_heat,
         )
 
     @staticmethod

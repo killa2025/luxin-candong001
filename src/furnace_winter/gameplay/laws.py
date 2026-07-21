@@ -6,11 +6,17 @@ from typing import Any
 
 from furnace_winter.config import BuildingRules, LawRules, SurvivalRules
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage, RiskWarning, RiskWarningLevel
+from furnace_winter.gameplay.survival import is_building_expected_operational
 from furnace_winter.interface import (
     ArgumentKind, CommandCatalog, CommandRequest, CommandResult, CommandSpec,
     CommandValidation, CommandValidator, ErrorCode, FeedbackItem, FeedbackLevel,
 )
-from furnace_winter.models import GameState, SaveDataError, validate_game_state
+from furnace_winter.models import (
+    OVERTIME_BUILDING_TYPES,
+    GameState,
+    SaveDataError,
+    validate_game_state,
+)
 
 
 SIGN_LAW_COMMAND = "game.sign_law"
@@ -26,11 +32,6 @@ _EMERGENCY_COOLDOWN = "emergency_ration"
 _MEDICAL_COOLDOWN = "medical_ration"
 _TRIAGE_COOLDOWN = "triage"
 _MEMORIAL_COOLDOWN = "memorial"
-_OVERTIME_TYPES = frozenset({
-    "medical_station", "hospital", "research_institute", "canteen",
-    "greenhouse", "improved_greenhouse", "small_coal_miner",
-    "small_steel_miner", "large_coal_miner", "large_steel_miner", "logging_camp",
-})
 _LONG_SHIFT_EXCLUDED_TYPES = frozenset({
     "child_shelter", "school", "small_tavern", "grand_casino",
     "basic_residence", "improved_residence", "advanced_residence",
@@ -202,10 +203,12 @@ class LawSystem:
         building = state.buildings.get(str(request.arguments["building_id"]))
         if building is None:
             return self._illegal("unknown_building")
-        if building.building_type not in _OVERTIME_TYPES:
+        if building.building_type not in OVERTIME_BUILDING_TYPES:
             return self._illegal("building_cannot_overtime")
         if self._assigned_total(building) <= 0:
             return self._illegal("building_has_no_staff")
+        if not self._is_expected_operational(state, building):
+            return self._illegal("building_not_operational")
         return CommandValidation.valid()
 
     def _medical_ration_legality(self, state: GameState, request: CommandRequest) -> CommandValidation:
@@ -302,7 +305,6 @@ class LawSystem:
         ration = self.rules.rations[mode]
         state.social_policy.ration_food_numerator = ration.food_numerator
         state.social_policy.ration_food_denominator = ration.food_denominator
-        state.social_policy.consecutive_ration_days = 0
         return {
             "ration_mode": mode, "previous_mode": previous,
             "active_duration": "current_day_only" if mode == "emergency" else "until_changed",
@@ -315,7 +317,6 @@ class LawSystem:
         if mode == "normal":
             state.social_policy.worktime_output_numerator = 100
             state.social_policy.worktime_output_denominator = 100
-            state.social_policy.consecutive_long_shift_days = 0
         else:
             state.social_policy.worktime_output_numerator = self.rules.worktime.long_shift_output_numerator
             state.social_policy.worktime_output_denominator = self.rules.worktime.long_shift_output_denominator
@@ -403,6 +404,9 @@ class LawSystem:
     def install(self, engine: EndDayEngine) -> None:
         engine.register_state_validator(self.validate_state)
         engine.register_risk_evaluator(self.evaluate_risks)
+        engine.register_stage_handler(
+            EndDayStage.READ_FINAL_PLAN, self.prepare_daily_modes
+        )
         engine.register_stage_handler(EndDayStage.RESOLVE_MEDICAL_DISEASE_AND_DEATH, self.resolve_medical_disease_and_death)
         engine.register_stage_handler(EndDayStage.RESOLVE_TRUST_AND_PANIC, self.resolve_trust_and_panic)
         engine.register_stage_handler(EndDayStage.CLOSE_ACTION_EFFECTS, self.close_action_effects)
@@ -447,14 +451,23 @@ class LawSystem:
             state.social_policy.worktime_output_denominator,
         ) != expected_worktime_ratio:
             raise SaveDataError("worktime output ratio must match law rules")
-        if state.social_policy.overtime_building_id is not None and (
-            state.social_policy.overtime_output_numerator,
-            state.social_policy.overtime_output_denominator,
-        ) != (
-            self.rules.worktime.overtime_output_numerator,
-            self.rules.worktime.overtime_output_denominator,
-        ):
-            raise SaveDataError("overtime output ratio must match law rules")
+        overtime_id = state.social_policy.overtime_building_id
+        if overtime_id is not None:
+            if "overtime_law" not in signed:
+                raise SaveDataError("overtime target requires the overtime law")
+            overtime_target = state.buildings[overtime_id]
+            if overtime_target.building_type not in OVERTIME_BUILDING_TYPES:
+                raise SaveDataError("overtime target building type is not allowed")
+            if self._assigned_total(overtime_target) <= 0:
+                raise SaveDataError("overtime target must retain assigned staff")
+            if (
+                state.social_policy.overtime_output_numerator,
+                state.social_policy.overtime_output_denominator,
+            ) != (
+                self.rules.worktime.overtime_output_numerator,
+                self.rules.worktime.overtime_output_denominator,
+            ):
+                raise SaveDataError("overtime output ratio must match law rules")
         if state.social_policy.firepit_enabled != ("firepit_law" in signed):
             raise SaveDataError("firepit enabled state must match signed law")
         expected_path = "cemetery" if "cemetery_law" in signed else "cold_pit" if "cold_pit_law" in signed else "none"
@@ -482,6 +495,25 @@ class LawSystem:
             warnings.append(RiskWarning("laws.unhandled_bodies", RiskWarningLevel.B_STRONG, {"count": state.social_policy.unhandled_bodies}))
         return tuple(warnings)
 
+    def prepare_daily_modes(self, context: EndDayContext) -> None:
+        state = context.state
+        ration_mode = self._effective_ration_mode(state)
+        previous_summary = state.daily_survival
+        if ration_mode == "normal":
+            ration_day = 0
+        elif (
+            previous_summary.settled_day == context.settled_day - 1
+            and previous_summary.ration_mode_used == ration_mode
+        ):
+            ration_day = state.social_policy.consecutive_ration_days + 1
+        else:
+            ration_day = 1
+        state.social_policy.consecutive_ration_days = ration_day
+        context.emit(
+            "laws.daily_modes.prepared",
+            {"ration_mode": ration_mode, "ration_day": ration_day},
+        )
+
     def resolve_medical_disease_and_death(self, context: EndDayContext) -> None:
         state = context.state
         temporary = self.rules.medical.temporary_capacity if context.settled_day <= self.rules.medical.temporary_capacity_through_day else 0
@@ -491,11 +523,7 @@ class LawSystem:
         state.medical.effective_capacity = temporary + building_capacity
         ration_mode = self._effective_ration_mode(state)
         ration = self.rules.rations[ration_mode]
-        ration_day = (
-            state.social_policy.consecutive_ration_days + 1
-            if ration_mode == state.social_policy.current_ration_mode
-            else 1
-        )
+        ration_day = state.social_policy.consecutive_ration_days
         ration_sick = 0
         if ration.sick_after_days is not None and ration_day >= ration.sick_after_days and ration.sick_population_divisor:
             ration_sick = min(state.population.healthy_population, state.population.population_alive // ration.sick_population_divisor)
@@ -540,11 +568,7 @@ class LawSystem:
         state = context.state
         ration_mode = self._effective_ration_mode(state)
         ration = self.rules.rations[ration_mode]
-        ration_day = (
-            state.social_policy.consecutive_ration_days + 1
-            if ration_mode == state.social_policy.current_ration_mode
-            else 1
-        )
+        ration_day = state.social_policy.consecutive_ration_days
         trust_change = ration.daily_trust_change
         panic_change = ration.daily_panic_change
         if ration_mode == "rice_porridge" and ration_day % 2 == 0:
@@ -572,11 +596,6 @@ class LawSystem:
             panic_change += self.rules.actions.unhandled_body_crisis_extra_panic
             self._add_tag(state, "unhandled_bodies_crisis")
         self._change_emotion(state, trust=trust_change, panic=panic_change)
-        state.social_policy.consecutive_ration_days = (
-            ration_day
-            if ration_mode == state.social_policy.current_ration_mode
-            else 0
-        )
         context.emit("laws.trust_and_panic.resolved", {
             "trust_change": trust_change, "panic_change": panic_change,
             "ration_mode_used": ration_mode,
@@ -714,11 +733,19 @@ class LawSystem:
                 capacity += (30 * staff) // 10
         return capacity
 
-    @staticmethod
-    def _has_operational_canteen(state: GameState) -> bool:
+    def _has_operational_canteen(self, state: GameState) -> bool:
         return any(
-            building.building_type == "canteen" and building.is_operational
+            building.building_type == "canteen"
+            and self._is_expected_operational(state, building)
             for building in state.buildings.values()
+        )
+
+    def _is_expected_operational(self, state: GameState, building: Any) -> bool:
+        return is_building_expected_operational(
+            state,
+            building,
+            self.building_rules,
+            self.survival_rules,
         )
 
     def _effective_ration_mode(self, state: GameState) -> str:

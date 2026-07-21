@@ -69,6 +69,134 @@ def is_over_capacity(resources: ResourceState) -> bool:
     return storage_used(resources) > resources.storage_capacity
 
 
+def projected_woodfuel_available(
+    state: GameState,
+    building_rules: BuildingRules | None,
+) -> int:
+    if (
+        building_rules is None
+        or not state.building_management.woodfuel_confirmed_today
+    ):
+        return 0
+    rule = building_rules.woodfuel
+    usable_wood = min(state.resources.wood, rule.daily_wood_limit)
+    usable_wood -= usable_wood % rule.minimum_wood_unit
+    return usable_wood // rule.wood_per_fuel
+
+
+def projected_furnace_level(
+    state: GameState,
+    survival_rules: SurvivalRules,
+    building_rules: BuildingRules | None,
+) -> int:
+    target_level = furnace_level(state.furnace.mode_id)
+    available_fuel = state.resources.coal + projected_woodfuel_available(
+        state, building_rules
+    )
+    return max(
+        level
+        for level in range(target_level + 1)
+        if survival_rules.furnace_levels[level].coal_cost <= available_fuel
+    )
+
+
+def projected_building_insulation_bonus(
+    state: GameState,
+    building: BuildingState,
+) -> int:
+    bonus = 0
+    researched = set(state.technologies.researched_tech_ids)
+    if building.building_type in {
+        "basic_residence",
+        "improved_residence",
+        "advanced_residence",
+    }:
+        if "tech_housing_insulation_1" in researched:
+            bonus += 4
+    elif building.building_type not in {
+        "small_warehouse",
+        "cemetery",
+        "cold_pit",
+        "gathering_shelter",
+    }:
+        if "tech_building_insulation_2" in researched:
+            bonus += 12
+        elif "tech_building_insulation_1" in researched:
+            bonus += 6
+    if (
+        building.building_type in {"medical_station", "hospital"}
+        and "tech_medical_building_insulation" in researched
+    ):
+        bonus += 8
+    return bonus
+
+
+def projected_heat_bonus(state: GameState, building_rules: BuildingRules) -> int:
+    heat = building_rules.heat
+    return (
+        heat.enhanced_temperature_bonus
+        if heat.enhancement_tech_id in state.technologies.researched_tech_ids
+        else heat.temperature_bonus
+    )
+
+
+def projected_building_temperature(
+    state: GameState,
+    building: BuildingState,
+    building_rules: BuildingRules,
+    survival_rules: SurvivalRules,
+    effective_furnace_level: int,
+    *,
+    include_heat: bool,
+) -> int:
+    zone = "outer_ring" if building.zone == "storage_outer" else building.zone
+    return (
+        survival_rules.weather_for_day(state.calendar.current_day)
+        + survival_rules.furnace_levels[effective_furnace_level].heating
+        + survival_rules.zone_modifiers[zone]
+        + projected_building_insulation_bonus(state, building)
+        + (projected_heat_bonus(state, building_rules) if include_heat else 0)
+    )
+
+
+def is_building_expected_operational(
+    state: GameState,
+    building: BuildingState,
+    building_rules: BuildingRules,
+    survival_rules: SurvivalRules,
+) -> bool:
+    """Return whether a currently running building can keep running today."""
+
+    rule = building_rules.buildings.get(building.building_type)
+    if rule is None or not building.is_built or not building.is_operational:
+        return False
+    assigned = sum(
+        (
+            building.assigned_workers,
+            building.assigned_engineers,
+            building.assigned_children,
+            building.assigned_medical_apprentices,
+            building.assigned_engineering_apprentices,
+        )
+    )
+    if rule.staff_capacity > 0 and assigned <= 0:
+        return False
+    if rule.min_operating_temperature is None:
+        return True
+    effective_level = projected_furnace_level(
+        state, survival_rules, building_rules
+    )
+    temperature = projected_building_temperature(
+        state,
+        building,
+        building_rules,
+        survival_rules,
+        effective_level,
+        include_heat=building.heated_today,
+    )
+    return temperature >= rule.min_operating_temperature
+
+
 def create_initial_survival_state(
     rules: SurvivalRules,
     building_rules: BuildingRules | None = None,
@@ -395,23 +523,13 @@ class SurvivalSystem:
         return tuple(warnings)
 
     def _affordable_level(self, target_level: int, state: GameState) -> int:
-        available_fuel = state.resources.coal + self._woodfuel_available(state)
-        return max(
-            level
-            for level in range(target_level + 1)
-            if self.rules.furnace_levels[level].coal_cost <= available_fuel
+        projected = projected_furnace_level(
+            state, self.rules, self.building_rules
         )
+        return min(projected, target_level)
 
     def _woodfuel_available(self, state: GameState) -> int:
-        if (
-            self.building_rules is None
-            or not state.building_management.woodfuel_confirmed_today
-        ):
-            return 0
-        rule = self.building_rules.woodfuel
-        usable_wood = min(state.resources.wood, rule.daily_wood_limit)
-        usable_wood -= usable_wood % rule.minimum_wood_unit
-        return usable_wood // rule.wood_per_fuel
+        return projected_woodfuel_available(state, self.building_rules)
 
     def settle_heating(self, context: EndDayContext) -> None:
         state = context.state
@@ -553,13 +671,20 @@ class SurvivalSystem:
         )
         return population_alive - fed_population
 
-    @staticmethod
-    def _effective_ration(state: GameState) -> tuple[str, int, int]:
+    def _effective_ration(self, state: GameState) -> tuple[str, int, int]:
         selected_mode = state.social_policy.current_ration_mode
-        if selected_mode != "normal" and not any(
-            building.building_type == "canteen" and building.is_operational
+        canteen_available = any(
+            building.building_type == "canteen"
+            and (
+                is_building_expected_operational(
+                    state, building, self.building_rules, self.rules
+                )
+                if self.building_rules is not None
+                else building.is_operational
+            )
             for building in state.buildings.values()
-        ):
+        )
+        if selected_mode != "normal" and not canteen_available:
             return "normal", 100, 100
         return (
             selected_mode,

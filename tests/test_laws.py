@@ -23,6 +23,7 @@ from furnace_winter.gameplay import (
     SET_WORKTIME_COMMAND,
     SIGN_LAW_COMMAND,
     TRIAGE_COMMAND,
+    UNASSIGN_COMMAND,
     BuildingSystem,
     EndDayEngine,
     LawSystem,
@@ -262,6 +263,138 @@ class LawPatchTests(unittest.TestCase):
         self.assertNotIn("emergency_ration", state.laws.cooldowns)
         self.assertEqual(state, before)
 
+    def test_emergency_ration_and_food_risk_use_today_expected_operation(self) -> None:
+        state = self.make_state()
+        canteen = self.execute_building(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        self.execute_building(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": canteen.data["building_id"],
+                "population_type": "workers",
+                "count": 5,
+            },
+        )
+        state.laws.signed_law_ids = ["coarse_soup_law", "emergency_ration_law"]
+        state.social_policy.current_ration_mode = "coarse_soup"
+        state.social_policy.ration_food_numerator = 70
+        state.social_policy.ration_food_denominator = 100
+        state.calendar.current_day = 38
+        state.furnace.mode_id = "off"
+        state.furnace.is_active = False
+        state.resources.cooked_food = 40
+        state.resources.raw_food = 0
+        self.assertTrue(state.buildings[canteen.data["building_id"]].is_operational)
+
+        warnings = SurvivalSystem(
+            self.survival_rules, self.building_rules
+        ).evaluate_risks(state)
+        food_warning = next(
+            warning
+            for warning in warnings
+            if warning.warning_id == "survival.food_shortfall"
+        )
+        self.assertEqual(food_warning.details["ration_mode_used"], "normal")
+        self.assertEqual(food_warning.details["required_food"], 80)
+        before = deepcopy(state)
+
+        result = self.execute_law(
+            state,
+            SET_RATION_COMMAND,
+            {"mode": "emergency", "confirm": True},
+        )
+
+        self.assertEqual(result.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(result.data["reason"], "canteen_unavailable")
+        self.assertNotIn("emergency_ration", state.laws.cooldowns)
+        self.assertEqual(state, before)
+
+    def test_overtime_rejects_stopped_and_expected_temperature_shutdown(self) -> None:
+        for stopped_reason in ("stopped", "temperature_shutdown"):
+            with self.subTest(stopped_reason=stopped_reason):
+                state = self.make_state()
+                canteen = self.execute_building(
+                    state,
+                    BUILD_COMMAND,
+                    {"building_type": "canteen", "zone": "inner_ring"},
+                )
+                self.execute_building(
+                    state,
+                    ASSIGN_COMMAND,
+                    {
+                        "building_id": canteen.data["building_id"],
+                        "population_type": "workers",
+                        "count": 5,
+                    },
+                )
+                state.laws.signed_law_ids = ["overtime_law"]
+                target = state.buildings[canteen.data["building_id"]]
+                if stopped_reason == "stopped":
+                    target.is_operational = False
+                else:
+                    state.calendar.current_day = 38
+                    state.furnace.mode_id = "off"
+                    state.furnace.is_active = False
+                    self.assertTrue(target.is_operational)
+                before = deepcopy(state)
+
+                result = self.execute_law(
+                    state,
+                    OVERTIME_COMMAND,
+                    {"building_id": target.building_id, "confirm": True},
+                )
+
+                self.assertEqual(result.code, ErrorCode.ILLEGAL_COMMAND)
+                self.assertEqual(result.data["reason"], "building_not_operational")
+                self.assertEqual(state, before)
+
+    def test_overtime_target_staff_cannot_be_partly_or_fully_unassigned(self) -> None:
+        state = self.make_state()
+        canteen = self.execute_building(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        self.execute_building(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": canteen.data["building_id"],
+                "population_type": "workers",
+                "count": 5,
+            },
+        )
+        state.laws.signed_law_ids = ["overtime_law"]
+        self.assertTrue(
+            self.execute_law(
+                state,
+                OVERTIME_COMMAND,
+                {"building_id": canteen.data["building_id"], "confirm": True},
+            ).accepted
+        )
+
+        for remove_count in (1, None):
+            with self.subTest(remove_count=remove_count):
+                arguments = {
+                    "building_id": canteen.data["building_id"],
+                    "population_type": "workers",
+                }
+                if remove_count is not None:
+                    arguments["count"] = remove_count
+                before = deepcopy(state)
+
+                result = self.execute_building(
+                    state, UNASSIGN_COMMAND, arguments
+                )
+
+                self.assertEqual(result.code, ErrorCode.ILLEGAL_COMMAND)
+                self.assertEqual(result.data["reason"], "overtime_staff_locked")
+                self.assertEqual(state, before)
+
     def test_unfed_population_counts_people_for_all_ration_ratios(self) -> None:
         cases = {
             "normal": (100, 100, [], None, 80),
@@ -328,6 +461,83 @@ class LawPatchTests(unittest.TestCase):
         self.assertEqual(state.population.sick_population, 0)
         self.assertEqual(state.social_policy.current_worktime_mode, "long_shift")
         self.assertEqual(state.social_policy.consecutive_long_shift_days, 1)
+
+    def test_same_day_mode_switches_do_not_clear_consecutive_days(self) -> None:
+        ration_state = self.make_state()
+        canteen = self.execute_building(
+            ration_state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        self.execute_building(
+            ration_state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": canteen.data["building_id"],
+                "population_type": "workers",
+                "count": 5,
+            },
+        )
+        ration_state.laws.signed_law_ids = ["coarse_soup_law"]
+        self.assertTrue(
+            self.execute_law(
+                ration_state, SET_RATION_COMMAND, {"mode": "coarse_soup"}
+            ).accepted
+        )
+        ration_state.resources.cooked_food = 1000
+        ration_state.resources.raw_food = 0
+        ration_engine = self.engine()
+        for _ in range(5):
+            self.assertTrue(self.settle(ration_engine, ration_state).result.accepted)
+        self.assertEqual(ration_state.social_policy.consecutive_ration_days, 5)
+        self.assertTrue(
+            self.execute_law(
+                ration_state, SET_RATION_COMMAND, {"mode": "normal"}
+            ).accepted
+        )
+        self.assertTrue(
+            self.execute_law(
+                ration_state, SET_RATION_COMMAND, {"mode": "coarse_soup"}
+            ).accepted
+        )
+        self.assertEqual(ration_state.social_policy.consecutive_ration_days, 5)
+        self.assertTrue(self.settle(ration_engine, ration_state).result.accepted)
+        self.assertEqual(ration_state.social_policy.consecutive_ration_days, 6)
+
+        worktime_state = self.make_state()
+        worktime_state.laws.signed_law_ids = ["overtime_law", "long_shift_law"]
+        self.assertTrue(
+            self.execute_law(
+                worktime_state, SET_WORKTIME_COMMAND, {"mode": "long_shift"}
+            ).accepted
+        )
+        worktime_state.resources.cooked_food = 1000
+        worktime_state.resources.raw_food = 0
+        worktime_engine = self.engine()
+        for _ in range(4):
+            self.assertTrue(
+                self.settle(worktime_engine, worktime_state).result.accepted
+            )
+        self.assertEqual(
+            worktime_state.social_policy.consecutive_long_shift_days, 4
+        )
+        self.assertTrue(
+            self.execute_law(
+                worktime_state, SET_WORKTIME_COMMAND, {"mode": "normal"}
+            ).accepted
+        )
+        self.assertTrue(
+            self.execute_law(
+                worktime_state, SET_WORKTIME_COMMAND, {"mode": "long_shift"}
+            ).accepted
+        )
+        self.assertEqual(
+            worktime_state.social_policy.consecutive_long_shift_days, 4
+        )
+        self.assertTrue(self.settle(worktime_engine, worktime_state).result.accepted)
+        self.assertEqual(
+            worktime_state.social_policy.consecutive_long_shift_days, 5
+        )
 
     def test_long_shift_fraction_is_saved_as_an_exact_remainder(self) -> None:
         state = self.make_state()
@@ -627,6 +837,45 @@ class LawPatchTests(unittest.TestCase):
             with self.subTest(document=document), self.assertRaises(SaveDataError):
                 decode_game_state(document)
 
+    def test_v5_decode_rejects_tampered_overtime_state(self) -> None:
+        state = self.make_state()
+        canteen = self.execute_building(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        self.execute_building(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": canteen.data["building_id"],
+                "population_type": "workers",
+                "count": 5,
+            },
+        )
+        state.laws.signed_law_ids = ["overtime_law"]
+        valid = encode_game_state(state)
+        target_id = canteen.data["building_id"]
+        valid["social_policy"]["overtime_building_id"] = target_id
+        valid["social_policy"]["overtime_output_numerator"] = 200
+        valid["social_policy"]["overtime_output_denominator"] = 100
+        self.assertEqual(decode_game_state(valid).social_policy.overtime_building_id, target_id)
+
+        missing_law = deepcopy(valid)
+        missing_law["laws"]["signed_law_ids"] = []
+        invalid_type = deepcopy(valid)
+        invalid_type["buildings"][target_id]["building_type"] = "hunting_lodge"
+        unstaffed = deepcopy(valid)
+        unstaffed["buildings"][target_id]["assigned_workers"] = 0
+        invalid_ratio = deepcopy(valid)
+        invalid_ratio["social_policy"]["overtime_output_numerator"] = 150
+
+        before = deepcopy(state)
+        for document in (missing_law, invalid_type, unstaffed, invalid_ratio):
+            with self.subTest(document=document), self.assertRaises(SaveDataError):
+                decode_game_state(document)
+        self.assertEqual(state, before)
+
     def test_law_config_rejects_invalid_semantic_numeric_values(self) -> None:
         source = json.loads((ROOT / "data" / "laws.json").read_text(encoding="utf-8"))
         mutations = (
@@ -660,6 +909,25 @@ class LawPatchTests(unittest.TestCase):
             )
             with self.assertRaises(LawConfigError):
                 load_law_rules(path)
+
+    def test_law_config_rejects_required_all_cycles_and_asymmetric_exclusion(self) -> None:
+        source = json.loads(
+            (ROOT / "data" / "laws.json").read_text(encoding="utf-8")
+        )
+        cycle = deepcopy(source)
+        cycle["laws"]["overtime_law"]["required_all"] = ["long_shift_law"]
+        asymmetric = deepcopy(source)
+        asymmetric["laws"]["cold_pit_law"]["mutually_exclusive"] = []
+
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "laws.json"
+            for document in (cycle, asymmetric):
+                with self.subTest(document=document):
+                    path.write_text(
+                        json.dumps(document, ensure_ascii=False), encoding="utf-8"
+                    )
+                    with self.assertRaises(LawConfigError):
+                        load_law_rules(path)
 
     def test_observation_reports_available_locked_and_unlocked_items(self) -> None:
         state = self.make_state()

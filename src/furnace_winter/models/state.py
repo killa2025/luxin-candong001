@@ -8,6 +8,20 @@ from furnace_winter.models.randomness import RandomState
 
 CURRENT_SAVE_DATA_VERSION = 5
 FINAL_DAY = 55
+OVERTIME_BUILDING_TYPES = frozenset({
+    "medical_station",
+    "hospital",
+    "research_institute",
+    "canteen",
+    "greenhouse",
+    "improved_greenhouse",
+    "small_coal_miner",
+    "small_steel_miner",
+    "large_coal_miner",
+    "large_steel_miner",
+    "logging_camp",
+})
+OVERTIME_OUTPUT_RATIO = (200, 100)
 
 
 class HardFailType(StrEnum):

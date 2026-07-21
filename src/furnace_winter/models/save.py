@@ -10,6 +10,8 @@ from furnace_winter.models.serialization import to_primitive
 from furnace_winter.models.state import (
     CURRENT_SAVE_DATA_VERSION,
     FINAL_DAY,
+    OVERTIME_BUILDING_TYPES,
+    OVERTIME_OUTPUT_RATIO,
     BuildingManagementState,
     BuildingState,
     CalendarState,
@@ -1229,8 +1231,30 @@ def _validate_state_invariants(state: GameState) -> None:
     )
     if accounted_bodies > population.population_dead:
         raise SaveDataError("handled and unhandled bodies cannot exceed total deaths")
-    if social.overtime_building_id is not None and social.overtime_building_id not in state.buildings:
-        raise SaveDataError("overtime target must be a registered building")
+    if social.overtime_building_id is not None:
+        if social.overtime_building_id not in state.buildings:
+            raise SaveDataError("overtime target must be a registered building")
+        overtime_target = state.buildings[social.overtime_building_id]
+        if "overtime_law" not in state.laws.signed_law_ids:
+            raise SaveDataError("overtime target requires the overtime law")
+        if overtime_target.building_type not in OVERTIME_BUILDING_TYPES:
+            raise SaveDataError("overtime target building type is not allowed")
+        if (
+            social.overtime_output_numerator,
+            social.overtime_output_denominator,
+        ) != OVERTIME_OUTPUT_RATIO:
+            raise SaveDataError("active overtime must use the sealed output ratio")
+        overtime_staff = sum(
+            (
+                overtime_target.assigned_workers,
+                overtime_target.assigned_engineers,
+                overtime_target.assigned_children,
+                overtime_target.assigned_medical_apprentices,
+                overtime_target.assigned_engineering_apprentices,
+            )
+        )
+        if overtime_staff <= 0:
+            raise SaveDataError("overtime target must retain assigned staff")
     if social.triage_building_id is not None and social.triage_building_id not in state.buildings:
         raise SaveDataError("triage target must be a registered building")
     if len(set(social.ending_tag_candidates)) != len(social.ending_tag_candidates):
