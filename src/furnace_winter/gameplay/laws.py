@@ -237,7 +237,7 @@ class LawSystem:
             return self._illegal("unknown_building")
         if building.building_type not in {"medical_station", "hospital"}:
             return self._illegal("invalid_triage_target")
-        if not building.is_operational:
+        if not self._is_expected_operational(state, building):
             return self._illegal("medical_building_not_operational")
         if state.medical.medical_pressure <= 0:
             return self._illegal("medical_system_not_overloaded")
@@ -498,17 +498,19 @@ class LawSystem:
     def prepare_daily_modes(self, context: EndDayContext) -> None:
         state = context.state
         ration_mode = self._effective_ration_mode(state)
-        previous_summary = state.daily_survival
-        if ration_mode == "normal":
+        if state.social_policy.current_ration_mode == "emergency":
+            ration_day = 1 if ration_mode == "emergency" else 0
+        elif ration_mode == "normal":
             ration_day = 0
-        elif (
-            previous_summary.settled_day == context.settled_day - 1
-            and previous_summary.ration_mode_used == ration_mode
-        ):
+            state.social_policy.consecutive_ration_days = 0
+            state.social_policy.consecutive_ration_mode = "normal"
+        elif state.social_policy.consecutive_ration_mode == ration_mode:
             ration_day = state.social_policy.consecutive_ration_days + 1
+            state.social_policy.consecutive_ration_days = ration_day
         else:
             ration_day = 1
-        state.social_policy.consecutive_ration_days = ration_day
+            state.social_policy.consecutive_ration_days = 1
+            state.social_policy.consecutive_ration_mode = ration_mode
         context.emit(
             "laws.daily_modes.prepared",
             {"ration_mode": ration_mode, "ration_day": ration_day},
@@ -517,13 +519,19 @@ class LawSystem:
     def resolve_medical_disease_and_death(self, context: EndDayContext) -> None:
         state = context.state
         temporary = self.rules.medical.temporary_capacity if context.settled_day <= self.rules.medical.temporary_capacity_through_day else 0
-        building_capacity = self._building_medical_capacity(state)
+        building_capacity = self._building_medical_capacity(state, expected=False)
         state.medical.temporary_capacity = temporary
         state.medical.building_capacity = building_capacity
         state.medical.effective_capacity = temporary + building_capacity
         ration_mode = self._effective_ration_mode(state)
         ration = self.rules.rations[ration_mode]
-        ration_day = state.social_policy.consecutive_ration_days
+        ration_day = (
+            1
+            if ration_mode == "emergency"
+            else state.social_policy.consecutive_ration_days
+            if ration_mode != "normal"
+            else 0
+        )
         ration_sick = 0
         if ration.sick_after_days is not None and ration_day >= ration.sick_after_days and ration.sick_population_divisor:
             ration_sick = min(state.population.healthy_population, state.population.population_alive // ration.sick_population_divisor)
@@ -568,7 +576,13 @@ class LawSystem:
         state = context.state
         ration_mode = self._effective_ration_mode(state)
         ration = self.rules.rations[ration_mode]
-        ration_day = state.social_policy.consecutive_ration_days
+        ration_day = (
+            1
+            if ration_mode == "emergency"
+            else state.social_policy.consecutive_ration_days
+            if ration_mode != "normal"
+            else 0
+        )
         trust_change = ration.daily_trust_change
         panic_change = ration.daily_panic_change
         if ration_mode == "rice_porridge" and ration_day % 2 == 0:
@@ -599,7 +613,7 @@ class LawSystem:
         context.emit("laws.trust_and_panic.resolved", {
             "trust_change": trust_change, "panic_change": panic_change,
             "ration_mode_used": ration_mode,
-            "ration_days": state.social_policy.consecutive_ration_days,
+            "ration_days": ration_day,
             "long_shift_days": state.social_policy.consecutive_long_shift_days,
             "unhandled_bodies": state.social_policy.unhandled_bodies,
         })
@@ -706,11 +720,11 @@ class LawSystem:
 
     def _current_medical_capacity(self, state: GameState) -> int:
         temporary = self.rules.medical.temporary_capacity if state.calendar.current_day <= self.rules.medical.temporary_capacity_through_day else 0
-        return temporary + self._building_medical_capacity(state)
+        return temporary + self._building_medical_capacity(state, expected=True)
 
     def _sync_medical_capacity(self, state: GameState) -> None:
         temporary = self.rules.medical.temporary_capacity if state.calendar.current_day <= self.rules.medical.temporary_capacity_through_day else 0
-        building = self._building_medical_capacity(state)
+        building = self._building_medical_capacity(state, expected=True)
         state.medical.temporary_capacity = temporary
         state.medical.building_capacity = building
         state.medical.effective_capacity = temporary + building
@@ -720,13 +734,19 @@ class LawSystem:
             0,
         )
 
-    @staticmethod
-    def _building_medical_capacity(state: GameState) -> int:
+    def _building_medical_capacity(
+        self, state: GameState, *, expected: bool
+    ) -> int:
         capacity = 0
         for building in state.buildings.values():
-            if not building.is_operational:
+            operational = (
+                self._is_expected_operational(state, building)
+                if expected
+                else building.is_operational
+            )
+            if not operational:
                 continue
-            staff = LawSystem._assigned_total(building)
+            staff = self._assigned_total(building)
             if building.building_type == "medical_station":
                 capacity += (10 * staff) // 5
             elif building.building_type == "hospital":

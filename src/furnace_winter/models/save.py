@@ -11,7 +11,6 @@ from furnace_winter.models.state import (
     CURRENT_SAVE_DATA_VERSION,
     FINAL_DAY,
     OVERTIME_BUILDING_TYPES,
-    OVERTIME_OUTPUT_RATIO,
     BuildingManagementState,
     BuildingState,
     CalendarState,
@@ -570,6 +569,10 @@ def _decode_social_policy(value: Any) -> SocialPolicyState:
             "social_policy.consecutive_ration_days",
             minimum=0,
         ),
+        consecutive_ration_mode=_string(
+            data["consecutive_ration_mode"],
+            "social_policy.consecutive_ration_mode",
+        ),
         current_worktime_mode=_string(
             data["current_worktime_mode"], "social_policy.current_worktime_mode"
         ),
@@ -725,6 +728,7 @@ def decode_game_state(
         migrations.register(2, _migrate_v2_to_v3)
         migrations.register(3, _migrate_v3_to_v4)
         migrations.register(4, _migrate_v4_to_v5)
+        migrations.register(5, _migrate_v5_to_v6)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -1143,6 +1147,59 @@ def _migrate_v4_to_v5(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v5_to_v6(document: dict[str, Any]) -> dict[str, Any]:
+    migrated = deepcopy(document)
+    social = _object(
+        migrated.get("social_policy"),
+        "social_policy",
+        set(_field_names(SocialPolicyState)) - {"consecutive_ration_mode"},
+    )
+    current_mode = _string(
+        social.get("current_ration_mode"), "social_policy.current_ration_mode"
+    )
+    previous_mode = _string(
+        social.get("previous_ration_mode"),
+        "social_policy.previous_ration_mode",
+        optional=True,
+    )
+    consecutive_days = _integer(
+        social.get("consecutive_ration_days"),
+        "social_policy.consecutive_ration_days",
+        minimum=0,
+    )
+    if consecutive_days == 0:
+        consecutive_mode = "normal"
+    elif current_mode in {"coarse_soup", "rice_porridge"}:
+        consecutive_mode = current_mode
+    elif current_mode == "emergency" and previous_mode in {
+        "coarse_soup",
+        "rice_porridge",
+    }:
+        consecutive_mode = previous_mode
+    else:
+        laws = _object(migrated.get("laws"), "laws", _field_names(LawState))
+        signed = set(
+            _string_list(laws.get("signed_law_ids"), "laws.signed_law_ids")
+        )
+        candidates = [
+            mode
+            for mode, law_id in (
+                ("coarse_soup", "coarse_soup_law"),
+                ("rice_porridge", "rice_porridge_law"),
+            )
+            if law_id in signed
+        ]
+        if len(candidates) != 1:
+            raise SaveDataError(
+                "v5 ration streak mode cannot be derived unambiguously"
+            )
+        consecutive_mode = candidates[0]
+    social["consecutive_ration_mode"] = consecutive_mode
+    migrated["social_policy"] = dict(social)
+    migrated["save_data_version"] = 6
+    return migrated
+
+
 def _validate_state_invariants(state: GameState) -> None:
     population = state.population
     if len(set(state.laws.signed_law_ids)) != len(state.laws.signed_law_ids):
@@ -1210,6 +1267,16 @@ def _validate_state_invariants(state: GameState) -> None:
         raise SaveDataError("emergency ration must retain exactly one previous mode")
     if social.previous_ration_mode is None and social.previous_ration_days != 0:
         raise SaveDataError("inactive emergency ration cannot retain previous days")
+    if social.consecutive_ration_mode not in {
+        "normal",
+        "coarse_soup",
+        "rice_porridge",
+    }:
+        raise SaveDataError("unsupported consecutive ration mode")
+    if social.consecutive_ration_days == 0 and social.consecutive_ration_mode != "normal":
+        raise SaveDataError("zero ration streak must use the normal streak mode")
+    if social.consecutive_ration_days > 0 and social.consecutive_ration_mode == "normal":
+        raise SaveDataError("positive ration streak must use a nonstandard mode")
     if social.current_worktime_mode not in {"normal", "long_shift"}:
         raise SaveDataError("unsupported worktime mode")
     if min(
@@ -1239,11 +1306,6 @@ def _validate_state_invariants(state: GameState) -> None:
             raise SaveDataError("overtime target requires the overtime law")
         if overtime_target.building_type not in OVERTIME_BUILDING_TYPES:
             raise SaveDataError("overtime target building type is not allowed")
-        if (
-            social.overtime_output_numerator,
-            social.overtime_output_denominator,
-        ) != OVERTIME_OUTPUT_RATIO:
-            raise SaveDataError("active overtime must use the sealed output ratio")
         overtime_staff = sum(
             (
                 overtime_target.assigned_workers,

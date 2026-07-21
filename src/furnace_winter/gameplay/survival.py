@@ -165,10 +165,10 @@ def is_building_expected_operational(
     building_rules: BuildingRules,
     survival_rules: SurvivalRules,
 ) -> bool:
-    """Return whether a currently running building can keep running today."""
+    """Return whether a built and staffed building is expected to run today."""
 
     rule = building_rules.buildings.get(building.building_type)
-    if rule is None or not building.is_built or not building.is_operational:
+    if rule is None or not building.is_built:
         return False
     assigned = sum(
         (

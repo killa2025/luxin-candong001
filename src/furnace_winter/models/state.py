@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 5
+CURRENT_SAVE_DATA_VERSION = 6
 FINAL_DAY = 55
 OVERTIME_BUILDING_TYPES = frozenset({
     "medical_station",
@@ -21,7 +21,6 @@ OVERTIME_BUILDING_TYPES = frozenset({
     "large_steel_miner",
     "logging_camp",
 })
-OVERTIME_OUTPUT_RATIO = (200, 100)
 
 
 class HardFailType(StrEnum):
@@ -219,6 +218,7 @@ class SocialPolicyState:
     previous_ration_mode: str | None = None
     previous_ration_days: int = 0
     consecutive_ration_days: int = 0
+    consecutive_ration_mode: str = "normal"
     current_worktime_mode: str = "normal"
     worktime_output_numerator: int = 100
     worktime_output_denominator: int = 100
