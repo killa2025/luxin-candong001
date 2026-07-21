@@ -26,7 +26,6 @@ from furnace_winter.models import (
     FINAL_DAY,
     GameState,
     RandomState,
-    SaveDataError,
     dumps,
     encode_game_state,
     snapshot_json,
@@ -185,6 +184,7 @@ class EndDayContext:
 RiskEvaluator = Callable[[GameState], Iterable[RiskWarning]]
 StageHandler = Callable[[EndDayContext], None]
 AutosaveSink = Callable[[AutosaveRecord], None]
+StateValidator = Callable[[GameState], None]
 
 
 def _snapshot_object(value: Any, name: str) -> dict[str, Any]:
@@ -268,6 +268,7 @@ class EndDayEngine:
         self._stage_handlers: dict[EndDayStage, list[StageHandler]] = {
             stage: [] for stage in END_DAY_STAGES
         }
+        self._state_validators: list[StateValidator] = []
         self._autosave_sink = autosave_sink
         self._last_autosave: AutosaveRecord | None = None
         self._pending_confirmation: EndDayConfirmation | None = None
@@ -291,6 +292,11 @@ class EndDayEngine:
             raise TypeError("stage handler must be callable")
         self._stage_handlers[stage].append(handler)
 
+    def register_state_validator(self, validator: StateValidator) -> None:
+        if not callable(validator):
+            raise TypeError("state validator must be callable")
+        self._state_validators.append(validator)
+
     def last_autosave(self) -> AutosaveRecord | None:
         return deepcopy(self._last_autosave)
 
@@ -307,8 +313,8 @@ class EndDayEngine:
                 random_before,
             )
         try:
-            validate_game_state(state)
-        except (SaveDataError, TypeError, ValueError) as exc:
+            self._validate_state(state)
+        except Exception as exc:  # registered validators are extension boundaries
             self._pending_confirmation = None
             return self._rejected(
                 state,
@@ -581,7 +587,7 @@ class EndDayEngine:
                     working.calendar.is_end_day_confirmed = True
                     working.random = random.snapshot()
                     working.command_sequence = state.command_sequence + 1
-                    validate_game_state(working)
+                    self._validate_state(working)
                     resume_stage = (
                         "terminal_state"
                         if working.final_result.hard_fail_type is not None
@@ -596,8 +602,6 @@ class EndDayEngine:
                         logs=tuple(logs),
                         resume_stage=resume_stage,
                     )
-                    if self._autosave_sink is not None:
-                        self._autosave_sink(deepcopy(pending_autosave))
                 elif current_stage is EndDayStage.ADVANCE_DAY:
                     self._advance_after_settlement(working)
                 else:
@@ -620,7 +624,7 @@ class EndDayEngine:
                 random_before,
                 tuple(logs),
             )
-        except Exception as exc:  # handlers and sinks are extension boundaries
+        except Exception as exc:  # handlers are extension boundaries
             return self._rejected(
                 state,
                 request,
@@ -636,8 +640,8 @@ class EndDayEngine:
 
         working.random = random.snapshot()
         try:
-            validate_game_state(working)
-        except (SaveDataError, TypeError, ValueError) as exc:
+            self._validate_state(working)
+        except Exception as exc:  # registered validators are extension boundaries
             return self._rejected(
                 state,
                 request,
@@ -650,6 +654,24 @@ class EndDayEngine:
                 random_before,
                 tuple(logs),
             )
+        if self._autosave_sink is not None:
+            try:
+                if pending_autosave is None:
+                    raise RuntimeError("autosave record was not created")
+                self._autosave_sink(deepcopy(pending_autosave))
+            except Exception as exc:  # sink is an extension boundary
+                return self._rejected(
+                    state,
+                    request,
+                    ErrorCode.INTERNAL_ERROR,
+                    warnings,
+                    {
+                        "failed_stage": EndDayStage.WRITE_AUTOSAVE.value,
+                        "exception_type": type(exc).__name__,
+                    },
+                    random_before,
+                    tuple(logs),
+                )
         _replace_state(state, working)
         self._last_autosave = deepcopy(pending_autosave)
         transition = (
@@ -687,6 +709,11 @@ class EndDayEngine:
             random_after=state.random,
             autosave=deepcopy(pending_autosave),
         )
+
+    def _validate_state(self, state: GameState) -> None:
+        validate_game_state(state)
+        for validator in self._state_validators:
+            validator(deepcopy(state))
 
     @staticmethod
     def _advance_after_settlement(state: GameState) -> None:

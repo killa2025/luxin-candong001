@@ -10,6 +10,7 @@ from furnace_winter.models.serialization import to_primitive
 from furnace_winter.models.state import (
     CURRENT_SAVE_DATA_VERSION,
     FINAL_DAY,
+    BuildingManagementState,
     BuildingState,
     CalendarState,
     DailySurvivalState,
@@ -25,6 +26,7 @@ from furnace_winter.models.state import (
     PopulationState,
     PromiseState,
     ResourceState,
+    SurfaceResourcePointState,
     TechState,
     TrustPanicState,
 )
@@ -301,6 +303,16 @@ def _decode_daily_survival(value: Any) -> DailySurvivalState:
         coal_paid=_integer(
             data["coal_paid"], "daily_survival.coal_paid", minimum=0
         ),
+        woodfuel_wood_burned=_integer(
+            data["woodfuel_wood_burned"],
+            "daily_survival.woodfuel_wood_burned",
+            minimum=0,
+        ),
+        woodfuel_contribution=_integer(
+            data["woodfuel_contribution"],
+            "daily_survival.woodfuel_contribution",
+            minimum=0,
+        ),
         heating_shortfall=_boolean(
             data["heating_shortfall"], "daily_survival.heating_shortfall"
         ),
@@ -367,6 +379,16 @@ def _decode_building(value: Any, path: str, expected_id: str) -> BuildingState:
             data["is_shutdown_by_temperature"],
             f"{path}.is_shutdown_by_temperature",
         ),
+        bound_resource_id=_string(
+            data["bound_resource_id"],
+            f"{path}.bound_resource_id",
+            optional=True,
+        ),
+        production_remainder_numerator=_integer(
+            data["production_remainder_numerator"],
+            f"{path}.production_remainder_numerator",
+            minimum=0,
+        ),
     )
 
 
@@ -381,6 +403,98 @@ def _decode_buildings(value: Any) -> dict[str, BuildingState]:
             item, f"buildings.{building_id}", building_id
         )
     return result
+
+
+def _decode_surface_resource_point(
+    value: Any, path: str, expected_id: str
+) -> SurfaceResourcePointState:
+    data = _object(value, path, _field_names(SurfaceResourcePointState))
+    resource_point_id = _string(
+        data["resource_point_id"], f"{path}.resource_point_id"
+    )
+    if resource_point_id != expected_id:
+        raise SaveDataError(f"{path}.resource_point_id must match its map key")
+    resource_type = _string(data["resource_type"], f"{path}.resource_type")
+    if resource_type not in {"coal", "wood", "steel"}:
+        raise SaveDataError(f"unsupported surface resource type: {resource_type}")
+    return SurfaceResourcePointState(
+        resource_point_id=resource_point_id,
+        resource_type=resource_type,
+        remaining_amount=_integer(
+            data["remaining_amount"], f"{path}.remaining_amount", minimum=0
+        ),
+        staff_capacity=_integer(
+            data["staff_capacity"], f"{path}.staff_capacity", minimum=1
+        ),
+        assigned_workers=_integer(
+            data["assigned_workers"], f"{path}.assigned_workers", minimum=0
+        ),
+        assigned_engineers=_integer(
+            data["assigned_engineers"], f"{path}.assigned_engineers", minimum=0
+        ),
+        production_remainder_numerator=_integer(
+            data["production_remainder_numerator"],
+            f"{path}.production_remainder_numerator",
+            minimum=0,
+        ),
+        is_depleted=_boolean(data["is_depleted"], f"{path}.is_depleted"),
+    )
+
+
+def _decode_surface_resource_points(
+    value: Any,
+) -> dict[str, SurfaceResourcePointState]:
+    if not isinstance(value, Mapping):
+        raise SaveDataError("surface_resource_points must be an object")
+    result: dict[str, SurfaceResourcePointState] = {}
+    for key, item in value.items():
+        resource_point_id = _string(key, "surface_resource_points key")
+        assert isinstance(resource_point_id, str)
+        result[resource_point_id] = _decode_surface_resource_point(
+            item,
+            f"surface_resource_points.{resource_point_id}",
+            resource_point_id,
+        )
+    return result
+
+
+def _decode_building_management(value: Any) -> BuildingManagementState:
+    data = _object(value, "building_management", _field_names(BuildingManagementState))
+    return BuildingManagementState(
+        zone_slot_capacity=_nonnegative_int_object(
+            data["zone_slot_capacity"], "building_management.zone_slot_capacity"
+        ),
+        zone_slots_used=_nonnegative_int_object(
+            data["zone_slots_used"], "building_management.zone_slots_used"
+        ),
+        next_building_sequence=_integer(
+            data["next_building_sequence"],
+            "building_management.next_building_sequence",
+            minimum=1,
+        ),
+        available_hunting_areas=_integer(
+            data["available_hunting_areas"],
+            "building_management.available_hunting_areas",
+            minimum=1,
+        ),
+        total_hunting_areas=_integer(
+            data["total_hunting_areas"],
+            "building_management.total_hunting_areas",
+            minimum=1,
+        ),
+        forest_zones=_integer(
+            data["forest_zones"], "building_management.forest_zones", minimum=0
+        ),
+        woodfuel_confirmed_today=_boolean(
+            data["woodfuel_confirmed_today"],
+            "building_management.woodfuel_confirmed_today",
+        ),
+        heat_uses_today=_integer(
+            data["heat_uses_today"],
+            "building_management.heat_uses_today",
+            minimum=0,
+        ),
+    )
 
 
 def _decode_laws(value: Any) -> LawState:
@@ -474,6 +588,8 @@ def decode_game_state(
     if migrations is None:
         migrations = SaveMigrationRegistry()
         migrations.register(1, _migrate_v1_to_v2)
+        migrations.register(2, _migrate_v2_to_v3)
+        migrations.register(3, _migrate_v3_to_v4)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -503,6 +619,12 @@ def decode_game_state(
             trust_panic=_decode_trust_panic(data["trust_panic"]),
             furnace=_decode_furnace(data["furnace"]),
             buildings=_decode_buildings(data["buildings"]),
+            surface_resource_points=_decode_surface_resource_points(
+                data["surface_resource_points"]
+            ),
+            building_management=_decode_building_management(
+                data["building_management"]
+            ),
             laws=_decode_laws(data["laws"]),
             technologies=_decode_technologies(data["technologies"]),
             events=_decode_events(data["events"]),
@@ -519,7 +641,13 @@ def decode_game_state(
 
 
 def _migrate_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
-    v2_only_fields = {"housing", "hunger", "daily_survival"}
+    v2_only_fields = {
+        "housing",
+        "hunger",
+        "daily_survival",
+        "building_management",
+        "surface_resource_points",
+    }
     legacy = _object(document, "$", set(_field_names(GameState)) - v2_only_fields)
     legacy_furnace = _object(
         legacy["furnace"],
@@ -567,6 +695,165 @@ def _migrate_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
+    legacy = _object(
+        document,
+        "$",
+        set(_field_names(GameState))
+        - {"building_management", "surface_resource_points"},
+    )
+    migrated = deepcopy(legacy)
+
+    daily = _object(
+        migrated["daily_survival"],
+        "daily_survival",
+        set(_field_names(DailySurvivalState))
+        - {"woodfuel_wood_burned", "woodfuel_contribution"},
+    )
+    daily["woodfuel_wood_burned"] = 0
+    daily["woodfuel_contribution"] = 0
+    migrated["daily_survival"] = daily
+
+    raw_buildings = migrated.get("buildings")
+    if not isinstance(raw_buildings, Mapping):
+        raise SaveDataError("buildings must be an object")
+    buildings: dict[str, Any] = {}
+    old_building_fields = set(_field_names(BuildingState)) - {
+        "bound_resource_id",
+        "production_remainder_numerator",
+    }
+    for key, raw_building in raw_buildings.items():
+        building = _object(raw_building, f"buildings.{key}", old_building_fields)
+        building["bound_resource_id"] = None
+        buildings[key] = building
+
+    housing = migrated.get("housing")
+    basic_residences = 0
+    if isinstance(housing, Mapping):
+        value = housing.get("basic_residences", 0)
+        if isinstance(value, int) and not isinstance(value, bool):
+            basic_residences = max(value, 0)
+    represented_residences = sum(
+        1
+        for building in buildings.values()
+        if isinstance(building, Mapping)
+        and building.get("building_type") == "basic_residence"
+    )
+    missing_residences = max(basic_residences - represented_residences, 0)
+    candidate_index = 1
+    for _ in range(missing_residences):
+        while True:
+            building_id = f"residence-start-{candidate_index:03d}"
+            candidate_index += 1
+            if building_id not in buildings:
+                break
+        buildings[building_id] = {
+            "building_id": building_id,
+            "building_type": "basic_residence",
+            "zone": "inner_ring",
+            "slot_size": 1,
+            "is_built": True,
+            "is_operational": True,
+            "assigned_workers": 0,
+            "assigned_engineers": 0,
+            "assigned_children": 0,
+            "assigned_medical_apprentices": 0,
+            "assigned_engineering_apprentices": 0,
+            "can_heat": False,
+            "heated_today": False,
+            "effective_temperature": 0,
+            "is_shutdown_by_temperature": False,
+            "bound_resource_id": None,
+        }
+    migrated["buildings"] = buildings
+
+    slot_capacity = {
+        "inner_ring": 18,
+        "middle_ring": 30,
+        "outer_ring": 36,
+        "storage_outer": 12,
+    }
+    slots_used = {zone: 0 for zone in slot_capacity}
+    for building in buildings.values():
+        if not isinstance(building, Mapping):
+            continue
+        zone = building.get("zone")
+        size = building.get("slot_size")
+        if zone in slots_used and isinstance(size, int) and not isinstance(size, bool):
+            slots_used[zone] += max(size, 0)
+    migrated["building_management"] = {
+        "zone_slot_capacity": slot_capacity,
+        "zone_slots_used": slots_used,
+        "next_building_sequence": 1,
+        "available_hunting_areas": 1,
+        "total_hunting_areas": 2,
+        "forest_zones": 2,
+        "woodfuel_confirmed_today": False,
+    }
+    migrated["save_data_version"] = 3
+    return migrated
+
+
+def _migrate_v3_to_v4(document: dict[str, Any]) -> dict[str, Any]:
+    legacy = _object(document, "$", set(_field_names(GameState)) - {"surface_resource_points"})
+    migrated = deepcopy(legacy)
+
+    raw_buildings = migrated.get("buildings")
+    if not isinstance(raw_buildings, Mapping):
+        raise SaveDataError("buildings must be an object")
+    buildings: dict[str, Any] = {}
+    old_building_fields = set(_field_names(BuildingState)) - {
+        "production_remainder_numerator"
+    }
+    for key, raw_building in raw_buildings.items():
+        building = _object(raw_building, f"buildings.{key}", old_building_fields)
+        building["production_remainder_numerator"] = 0
+        buildings[key] = building
+    migrated["buildings"] = buildings
+
+    management = _object(
+        migrated["building_management"],
+        "building_management",
+        set(_field_names(BuildingManagementState)) - {"heat_uses_today"},
+    )
+    management["heat_uses_today"] = 0
+    migrated["building_management"] = management
+
+    point_specs = {
+        **{
+            f"surface-coal-{index}": ("coal", 120, 15)
+            for index in range(1, 5)
+        },
+        **{
+            f"surface-wood-{index}": ("wood", 100, 15)
+            for index in range(1, 6)
+        },
+        **{
+            f"surface-steel-{index}": ("steel", 40, 10)
+            for index in range(1, 4)
+        },
+    }
+    migrated["surface_resource_points"] = {
+        resource_point_id: {
+            "resource_point_id": resource_point_id,
+            "resource_type": resource_type,
+            "remaining_amount": total_amount,
+            "staff_capacity": staff_capacity,
+            "assigned_workers": 0,
+            "assigned_engineers": 0,
+            "production_remainder_numerator": 0,
+            "is_depleted": False,
+        }
+        for resource_point_id, (
+            resource_type,
+            total_amount,
+            staff_capacity,
+        ) in point_specs.items()
+    }
+    migrated["save_data_version"] = 4
+    return migrated
+
+
 def _validate_state_invariants(state: GameState) -> None:
     population = state.population
     if population.population_total != (
@@ -610,6 +897,8 @@ def _validate_state_invariants(state: GameState) -> None:
         raise SaveDataError("effective furnace level cannot exceed the target level")
     if daily.coal_paid > daily.required_coal:
         raise SaveDataError("coal_paid cannot exceed required_coal")
+    if daily.woodfuel_wood_burned < daily.woodfuel_contribution:
+        raise SaveDataError("woodfuel burned wood cannot be less than its contribution")
     if daily.heating_shortfall != (
         daily.effective_furnace_level < daily.target_furnace_level
     ):
@@ -632,8 +921,197 @@ def _validate_state_invariants(state: GameState) -> None:
         }:
             raise SaveDataError("survival summary must describe the current or previous day")
 
+    management = state.building_management
+    official_zones = {"inner_ring", "middle_ring", "outer_ring", "storage_outer"}
+    if set(management.zone_slot_capacity) != official_zones:
+        raise SaveDataError("building slot capacity must use the four official regions")
+    if set(management.zone_slots_used) != official_zones:
+        raise SaveDataError("building slot usage must use the four official regions")
+    calculated_slots = {zone: 0 for zone in official_zones}
+    for building_id, building in state.buildings.items():
+        if building.building_id != building_id:
+            raise SaveDataError("building_id must match its map key")
+        if building.zone not in official_zones:
+            raise SaveDataError(f"unsupported building zone: {building.zone}")
+        calculated_slots[building.zone] += building.slot_size
+    if management.zone_slots_used != calculated_slots:
+        raise SaveDataError("building slot usage must match built buildings")
+    if any(
+        management.zone_slots_used[zone] > management.zone_slot_capacity[zone]
+        for zone in official_zones
+    ):
+        raise SaveDataError("building slot usage cannot exceed capacity")
+    if management.available_hunting_areas > management.total_hunting_areas:
+        raise SaveDataError("available hunting areas cannot exceed total hunting areas")
+    for resource_point_id, point in state.surface_resource_points.items():
+        if point.resource_point_id != resource_point_id:
+            raise SaveDataError("resource_point_id must match its map key")
+        assigned = point.assigned_workers + point.assigned_engineers
+        if assigned > point.staff_capacity:
+            raise SaveDataError("surface resource point staff exceeds capacity")
+        if point.production_remainder_numerator >= point.staff_capacity:
+            raise SaveDataError("surface resource point remainder must be below capacity")
+        if point.is_depleted != (point.remaining_amount == 0):
+            raise SaveDataError("surface resource point depletion must match remaining amount")
+        if point.is_depleted and assigned:
+            raise SaveDataError("depleted surface resource points cannot retain staff")
 
-def validate_game_state(state: GameState) -> None:
+
+def _validate_building_rule_invariants(
+    state: GameState,
+    rules: Any,
+    survival_rules: Any | None,
+) -> None:
+    if state.building_management.zone_slot_capacity != dict(rules.zone_slot_capacity):
+        raise SaveDataError("building slot capacity must match building rules")
+    if state.building_management.total_hunting_areas != len(
+        rules.resource_anchors["hunting_area"]
+    ):
+        raise SaveDataError("hunting area count must match building rules")
+    if state.building_management.forest_zones != len(
+        rules.resource_anchors["forest_zone"]
+    ):
+        raise SaveDataError("forest zone count must match building rules")
+    heated_building_count = sum(
+        building.heated_today for building in state.buildings.values()
+    )
+    if state.building_management.heat_uses_today != heated_building_count:
+        raise SaveDataError("daily heat uses must match heated buildings")
+    if heated_building_count > rules.heat.daily_city_limit:
+        raise SaveDataError("daily heat uses exceed the city limit")
+
+    assigned = {
+        "workers": 0,
+        "engineers": 0,
+        "children": 0,
+        "medical_apprentices": 0,
+        "engineering_apprentices": 0,
+    }
+    staff_fields = {
+        "workers": "assigned_workers",
+        "engineers": "assigned_engineers",
+        "children": "assigned_children",
+        "medical_apprentices": "assigned_medical_apprentices",
+        "engineering_apprentices": "assigned_engineering_apprentices",
+    }
+    bound_ids: set[str] = set()
+    expected_housing_capacity = 0
+    expected_basic_residences = 0
+    expected_storage_capacity = (
+        survival_rules.resources.storage_capacity
+        if survival_rules is not None
+        else None
+    )
+    building_counts: dict[str, int] = {}
+    for building in state.buildings.values():
+        if not building.is_built:
+            raise SaveDataError(
+                "building registry cannot contain an unfinished building"
+            )
+        building_counts[building.building_type] = (
+            building_counts.get(building.building_type, 0) + 1
+        )
+    for building_type, count in building_counts.items():
+        rule = rules.buildings.get(building_type)
+        if rule is None:
+            continue
+        if rule.max_count_source == "hunting_areas":
+            maximum = state.building_management.available_hunting_areas
+        elif rule.max_count_source == "forest_zones":
+            maximum = state.building_management.forest_zones
+        else:
+            maximum = rule.max_buildings
+        if maximum is not None and count > maximum:
+            raise SaveDataError("building count exceeds its configured limit")
+    expected_hunting_areas = 2 if building_counts.get("hunting_lodge", 0) else 1
+    if state.building_management.available_hunting_areas != expected_hunting_areas:
+        raise SaveDataError("available hunting areas must match hunting lodge progress")
+    if building_counts.get("cemetery", 0) and building_counts.get("cold_pit", 0):
+        raise SaveDataError("cemetery and cold pit are mutually exclusive")
+
+    for building in state.buildings.values():
+        rule = rules.buildings.get(building.building_type)
+        if rule is None:
+            raise SaveDataError(f"unknown building type: {building.building_type}")
+        if building.zone not in rule.allowed_zones:
+            raise SaveDataError("building zone does not match its catalog rule")
+        if building.slot_size != rule.slot_size or building.can_heat != rule.can_heat:
+            raise SaveDataError("building derived fields do not match the catalog")
+        if building.heated_today and not rule.can_heat:
+            raise SaveDataError("building type cannot retain a heat marker")
+        building_staff = 0
+        for population_type, field_name in staff_fields.items():
+            value = getattr(building, field_name)
+            assigned[population_type] += value
+            building_staff += value
+            if value and population_type not in rule.allowed_staff_types:
+                raise SaveDataError("building contains a disallowed staff type")
+        if building_staff > rule.staff_capacity:
+            raise SaveDataError("building staff exceeds catalog capacity")
+        if rule.staff_capacity:
+            if building.production_remainder_numerator >= rule.staff_capacity:
+                raise SaveDataError("building production remainder must be below capacity")
+        elif building.production_remainder_numerator:
+            raise SaveDataError("unstaffed building cannot have a production remainder")
+        if rule.binding_kind is None:
+            if building.bound_resource_id is not None:
+                raise SaveDataError("building has an unsupported resource binding")
+        else:
+            if building.bound_resource_id not in rules.resource_anchors[rule.binding_kind]:
+                raise SaveDataError("building resource binding does not match its catalog rule")
+            assert building.bound_resource_id is not None
+            if building.bound_resource_id in bound_ids:
+                raise SaveDataError("resource bindings must be unique")
+            bound_ids.add(building.bound_resource_id)
+        expected_housing_capacity += rule.housing_capacity
+        if expected_storage_capacity is not None:
+            expected_storage_capacity += rule.storage_capacity_add
+        if building.building_type == "basic_residence":
+            expected_basic_residences += 1
+
+    if state.housing.capacity != expected_housing_capacity:
+        raise SaveDataError("housing capacity must match built residences")
+    if state.housing.basic_residences != expected_basic_residences:
+        raise SaveDataError("basic residence count must match built residences")
+    if (
+        expected_storage_capacity is not None
+        and state.resources.storage_capacity != expected_storage_capacity
+    ):
+        raise SaveDataError("storage capacity must match survival and building rules")
+
+    if set(state.surface_resource_points) != set(rules.surface_resource_points):
+        raise SaveDataError("surface resource point map must match building rules")
+    for resource_point_id, point in state.surface_resource_points.items():
+        rule = rules.surface_resource_points[resource_point_id]
+        if point.resource_type != rule.resource_type or point.staff_capacity != rule.staff_capacity:
+            raise SaveDataError("surface resource point derived fields do not match rules")
+        if point.remaining_amount > rule.total_amount:
+            raise SaveDataError("surface resource point exceeds its configured reserve")
+        assigned["workers"] += point.assigned_workers
+        assigned["engineers"] += point.assigned_engineers
+
+    if assigned["workers"] > state.population.workers:
+        raise SaveDataError("assigned workers exceed the population pool")
+    if assigned["engineers"] > state.population.engineers:
+        raise SaveDataError("assigned engineers exceed the population pool")
+    if assigned["medical_apprentices"] > state.population.medical_apprentices:
+        raise SaveDataError("assigned medical apprentices exceed the population pool")
+    if assigned["engineering_apprentices"] > state.population.engineering_apprentices:
+        raise SaveDataError("assigned engineering apprentices exceed the population pool")
+    assigned_child_roles = (
+        assigned["children"]
+        + assigned["medical_apprentices"]
+        + assigned["engineering_apprentices"]
+    )
+    if assigned_child_roles > state.population.children:
+        raise SaveDataError("assigned child roles exceed the child population pool")
+
+
+def validate_game_state(
+    state: GameState,
+    building_rules: Any | None = None,
+    survival_rules: Any | None = None,
+) -> None:
     """Validate an in-memory state with the same rules used at the save boundary."""
 
     if not isinstance(state, GameState):
@@ -649,3 +1127,9 @@ def validate_game_state(state: GameState) -> None:
         raise SaveDataError(f"invalid game state: {exc}") from exc
     if restored != state:
         raise SaveDataError("game state does not match the canonical runtime schema")
+    if building_rules is not None:
+        if survival_rules is None:
+            raise SaveDataError(
+                "survival rules are required for config-aware building validation"
+            )
+        _validate_building_rule_invariants(state, building_rules, survival_rules)

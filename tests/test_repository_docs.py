@@ -17,11 +17,11 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("`docs/PENDING.md`", index)
         self.assertNotIn("handoff/PENDING 登记.md", index)
 
-    def test_repository_status_text_matches_patch_003(self) -> None:
+    def test_repository_status_text_matches_patch_004(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
-        self.assertIn("已完成代码 Patch 003", readme)
+        self.assertIn("已完成代码 Patch 004", readme)
         self.assertNotIn("当前骨架阶段不包含游戏代码", agents)
 
 

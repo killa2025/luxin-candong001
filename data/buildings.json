@@ -1,0 +1,298 @@
+{
+  "schema_version": 2,
+  "config_status": "TEST_NUMERIC",
+  "zone_slot_capacity": {
+    "inner_ring": 18,
+    "middle_ring": 30,
+    "outer_ring": 36,
+    "storage_outer": 12
+  },
+  "resource_anchors": {
+    "surface_resource_point": [
+      "surface-coal-1", "surface-coal-2", "surface-coal-3", "surface-coal-4",
+      "surface-wood-1", "surface-wood-2", "surface-wood-3", "surface-wood-4", "surface-wood-5",
+      "surface-steel-1", "surface-steel-2", "surface-steel-3"
+    ],
+    "forest_zone": ["forest-zone-1", "forest-zone-2"],
+    "hunting_area": ["hunting-area-1", "hunting-area-2"]
+  },
+  "surface_resource_points": {
+    "surface-coal-1": {"resource_type": "coal", "total_amount": 120, "staff_capacity": 15, "output_per_day": 45},
+    "surface-coal-2": {"resource_type": "coal", "total_amount": 120, "staff_capacity": 15, "output_per_day": 45},
+    "surface-coal-3": {"resource_type": "coal", "total_amount": 120, "staff_capacity": 15, "output_per_day": 45},
+    "surface-coal-4": {"resource_type": "coal", "total_amount": 120, "staff_capacity": 15, "output_per_day": 45},
+    "surface-wood-1": {"resource_type": "wood", "total_amount": 100, "staff_capacity": 15, "output_per_day": 35},
+    "surface-wood-2": {"resource_type": "wood", "total_amount": 100, "staff_capacity": 15, "output_per_day": 35},
+    "surface-wood-3": {"resource_type": "wood", "total_amount": 100, "staff_capacity": 15, "output_per_day": 35},
+    "surface-wood-4": {"resource_type": "wood", "total_amount": 100, "staff_capacity": 15, "output_per_day": 35},
+    "surface-wood-5": {"resource_type": "wood", "total_amount": 100, "staff_capacity": 15, "output_per_day": 35},
+    "surface-steel-1": {"resource_type": "steel", "total_amount": 40, "staff_capacity": 10, "output_per_day": 12},
+    "surface-steel-2": {"resource_type": "steel", "total_amount": 40, "staff_capacity": 10, "output_per_day": 12},
+    "surface-steel-3": {"resource_type": "steel", "total_amount": 40, "staff_capacity": 10, "output_per_day": 12}
+  },
+  "buildings": {
+    "basic_residence": {
+      "display_name": "基础住宅", "buildable": true,
+      "wood_cost": 10, "steel_cost": 0, "slot_size": 1,
+      "allowed_zones": ["inner_ring", "middle_ring"],
+      "max_buildings": null, "max_count_source": "fixed",
+      "required_law_ids": [], "required_tech_ids": [],
+      "staff_capacity": 0, "allowed_staff_types": [],
+      "housing_capacity": 10, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false, "binding_kind": null
+    },
+    "improved_residence": {
+      "display_name": "改良住宅", "buildable": false,
+      "wood_cost": 0, "steel_cost": 0, "slot_size": 1,
+      "allowed_zones": ["inner_ring", "middle_ring"],
+      "max_buildings": null, "max_count_source": "fixed",
+      "required_law_ids": [], "required_tech_ids": [],
+      "staff_capacity": 0, "allowed_staff_types": [],
+      "housing_capacity": 15, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false, "binding_kind": null
+    },
+    "advanced_residence": {
+      "display_name": "高级住宅", "buildable": false,
+      "wood_cost": 0, "steel_cost": 0, "slot_size": 1,
+      "allowed_zones": ["inner_ring", "middle_ring"],
+      "max_buildings": null, "max_count_source": "fixed",
+      "required_law_ids": [], "required_tech_ids": [],
+      "staff_capacity": 0, "allowed_staff_types": [],
+      "housing_capacity": 20, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false, "binding_kind": null
+    },
+    "canteen": {
+      "display_name": "食堂", "buildable": true,
+      "wood_cost": 20, "steel_cost": 5, "slot_size": 2,
+      "allowed_zones": ["inner_ring", "middle_ring"],
+      "max_buildings": 1, "max_count_source": "fixed",
+      "required_law_ids": [], "required_tech_ids": [],
+      "staff_capacity": 5, "allowed_staff_types": ["workers", "engineers"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 60,
+      "min_operating_temperature": -35, "can_heat": true, "binding_kind": null
+    },
+    "hunting_lodge": {
+      "display_name": "狩猎小屋", "buildable": true,
+      "wood_cost": 25, "steel_cost": 5, "slot_size": 2,
+      "allowed_zones": ["outer_ring"],
+      "max_buildings": null, "max_count_source": "hunting_areas",
+      "required_law_ids": [], "required_tech_ids": [],
+      "staff_capacity": 15, "allowed_staff_types": ["workers", "engineers"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": "raw_food", "output_per_day": 40, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false, "binding_kind": null
+    },
+    "research_institute": {
+      "display_name": "研究所", "buildable": true,
+      "wood_cost": 30, "steel_cost": 15, "slot_size": 2,
+      "allowed_zones": ["middle_ring"],
+      "max_buildings": 2, "max_count_source": "fixed",
+      "required_law_ids": [], "required_tech_ids": [],
+      "staff_capacity": 10, "allowed_staff_types": ["engineers", "engineering_apprentices"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false, "binding_kind": null
+    },
+    "medical_station": {
+      "display_name": "医疗站", "buildable": true,
+      "wood_cost": 25, "steel_cost": 10, "slot_size": 1,
+      "allowed_zones": ["inner_ring", "middle_ring"],
+      "max_buildings": 4, "max_count_source": "fixed",
+      "required_law_ids": ["basic_medical_law"], "required_tech_ids": [],
+      "staff_capacity": 5, "allowed_staff_types": ["engineers", "medical_apprentices"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": -35, "can_heat": true, "binding_kind": null
+    },
+    "small_warehouse": {
+      "display_name": "小仓库", "buildable": true,
+      "wood_cost": 20, "steel_cost": 5, "slot_size": 2,
+      "allowed_zones": ["storage_outer"],
+      "max_buildings": null, "max_count_source": "fixed",
+      "required_law_ids": [], "required_tech_ids": [],
+      "staff_capacity": 0, "allowed_staff_types": [],
+      "housing_capacity": 0, "storage_capacity_add": 300,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false, "binding_kind": null
+    },
+    "gathering_shelter": {
+      "display_name": "避寒采集棚", "buildable": true,
+      "wood_cost": 10, "steel_cost": 0, "slot_size": 0,
+      "allowed_zones": ["outer_ring"],
+      "max_buildings": null, "max_count_source": "fixed",
+      "required_law_ids": [], "required_tech_ids": [],
+      "staff_capacity": 0, "allowed_staff_types": [],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false,
+      "binding_kind": "surface_resource_point"
+    },
+    "child_shelter": {
+      "display_name": "儿童保护所", "buildable": true,
+      "wood_cost": 25, "steel_cost": 5, "slot_size": 2,
+      "allowed_zones": ["inner_ring"],
+      "max_buildings": 1, "max_count_source": "fixed",
+      "required_law_ids": ["child_protection_law"], "required_tech_ids": [],
+      "staff_capacity": 2, "allowed_staff_types": ["workers", "engineers"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": -30, "can_heat": true, "binding_kind": null
+    },
+    "school": {
+      "display_name": "学堂", "buildable": true,
+      "wood_cost": 30, "steel_cost": 10, "slot_size": 2,
+      "allowed_zones": ["inner_ring", "middle_ring"],
+      "max_buildings": 1, "max_count_source": "fixed",
+      "required_law_ids": ["child_school_law"], "required_tech_ids": [],
+      "staff_capacity": 2, "allowed_staff_types": ["engineers"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": -30, "can_heat": true, "binding_kind": null
+    },
+    "cemetery": {
+      "display_name": "墓园", "buildable": true,
+      "wood_cost": 20, "steel_cost": 0, "slot_size": 1,
+      "allowed_zones": ["outer_ring"],
+      "max_buildings": 1, "max_count_source": "fixed",
+      "required_law_ids": ["cemetery_law"], "required_tech_ids": [],
+      "staff_capacity": 0, "allowed_staff_types": [],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false, "binding_kind": null
+    },
+    "cold_pit": {
+      "display_name": "冷藏坑", "buildable": true,
+      "wood_cost": 10, "steel_cost": 5, "slot_size": 1,
+      "allowed_zones": ["outer_ring"],
+      "max_buildings": 1, "max_count_source": "fixed",
+      "required_law_ids": ["cold_pit_law"], "required_tech_ids": [],
+      "staff_capacity": 0, "allowed_staff_types": [],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false, "binding_kind": null
+    },
+    "small_tavern": {
+      "display_name": "小酒馆", "buildable": true,
+      "wood_cost": 25, "steel_cost": 10, "slot_size": 1,
+      "allowed_zones": ["inner_ring", "middle_ring"],
+      "max_buildings": 1, "max_count_source": "fixed",
+      "required_law_ids": ["tavern_law"], "required_tech_ids": [],
+      "staff_capacity": 5, "allowed_staff_types": ["workers", "engineers"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": -35, "can_heat": true, "binding_kind": null
+    },
+    "grand_casino": {
+      "display_name": "大赌场", "buildable": true,
+      "wood_cost": 40, "steel_cost": 25, "slot_size": 3,
+      "allowed_zones": ["middle_ring"],
+      "max_buildings": 1, "max_count_source": "fixed",
+      "required_law_ids": ["casino_law"], "required_tech_ids": [],
+      "staff_capacity": 10, "allowed_staff_types": ["workers", "engineers"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": -35, "can_heat": true, "binding_kind": null
+    },
+    "hospital": {
+      "display_name": "医院", "buildable": true,
+      "wood_cost": 50, "steel_cost": 35, "slot_size": 3,
+      "allowed_zones": ["inner_ring", "middle_ring"],
+      "max_buildings": 2, "max_count_source": "fixed",
+      "required_law_ids": ["basic_medical_law"],
+      "required_tech_ids": ["tech_hospital_standardization"],
+      "staff_capacity": 10, "allowed_staff_types": ["engineers", "medical_apprentices"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": null, "output_per_day": 0, "raw_food_processing_cap": 0,
+      "min_operating_temperature": -45, "can_heat": true, "binding_kind": null
+    },
+    "greenhouse": {
+      "display_name": "温室", "buildable": true,
+      "wood_cost": 45, "steel_cost": 30, "slot_size": 3,
+      "allowed_zones": ["middle_ring"],
+      "max_buildings": 2, "max_count_source": "fixed",
+      "required_law_ids": [], "required_tech_ids": ["tech_greenhouse_cultivation"],
+      "staff_capacity": 10, "allowed_staff_types": ["workers", "engineers"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": "raw_food", "output_per_day": 35, "raw_food_processing_cap": 0,
+      "min_operating_temperature": -35, "can_heat": true, "binding_kind": null
+    },
+    "improved_greenhouse": {
+      "display_name": "改良温室", "buildable": false,
+      "wood_cost": 0, "steel_cost": 0, "slot_size": 3,
+      "allowed_zones": ["middle_ring"],
+      "max_buildings": 2, "max_count_source": "fixed",
+      "required_law_ids": [], "required_tech_ids": [],
+      "staff_capacity": 10, "allowed_staff_types": ["workers", "engineers"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": "raw_food", "output_per_day": 50, "raw_food_processing_cap": 0,
+      "min_operating_temperature": -35, "can_heat": true, "binding_kind": null
+    },
+    "logging_camp": {
+      "display_name": "伐木场", "buildable": true,
+      "wood_cost": 35, "steel_cost": 10, "slot_size": 2,
+      "allowed_zones": ["outer_ring"],
+      "max_buildings": null, "max_count_source": "forest_zones",
+      "required_law_ids": [], "required_tech_ids": ["tech_wood_processing_1"],
+      "staff_capacity": 15, "allowed_staff_types": ["workers", "engineers"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": "wood", "output_per_day": 55, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false, "binding_kind": "forest_zone"
+    },
+    "small_coal_miner": {
+      "display_name": "小型采煤机", "buildable": true,
+      "wood_cost": 35, "steel_cost": 20, "slot_size": 2,
+      "allowed_zones": ["outer_ring"],
+      "max_buildings": null, "max_count_source": "fixed",
+      "required_law_ids": [], "required_tech_ids": ["tech_coal_seam_support"],
+      "staff_capacity": 10, "allowed_staff_types": ["workers", "engineers"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": "coal", "output_per_day": 60, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false, "binding_kind": null
+    },
+    "small_steel_miner": {
+      "display_name": "小型采钢机", "buildable": true,
+      "wood_cost": 35, "steel_cost": 25, "slot_size": 2,
+      "allowed_zones": ["outer_ring"],
+      "max_buildings": null, "max_count_source": "fixed",
+      "required_law_ids": [], "required_tech_ids": ["tech_steel_screening"],
+      "staff_capacity": 10, "allowed_staff_types": ["workers", "engineers"],
+      "housing_capacity": 0, "storage_capacity_add": 0,
+      "output_resource": "steel", "output_per_day": 20, "raw_food_processing_cap": 0,
+      "min_operating_temperature": null, "can_heat": false, "binding_kind": null
+    }
+  },
+  "upgrades": {
+    "basic_to_improved_residence": {
+      "from_type": "basic_residence", "to_type": "improved_residence",
+      "required_tech_id": "tech_improved_housing_standard",
+      "wood_cost": 15, "steel_cost": 5
+    },
+    "improved_to_advanced_residence": {
+      "from_type": "improved_residence", "to_type": "advanced_residence",
+      "required_tech_id": "tech_advanced_housing_standard",
+      "wood_cost": 20, "steel_cost": 8
+    },
+    "greenhouse_to_improved": {
+      "from_type": "greenhouse", "to_type": "improved_greenhouse",
+      "required_tech_id": "tech_greenhouse_improvement",
+      "wood_cost": 25, "steel_cost": 15
+    }
+  },
+  "heat": {
+    "coal_cost": 20,
+    "temperature_bonus": 18,
+    "enhanced_temperature_bonus": 24,
+    "enhancement_tech_id": "tech_emergency_heating_device",
+    "daily_city_limit": 2
+  },
+  "woodfuel": {
+    "wood_per_fuel": 4,
+    "daily_wood_limit": 80,
+    "minimum_wood_unit": 4,
+    "cooldown_days": 0
+  }
+}

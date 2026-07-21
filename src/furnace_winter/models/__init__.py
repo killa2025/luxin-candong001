@@ -14,6 +14,7 @@ from furnace_winter.models.serialization import dumps, snapshot_json, to_primiti
 from furnace_winter.models.state import (
     CURRENT_SAVE_DATA_VERSION,
     FINAL_DAY,
+    BuildingManagementState,
     BuildingState,
     CalendarState,
     DailySurvivalState,
@@ -29,6 +30,7 @@ from furnace_winter.models.state import (
     PopulationState,
     PromiseState,
     ResourceState,
+    SurfaceResourcePointState,
     TechState,
     TrustPanicState,
 )
@@ -37,6 +39,7 @@ __all__ = [
     "RANDOM_ALGORITHM",
     "CURRENT_SAVE_DATA_VERSION",
     "FINAL_DAY",
+    "BuildingManagementState",
     "BuildingState",
     "CalendarState",
     "DailySurvivalState",
@@ -54,6 +57,7 @@ __all__ = [
     "PromiseState",
     "RandomState",
     "ResourceState",
+    "SurfaceResourcePointState",
     "SaveDataError",
     "SaveMigrationRegistry",
     "TechState",

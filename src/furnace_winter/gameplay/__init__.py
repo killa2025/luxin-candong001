@@ -13,6 +13,18 @@ from furnace_winter.gameplay.end_day import (
     RiskWarningLevel,
     build_end_day_catalog,
 )
+from furnace_winter.gameplay.buildings import (
+    ASSIGN_COMMAND,
+    ASSIGN_RESOURCE_COMMAND,
+    BUILD_COMMAND,
+    HEAT_COMMAND,
+    UNASSIGN_COMMAND,
+    UNASSIGN_RESOURCE_COMMAND,
+    UPGRADE_COMMAND,
+    WOODFUEL_COMMAND,
+    BuildingSystem,
+    build_building_catalog,
+)
 from furnace_winter.gameplay.survival import (
     FURNACE_LEVEL_ARGUMENT,
     SET_FURNACE_COMMAND,
@@ -26,7 +38,10 @@ from furnace_winter.gameplay.survival import (
 )
 
 __all__ = [
+    "ASSIGN_COMMAND",
+    "ASSIGN_RESOURCE_COMMAND",
     "AUTOSAVE_END_DAY_SLOT",
+    "BUILD_COMMAND",
     "CONFIRM_END_DAY_COMMAND",
     "END_DAY_COMMAND",
     "AutosaveRecord",
@@ -36,8 +51,15 @@ __all__ = [
     "EndDayEngine",
     "EndDayExecution",
     "EndDayStage",
+    "HEAT_COMMAND",
     "RiskWarning",
     "RiskWarningLevel",
+    "UNASSIGN_COMMAND",
+    "UNASSIGN_RESOURCE_COMMAND",
+    "UPGRADE_COMMAND",
+    "WOODFUEL_COMMAND",
+    "BuildingSystem",
+    "build_building_catalog",
     "build_end_day_catalog",
     "FURNACE_LEVEL_ARGUMENT",
     "SET_FURNACE_COMMAND",

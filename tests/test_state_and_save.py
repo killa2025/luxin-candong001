@@ -59,6 +59,7 @@ class GameStateTests(unittest.TestCase):
             zone="inner_ring",
             slot_size=1,
         )
+        state.building_management.zone_slots_used["inner_ring"] = 1
 
         restored = decode_game_state(encode_game_state(state))
 
