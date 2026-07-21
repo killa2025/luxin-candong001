@@ -957,7 +957,11 @@ def _validate_state_invariants(state: GameState) -> None:
             raise SaveDataError("depleted surface resource points cannot retain staff")
 
 
-def _validate_building_rule_invariants(state: GameState, rules: Any) -> None:
+def _validate_building_rule_invariants(
+    state: GameState,
+    rules: Any,
+    survival_rules: Any | None,
+) -> None:
     if state.building_management.zone_slot_capacity != dict(rules.zone_slot_capacity):
         raise SaveDataError("building slot capacity must match building rules")
     if state.building_management.total_hunting_areas != len(
@@ -968,7 +972,12 @@ def _validate_building_rule_invariants(state: GameState, rules: Any) -> None:
         rules.resource_anchors["forest_zone"]
     ):
         raise SaveDataError("forest zone count must match building rules")
-    if state.building_management.heat_uses_today > rules.heat.daily_city_limit:
+    heated_building_count = sum(
+        building.heated_today for building in state.buildings.values()
+    )
+    if state.building_management.heat_uses_today != heated_building_count:
+        raise SaveDataError("daily heat uses must match heated buildings")
+    if heated_building_count > rules.heat.daily_city_limit:
         raise SaveDataError("daily heat uses exceed the city limit")
 
     assigned = {
@@ -988,6 +997,34 @@ def _validate_building_rule_invariants(state: GameState, rules: Any) -> None:
     bound_ids: set[str] = set()
     expected_housing_capacity = 0
     expected_basic_residences = 0
+    expected_storage_capacity = (
+        survival_rules.resources.storage_capacity
+        if survival_rules is not None
+        else None
+    )
+    building_counts: dict[str, int] = {}
+    for building in state.buildings.values():
+        building_counts[building.building_type] = (
+            building_counts.get(building.building_type, 0) + 1
+        )
+    for building_type, count in building_counts.items():
+        rule = rules.buildings.get(building_type)
+        if rule is None:
+            continue
+        if rule.max_count_source == "hunting_areas":
+            maximum = state.building_management.available_hunting_areas
+        elif rule.max_count_source == "forest_zones":
+            maximum = state.building_management.forest_zones
+        else:
+            maximum = rule.max_buildings
+        if maximum is not None and count > maximum:
+            raise SaveDataError("building count exceeds its configured limit")
+    expected_hunting_areas = 2 if building_counts.get("hunting_lodge", 0) else 1
+    if state.building_management.available_hunting_areas != expected_hunting_areas:
+        raise SaveDataError("available hunting areas must match hunting lodge progress")
+    if building_counts.get("cemetery", 0) and building_counts.get("cold_pit", 0):
+        raise SaveDataError("cemetery and cold pit are mutually exclusive")
+
     for building in state.buildings.values():
         rule = rules.buildings.get(building.building_type)
         if rule is None:
@@ -996,6 +1033,8 @@ def _validate_building_rule_invariants(state: GameState, rules: Any) -> None:
             raise SaveDataError("building zone does not match its catalog rule")
         if building.slot_size != rule.slot_size or building.can_heat != rule.can_heat:
             raise SaveDataError("building derived fields do not match the catalog")
+        if building.heated_today and not rule.can_heat:
+            raise SaveDataError("building type cannot retain a heat marker")
         building_staff = 0
         for population_type, field_name in staff_fields.items():
             value = getattr(building, field_name)
@@ -1021,6 +1060,8 @@ def _validate_building_rule_invariants(state: GameState, rules: Any) -> None:
                 raise SaveDataError("resource bindings must be unique")
             bound_ids.add(building.bound_resource_id)
         expected_housing_capacity += rule.housing_capacity
+        if expected_storage_capacity is not None:
+            expected_storage_capacity += rule.storage_capacity_add
         if building.building_type == "basic_residence":
             expected_basic_residences += 1
 
@@ -1028,6 +1069,11 @@ def _validate_building_rule_invariants(state: GameState, rules: Any) -> None:
         raise SaveDataError("housing capacity must match built residences")
     if state.housing.basic_residences != expected_basic_residences:
         raise SaveDataError("basic residence count must match built residences")
+    if (
+        expected_storage_capacity is not None
+        and state.resources.storage_capacity != expected_storage_capacity
+    ):
+        raise SaveDataError("storage capacity must match survival and building rules")
 
     if set(state.surface_resource_points) != set(rules.surface_resource_points):
         raise SaveDataError("surface resource point map must match building rules")
@@ -1057,7 +1103,11 @@ def _validate_building_rule_invariants(state: GameState, rules: Any) -> None:
         raise SaveDataError("assigned child roles exceed the child population pool")
 
 
-def validate_game_state(state: GameState, building_rules: Any | None = None) -> None:
+def validate_game_state(
+    state: GameState,
+    building_rules: Any | None = None,
+    survival_rules: Any | None = None,
+) -> None:
     """Validate an in-memory state with the same rules used at the save boundary."""
 
     if not isinstance(state, GameState):
@@ -1074,4 +1124,8 @@ def validate_game_state(state: GameState, building_rules: Any | None = None) -> 
     if restored != state:
         raise SaveDataError("game state does not match the canonical runtime schema")
     if building_rules is not None:
-        _validate_building_rule_invariants(state, building_rules)
+        if survival_rules is None:
+            raise SaveDataError(
+                "survival rules are required for config-aware building validation"
+            )
+        _validate_building_rule_invariants(state, building_rules, survival_rules)

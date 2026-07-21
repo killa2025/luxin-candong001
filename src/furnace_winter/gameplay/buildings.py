@@ -163,7 +163,7 @@ class BuildingSystem:
         if not validation.is_valid:
             return self._rejected(command_id, state_sequence, validation)
         try:
-            validate_game_state(state, self.rules)
+            validate_game_state(state, self.rules, self.survival_rules)
         except (SaveDataError, TypeError, ValueError) as exc:
             return self._error(command_id, state_sequence, "input_state_validation", exc)
         validation = self._validator.validate(request, state, self._legality)
@@ -192,7 +192,7 @@ class BuildingSystem:
                     CommandValidation(False, ErrorCode.ILLEGAL_COMMAND),
                 )
             working.command_sequence += 1
-            validate_game_state(working, self.rules)
+            validate_game_state(working, self.rules, self.survival_rules)
         except (SaveDataError, TypeError, ValueError) as exc:
             return self._error(command_id, state_sequence, "result_state_validation", exc)
 
@@ -304,15 +304,17 @@ class BuildingSystem:
             if remove_count is not None and (
                 not isinstance(remove_count, int)
                 or isinstance(remove_count, bool)
-                or remove_count < 0
+                or remove_count < 1
                 or remove_count > current
             ):
                 return CommandValidation(False, ErrorCode.INVALID_ARGUMENTS, {"reason": "invalid_unassign_count", "assigned_count": current})
             target = 0 if remove_count is None else current - remove_count
         else:
             target = request.arguments.get("count")
-        if not isinstance(target, int) or isinstance(target, bool) or target < 0:
-            return CommandValidation(False, ErrorCode.INVALID_ARGUMENTS, {"reason": "count_must_be_nonnegative"})
+        if request.name == ASSIGN_COMMAND and (
+            not isinstance(target, int) or isinstance(target, bool) or target < 1
+        ):
+            return CommandValidation(False, ErrorCode.INVALID_ARGUMENTS, {"reason": "count_must_be_positive"})
         if population_type not in rule.allowed_staff_types and target > 0:
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "population_type_not_allowed"})
         field_name = _STAFF_FIELDS[population_type]
@@ -354,7 +356,7 @@ class BuildingSystem:
             if remove_count is not None and (
                 not isinstance(remove_count, int)
                 or isinstance(remove_count, bool)
-                or remove_count < 0
+                or remove_count < 1
                 or remove_count > current
             ):
                 return CommandValidation(
@@ -365,11 +367,13 @@ class BuildingSystem:
             target = 0 if remove_count is None else current - remove_count
         else:
             target = request.arguments.get("count")
-        if not isinstance(target, int) or isinstance(target, bool) or target < 0:
+        if request.name == ASSIGN_RESOURCE_COMMAND and (
+            not isinstance(target, int) or isinstance(target, bool) or target < 1
+        ):
             return CommandValidation(
                 False,
                 ErrorCode.INVALID_ARGUMENTS,
-                {"reason": "count_must_be_nonnegative"},
+                {"reason": "count_must_be_positive"},
             )
         assigned_total = point.assigned_workers + point.assigned_engineers - current + target
         if assigned_total > point.staff_capacity:
@@ -446,7 +450,19 @@ class BuildingSystem:
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "woodfuel_already_confirmed_today"})
         level = int(state.furnace.mode_id[-1])
         required_coal = self.survival_rules.furnace_levels[level].coal_cost
-        if state.resources.coal >= required_coal:
+        remaining_heat_uses = max(
+            self.rules.heat.daily_city_limit
+            - state.building_management.heat_uses_today,
+            0,
+        )
+        projected_coal_after_heat = (
+            state.resources.coal
+            - remaining_heat_uses * self.rules.heat.coal_cost
+        )
+        if (
+            state.resources.coal >= required_coal
+            and projected_coal_after_heat >= required_coal
+        ):
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "no_base_heating_shortfall"})
         if state.resources.wood < self.rules.woodfuel.minimum_wood_unit:
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "insufficient_wood", "minimum_wood": self.rules.woodfuel.minimum_wood_unit})
@@ -578,7 +594,7 @@ class BuildingSystem:
 
     def validate_runtime_state(self, context: EndDayContext) -> None:
         try:
-            validate_game_state(context.state, self.rules)
+            validate_game_state(context.state, self.rules, self.survival_rules)
         except (SaveDataError, TypeError, ValueError) as exc:
             context.abort(
                 ErrorCode.INTERNAL_ERROR,

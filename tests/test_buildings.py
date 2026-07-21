@@ -341,6 +341,47 @@ class BuildingPatchTests(unittest.TestCase):
         self.assertEqual((state.resources.coal, state.resources.wood), (0, 40))
         self.assertFalse(state.building_management.woodfuel_confirmed_today)
 
+    def test_woodfuel_can_cover_the_shortfall_created_by_heat(self) -> None:
+        state = self.make_state()
+        state.calendar.current_day = 55
+        state.furnace.mode_id = "level_2"
+        state.furnace.is_active = True
+        built = self.execute(
+            state, BUILD_COMMAND, {"building_type": "canteen", "zone": "inner_ring"}
+        )
+        state.resources.coal = 85
+        state.resources.wood = 80
+
+        confirmed = self.execute(state, WOODFUEL_COMMAND, {"confirm": True})
+        heated = self.execute(
+            state, HEAT_COMMAND, {"building_id": built.data["building_id"]}
+        )
+        execution = self.settle_day(state)
+
+        self.assertTrue(confirmed.accepted)
+        self.assertTrue(heated.accepted)
+        self.assertTrue(execution.result.accepted)
+        self.assertEqual(state.daily_survival.effective_furnace_level, 2)
+        self.assertEqual(state.daily_survival.coal_paid, 65)
+        self.assertEqual(state.daily_survival.woodfuel_contribution, 20)
+        self.assertEqual(state.daily_survival.woodfuel_wood_burned, 80)
+        self.assertEqual((state.resources.coal, state.resources.wood), (0, 0))
+
+        no_actual_shortfall = self.make_state()
+        no_actual_shortfall.furnace.mode_id = "level_2"
+        no_actual_shortfall.furnace.is_active = True
+        no_actual_shortfall.resources.coal = 85
+        no_actual_shortfall.resources.wood = 80
+        confirmed = self.execute(
+            no_actual_shortfall, WOODFUEL_COMMAND, {"confirm": True}
+        )
+        execution = self.settle_day(no_actual_shortfall)
+        self.assertTrue(confirmed.accepted)
+        self.assertTrue(execution.result.accepted)
+        self.assertEqual(no_actual_shortfall.daily_survival.coal_paid, 85)
+        self.assertEqual(no_actual_shortfall.daily_survival.woodfuel_wood_burned, 0)
+        self.assertEqual(no_actual_shortfall.resources.wood, 80)
+
     def test_v2_save_migration_adds_patch_004_fields(self) -> None:
         state = self.make_state()
         legacy = encode_game_state(state)
@@ -566,11 +607,189 @@ class BuildingPatchTests(unittest.TestCase):
                 result = self.execute(state, HEAT_COMMAND, {"building_id": building_id})
                 self.assertEqual(result.data["reason"], "building_cannot_heat")
 
+    def test_heat_markers_and_city_counter_must_be_consistent(self) -> None:
+        illegal_building = self.make_state()
+        illegal_building.buildings["residence-start-001"].heated_today = True
+        illegal_building.building_management.heat_uses_today = 1
+        before = deepcopy(illegal_building)
+        with self.assertRaises(SaveDataError):
+            validate_game_state(
+                illegal_building, self.building_rules, self.survival_rules
+            )
+        rejected = self.execute(
+            illegal_building,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        self.assertEqual(rejected.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(illegal_building, before)
+
+        inconsistent_count = self.make_state()
+        built = self.execute(
+            inconsistent_count,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        inconsistent_count.buildings[built.data["building_id"]].heated_today = True
+        with self.assertRaises(SaveDataError):
+            validate_game_state(
+                inconsistent_count, self.building_rules, self.survival_rules
+            )
+
+    def test_storage_building_limits_and_mutual_exclusion_are_validated(self) -> None:
+        storage_tampered = self.make_state()
+        storage_tampered.resources.storage_capacity = 1799
+        with self.assertRaises(SaveDataError):
+            validate_game_state(
+                storage_tampered, self.building_rules, self.survival_rules
+            )
+
+        fixed_limit = self.make_state()
+        built = self.execute(
+            fixed_limit,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        original = fixed_limit.buildings[built.data["building_id"]]
+        duplicate = deepcopy(original)
+        duplicate.building_id = "tampered-canteen"
+        fixed_limit.buildings[duplicate.building_id] = duplicate
+        fixed_limit.building_management.zone_slots_used[duplicate.zone] += duplicate.slot_size
+        with self.assertRaisesRegex(SaveDataError, "configured limit"):
+            validate_game_state(fixed_limit, self.building_rules, self.survival_rules)
+
+        for building_type, arguments in (
+            (
+                "hunting_lodge",
+                {"building_type": "hunting_lodge", "zone": "outer_ring"},
+            ),
+            (
+                "logging_camp",
+                {
+                    "building_type": "logging_camp",
+                    "zone": "outer_ring",
+                    "binding_id": "forest-zone-1",
+                },
+            ),
+        ):
+            with self.subTest(building_type=building_type):
+                dynamic_limit = self.make_state()
+                if building_type == "logging_camp":
+                    dynamic_limit.technologies.researched_tech_ids.append(
+                        "tech_wood_processing_1"
+                    )
+                built = self.execute(dynamic_limit, BUILD_COMMAND, arguments)
+                original = dynamic_limit.buildings[built.data["building_id"]]
+                for suffix in ("a", "b"):
+                    duplicate = deepcopy(original)
+                    duplicate.building_id = f"tampered-{building_type}-{suffix}"
+                    dynamic_limit.buildings[duplicate.building_id] = duplicate
+                    dynamic_limit.building_management.zone_slots_used[
+                        duplicate.zone
+                    ] += duplicate.slot_size
+                with self.assertRaisesRegex(SaveDataError, "configured limit"):
+                    validate_game_state(
+                        dynamic_limit, self.building_rules, self.survival_rules
+                    )
+
+        mutually_exclusive = self.make_state()
+        mutually_exclusive.laws.signed_law_ids.append("cemetery_law")
+        cemetery = self.execute(
+            mutually_exclusive,
+            BUILD_COMMAND,
+            {"building_type": "cemetery", "zone": "outer_ring"},
+        )
+        cold_pit = deepcopy(mutually_exclusive.buildings[cemetery.data["building_id"]])
+        cold_pit.building_id = "tampered-cold-pit"
+        cold_pit.building_type = "cold_pit"
+        mutually_exclusive.buildings[cold_pit.building_id] = cold_pit
+        mutually_exclusive.building_management.zone_slots_used["outer_ring"] += 1
+        with self.assertRaisesRegex(SaveDataError, "mutually exclusive"):
+            validate_game_state(
+                mutually_exclusive, self.building_rules, self.survival_rules
+            )
+
+    def test_zero_assignment_counts_are_rejected_without_state_changes(self) -> None:
+        state = self.make_state()
+        canteen = self.execute(
+            state, BUILD_COMMAND, {"building_type": "canteen", "zone": "inner_ring"}
+        )
+        building_id = canteen.data["building_id"]
+        self.execute(
+            state,
+            ASSIGN_COMMAND,
+            {"building_id": building_id, "population_type": "workers", "count": 1},
+        )
+        self.execute(
+            state,
+            ASSIGN_RESOURCE_COMMAND,
+            {
+                "resource_point_id": "surface-coal-1",
+                "population_type": "workers",
+                "count": 1,
+            },
+        )
+        cases = (
+            (
+                ASSIGN_COMMAND,
+                {"building_id": building_id, "population_type": "workers", "count": 0},
+            ),
+            (
+                UNASSIGN_COMMAND,
+                {"building_id": building_id, "population_type": "workers", "count": 0},
+            ),
+            (
+                ASSIGN_RESOURCE_COMMAND,
+                {
+                    "resource_point_id": "surface-coal-1",
+                    "population_type": "workers",
+                    "count": 0,
+                },
+            ),
+            (
+                UNASSIGN_RESOURCE_COMMAND,
+                {
+                    "resource_point_id": "surface-coal-1",
+                    "population_type": "workers",
+                    "count": 0,
+                },
+            ),
+        )
+        for index, (command_name, arguments) in enumerate(cases):
+            with self.subTest(command_name=command_name):
+                before = deepcopy(state)
+                rejected = self.execute(
+                    state, command_name, arguments, f"zero-count-{index}"
+                )
+                self.assertFalse(rejected.accepted)
+                self.assertEqual(rejected.code, ErrorCode.INVALID_ARGUMENTS)
+                self.assertEqual(state, before)
+
+        unassigned = self.execute(
+            state,
+            UNASSIGN_COMMAND,
+            {"building_id": building_id, "population_type": "workers"},
+        )
+        resource_unassigned = self.execute(
+            state,
+            UNASSIGN_RESOURCE_COMMAND,
+            {
+                "resource_point_id": "surface-coal-1",
+                "population_type": "workers",
+            },
+        )
+        self.assertTrue(unassigned.accepted)
+        self.assertTrue(resource_unassigned.accepted)
+        self.assertEqual(state.buildings[building_id].assigned_workers, 0)
+        self.assertEqual(
+            state.surface_resource_points["surface-coal-1"].assigned_workers, 0
+        )
+
     def test_config_aware_validation_rejects_tampering_and_rolls_back(self) -> None:
         state = self.make_state()
         state.buildings["residence-start-001"].assigned_workers = 51
         with self.assertRaises(SaveDataError):
-            validate_game_state(state, self.building_rules)
+            validate_game_state(state, self.building_rules, self.survival_rules)
         before = deepcopy(state)
         result = self.execute(
             state,
@@ -614,12 +833,12 @@ class BuildingPatchTests(unittest.TestCase):
         )
         state.buildings[second.data["building_id"]].bound_resource_id = "surface-coal-1"
         with self.assertRaises(SaveDataError):
-            validate_game_state(state, self.building_rules)
+            validate_game_state(state, self.building_rules, self.survival_rules)
 
         state = self.make_state()
         state.building_management.forest_zones = 99
         with self.assertRaises(SaveDataError):
-            validate_game_state(state, self.building_rules)
+            validate_game_state(state, self.building_rules, self.survival_rules)
         self.assertTrue(first.accepted)
 
     def test_end_day_rejects_config_tampering_without_mutating_state(self) -> None:

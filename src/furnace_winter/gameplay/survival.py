@@ -144,7 +144,7 @@ def create_initial_survival_state(
     )
     state.daily_survival.storage_used = storage_used(state.resources)
     state.daily_survival.is_over_capacity = is_over_capacity(state.resources)
-    validate_game_state(state, building_rules)
+    validate_game_state(state, building_rules, rules)
     return state
 
 
@@ -203,7 +203,7 @@ class SurvivalSystem:
             )
 
         try:
-            validate_game_state(state)
+            validate_game_state(state, self.building_rules, self.rules)
         except (SaveDataError, TypeError, ValueError) as exc:
             details = {
                 "failed_stage": "input_state_validation",
@@ -240,7 +240,7 @@ class SurvivalSystem:
         working.furnace.mode_id = furnace_mode_id(level)
         working.command_sequence += 1
         try:
-            validate_game_state(working)
+            validate_game_state(working, self.building_rules, self.rules)
         except (SaveDataError, TypeError, ValueError) as exc:
             details = {
                 "failed_stage": "result_state_validation",
