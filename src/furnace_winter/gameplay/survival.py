@@ -344,7 +344,14 @@ class SurvivalSystem:
                 )
             )
 
-        food_required = state.population.population_alive * self.rules.food_per_person
+        food_numerator = (
+            state.population.population_alive
+            * self.rules.food_per_person
+            * state.social_policy.ration_food_numerator
+        )
+        food_required = (
+            food_numerator + state.social_policy.ration_food_denominator - 1
+        ) // state.social_policy.ration_food_denominator
         available_food = state.resources.cooked_food + state.resources.raw_food
         if available_food < food_required:
             warnings.append(
@@ -472,7 +479,14 @@ class SurvivalSystem:
 
     def settle_food(self, context: EndDayContext) -> None:
         state = context.state
-        required = state.population.population_alive * self.rules.food_per_person
+        food_numerator = (
+            state.population.population_alive
+            * self.rules.food_per_person
+            * state.social_policy.ration_food_numerator
+        )
+        required = (
+            food_numerator + state.social_policy.ration_food_denominator - 1
+        ) // state.social_policy.ration_food_denominator
         cooked_eaten = min(required, state.resources.cooked_food)
         state.resources.cooked_food -= cooked_eaten
         remaining = required - cooked_eaten

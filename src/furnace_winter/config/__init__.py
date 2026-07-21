@@ -17,6 +17,16 @@ from furnace_winter.config.loader import (
     load_config_file,
     load_config_tree,
 )
+from furnace_winter.config.laws import (
+    LawConfigError,
+    LawRule,
+    LawRules,
+    MedicalActionRules,
+    RationRule,
+    SocialActionRules,
+    WorktimeRules,
+    load_law_rules,
+)
 from furnace_winter.config.status import ConfigStatus
 from furnace_winter.config.survival import (
     FurnaceLevelRule,
@@ -42,6 +52,12 @@ __all__ = [
     "FurnaceLevelRule",
     "HeatRule",
     "LoadedConfig",
+    "LawConfigError",
+    "LawRule",
+    "LawRules",
+    "MedicalActionRules",
+    "RationRule",
+    "SocialActionRules",
     "StartingPopulationRules",
     "StartingResourceRules",
     "SurfaceResourcePointRule",
@@ -51,9 +67,11 @@ __all__ = [
     "ValidationIssue",
     "ValidationReport",
     "WoodfuelRule",
+    "WorktimeRules",
     "load_config_file",
     "load_config_tree",
     "load_building_rules",
+    "load_law_rules",
     "load_survival_rules",
     "validate_config_file",
     "validate_config_tree",

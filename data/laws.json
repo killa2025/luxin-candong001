@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "config_status": "TEST_NUMERIC",
+  "ordinary_cooldown_days": 3,
+  "laws": {
+    "child_labor_low_risk_law": {
+      "required_all": [], "required_any": [],
+      "mutually_exclusive": ["child_protection_law"],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["child_labor_low_risk"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "child_labor_all_jobs_law": {
+      "required_all": ["child_labor_low_risk_law"], "required_any": [],
+      "mutually_exclusive": ["child_protection_law"],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["child_labor_all_jobs"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "child_protection_law": {
+      "required_all": [], "required_any": [],
+      "mutually_exclusive": ["child_labor_low_risk_law", "child_labor_all_jobs_law"],
+      "unlock_buildings": ["child_shelter"], "unlock_actions": [], "unlock_modes": ["child_protection"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "child_school_law": {
+      "required_all": ["child_protection_law"], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": ["school"], "unlock_actions": [], "unlock_modes": [],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "medical_apprentices_law": {
+      "required_all": ["child_school_law"], "required_any": [],
+      "mutually_exclusive": ["engineering_apprentices_law"],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["medical_apprentices"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "engineering_apprentices_law": {
+      "required_all": ["child_school_law"], "required_any": [],
+      "mutually_exclusive": ["medical_apprentices_law"],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["engineering_apprentices"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "overtime_law": {
+      "required_all": [], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": [], "unlock_actions": ["overtime"], "unlock_modes": [],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "long_shift_law": {
+      "required_all": ["overtime_law"], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["long_shift"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "cemetery_law": {
+      "required_all": [], "required_any": [], "mutually_exclusive": ["cold_pit_law"],
+      "unlock_buildings": ["cemetery"], "unlock_actions": [], "unlock_modes": ["cemetery_path"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "memorial_law": {
+      "required_all": ["cemetery_law"], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": [], "unlock_actions": ["memorial"], "unlock_modes": [],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "cold_pit_law": {
+      "required_all": [], "required_any": [], "mutually_exclusive": ["cemetery_law"],
+      "unlock_buildings": ["cold_pit"], "unlock_actions": [], "unlock_modes": ["cold_pit_path"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "organ_use_law": {
+      "required_all": ["cold_pit_law"], "required_any": [], "mutually_exclusive": ["ash_fertilizer_law"],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["organ_use"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "ash_fertilizer_law": {
+      "required_all": ["cold_pit_law"], "required_any": [], "mutually_exclusive": ["organ_use_law"],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["ash_fertilizer"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "coarse_soup_law": {
+      "required_all": [], "required_any": [], "mutually_exclusive": ["rice_porridge_law"],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["coarse_soup"],
+      "auto_enable": [], "trust_change": -3, "panic_change": 3, "confirmation_required": false
+    },
+    "rice_porridge_law": {
+      "required_all": [], "required_any": [], "mutually_exclusive": ["coarse_soup_law"],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["rice_porridge"],
+      "auto_enable": [], "trust_change": -1, "panic_change": 1, "confirmation_required": false
+    },
+    "emergency_ration_law": {
+      "required_all": [], "required_any": ["coarse_soup_law", "rice_porridge_law"], "mutually_exclusive": [],
+      "unlock_buildings": [], "unlock_actions": ["emergency_ration"], "unlock_modes": ["emergency"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "basic_medical_law": {
+      "required_all": [], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": ["medical_station"], "unlock_actions": [], "unlock_modes": ["formal_medical_system"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "stable_therapy_law": {
+      "required_all": ["basic_medical_law"], "required_any": [], "mutually_exclusive": ["radical_therapy_law"],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["stable_therapy"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "radical_therapy_law": {
+      "required_all": ["basic_medical_law"], "required_any": [], "mutually_exclusive": ["stable_therapy_law"],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["radical_therapy"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "expanded_admission_law": {
+      "required_all": ["basic_medical_law"], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["expanded_admission"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "care_home_law": {
+      "required_all": ["expanded_admission_law"], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": ["care_home"], "unlock_actions": [], "unlock_modes": [],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "medical_ration_law": {
+      "required_all": ["basic_medical_law"], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": [], "unlock_actions": ["medical_ration"], "unlock_modes": [],
+      "auto_enable": [], "trust_change": 0, "panic_change": 0, "confirmation_required": false
+    },
+    "triage_law": {
+      "required_all": ["expanded_admission_law", "medical_ration_law"], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": [], "unlock_actions": ["triage"], "unlock_modes": [],
+      "auto_enable": [], "trust_change": 0, "panic_change": 0, "confirmation_required": true
+    },
+    "firepit_law": {
+      "required_all": [], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["firepit"],
+      "auto_enable": ["firepit"], "trust_change": 0, "panic_change": -1, "confirmation_required": false
+    },
+    "dispute_arbitration_law": {
+      "required_all": ["firepit_law"], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": [], "unlock_actions": [], "unlock_modes": ["dispute_arbitration"],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "tavern_law": {
+      "required_all": ["firepit_law"], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": ["small_tavern"], "unlock_actions": [], "unlock_modes": [],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    },
+    "casino_law": {
+      "required_all": ["tavern_law"], "required_any": [], "mutually_exclusive": [],
+      "unlock_buildings": ["grand_casino"], "unlock_actions": [], "unlock_modes": [],
+      "auto_enable": [], "trust_change": null, "panic_change": null, "confirmation_required": false
+    }
+  },
+  "rations": {
+    "normal": {"food_numerator": 100, "food_denominator": 100, "required_law_id": null, "daily_trust_change": 0, "daily_panic_change": 0, "sick_after_days": null, "sick_population_divisor": null},
+    "coarse_soup": {"food_numerator": 70, "food_denominator": 100, "required_law_id": "coarse_soup_law", "daily_trust_change": -1, "daily_panic_change": 1, "sick_after_days": 3, "sick_population_divisor": 40},
+    "rice_porridge": {"food_numerator": 85, "food_denominator": 100, "required_law_id": "rice_porridge_law", "daily_trust_change": 0, "daily_panic_change": 0, "sick_after_days": 5, "sick_population_divisor": 80},
+    "emergency": {"food_numerator": 50, "food_denominator": 100, "required_law_id": "emergency_ration_law", "daily_trust_change": 0, "daily_panic_change": 0, "sick_after_days": null, "sick_population_divisor": null}
+  },
+  "worktime": {
+    "long_shift_output_numerator": 125,
+    "long_shift_output_denominator": 100,
+    "long_shift_daily_trust_change": -1,
+    "long_shift_daily_panic_change": 1,
+    "long_shift_day_3_extra_panic": 1,
+    "long_shift_day_5_extra_trust": -1,
+    "overtime_output_numerator": 200,
+    "overtime_output_denominator": 100,
+    "overtime_medical_research_numerator": 150,
+    "overtime_medical_research_denominator": 100,
+    "overtime_trust_change": -2,
+    "overtime_panic_change": 3
+  },
+  "medical": {
+    "temporary_capacity_through_day": 3,
+    "temporary_capacity": 5,
+    "medical_ration_food_per_patient": 3,
+    "medical_ration_max_patients": 20,
+    "medical_ration_cooldown_days": 4,
+    "triage_cooldown_days": null
+  },
+  "actions": {
+    "emergency_ration_cooldown_days": 4,
+    "emergency_ration_trust_change": -3,
+    "emergency_ration_panic_change": 4,
+    "memorial_cooldown_days": 5,
+    "memorial_trust_change": 2,
+    "memorial_panic_change": -2,
+    "firepit_daily_panic_change": -1,
+    "unhandled_body_unit": 2,
+    "unhandled_body_trust_change": -1,
+    "unhandled_body_panic_change": 1,
+    "unhandled_body_crisis_threshold": 6,
+    "unhandled_body_crisis_extra_panic": 2
+  }
+}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import fields
+from math import gcd, lcm
 from typing import Any
 
 from furnace_winter.config import BuildingRule, BuildingRules, SurvivalRules
@@ -244,7 +245,7 @@ class BuildingSystem:
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "building_is_upgrade_only"})
         if zone not in rule.allowed_zones:
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "zone_not_allowed", "allowed_zones": list(rule.allowed_zones)})
-        signed_laws = set(state.laws.signed_law_ids) | set(state.laws.active_law_ids)
+        signed_laws = set(state.laws.signed_law_ids)
         missing_laws = sorted(set(rule.required_law_ids) - signed_laws)
         missing_techs = sorted(set(rule.required_tech_ids) - set(state.technologies.researched_tech_ids))
         if missing_laws or missing_techs:
@@ -687,6 +688,10 @@ class BuildingSystem:
                 self._assigned_total(building),
                 rule.staff_capacity,
             )
+            multiplier = self._production_multiplier(state, building.building_id)
+            output = self._apply_production_multiplier(
+                building, output, multiplier[0], multiplier[1]
+            )
             setattr(state.resources, rule.output_resource, getattr(state.resources, rule.output_resource) + output)
             production[rule.output_resource] += output
 
@@ -699,6 +704,10 @@ class BuildingSystem:
                 cap,
                 self._assigned_total(building),
                 rule.staff_capacity,
+            )
+            multiplier = self._production_multiplier(state, building.building_id)
+            staffed_cap = self._apply_production_multiplier(
+                building, staffed_cap, multiplier[0], multiplier[1]
             )
             processed = min(staffed_cap, state.resources.raw_food)
             state.resources.raw_food -= processed
@@ -754,6 +763,18 @@ class BuildingSystem:
             level
             for level in range(target_level + 1)
             if self.survival_rules.furnace_levels[level].coal_cost <= available_fuel
+        )
+
+    @staticmethod
+    def _production_multiplier(state: GameState, building_id: str) -> tuple[int, int]:
+        if state.social_policy.overtime_building_id == building_id:
+            return (
+                state.social_policy.overtime_output_numerator,
+                state.social_policy.overtime_output_denominator,
+            )
+        return (
+            state.social_policy.worktime_output_numerator,
+            state.social_policy.worktime_output_denominator,
         )
 
     def _woodfuel_available(self, state: GameState) -> int:
@@ -824,6 +845,36 @@ class BuildingSystem:
         output = numerator // staff_capacity
         owner.production_remainder_numerator = numerator % staff_capacity
         return output
+
+    @staticmethod
+    def _apply_production_multiplier(
+        building: BuildingState,
+        output: int,
+        multiplier_numerator: int,
+        multiplier_denominator: int,
+    ) -> int:
+        remainder_denominator = (
+            building.production_multiplier_remainder_denominator
+        )
+        common_denominator = lcm(remainder_denominator, multiplier_denominator)
+        numerator = (
+            building.production_multiplier_remainder_numerator
+            * (common_denominator // remainder_denominator)
+            + output
+            * multiplier_numerator
+            * (common_denominator // multiplier_denominator)
+        )
+        whole, remainder = divmod(numerator, common_denominator)
+        if remainder:
+            divisor = gcd(remainder, common_denominator)
+            building.production_multiplier_remainder_numerator = remainder // divisor
+            building.production_multiplier_remainder_denominator = (
+                common_denominator // divisor
+            )
+        else:
+            building.production_multiplier_remainder_numerator = 0
+            building.production_multiplier_remainder_denominator = 1
+        return whole
 
     @staticmethod
     def _has_type(state: GameState, building_type: str) -> bool:

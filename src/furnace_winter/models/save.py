@@ -22,10 +22,12 @@ from furnace_winter.models.state import (
     HousingState,
     HungerState,
     LawState,
+    MedicalState,
     OldCityState,
     PopulationState,
     PromiseState,
     ResourceState,
+    SocialPolicyState,
     SurfaceResourcePointState,
     TechState,
     TrustPanicState,
@@ -389,6 +391,16 @@ def _decode_building(value: Any, path: str, expected_id: str) -> BuildingState:
             f"{path}.production_remainder_numerator",
             minimum=0,
         ),
+        production_multiplier_remainder_numerator=_integer(
+            data["production_multiplier_remainder_numerator"],
+            f"{path}.production_multiplier_remainder_numerator",
+            minimum=0,
+        ),
+        production_multiplier_remainder_denominator=_integer(
+            data["production_multiplier_remainder_denominator"],
+            f"{path}.production_multiplier_remainder_denominator",
+            minimum=1,
+        ),
     )
 
 
@@ -506,6 +518,107 @@ def _decode_laws(value: Any) -> LawState:
     )
 
 
+def _decode_social_policy(value: Any) -> SocialPolicyState:
+    data = _object(value, "social_policy", _field_names(SocialPolicyState))
+    return SocialPolicyState(
+        current_ration_mode=_string(
+            data["current_ration_mode"], "social_policy.current_ration_mode"
+        ),
+        ration_food_numerator=_integer(
+            data["ration_food_numerator"],
+            "social_policy.ration_food_numerator",
+            minimum=1,
+        ),
+        ration_food_denominator=_integer(
+            data["ration_food_denominator"],
+            "social_policy.ration_food_denominator",
+            minimum=1,
+        ),
+        previous_ration_mode=_string(
+            data["previous_ration_mode"],
+            "social_policy.previous_ration_mode",
+            optional=True,
+        ),
+        previous_ration_days=_integer(
+            data["previous_ration_days"],
+            "social_policy.previous_ration_days",
+            minimum=0,
+        ),
+        consecutive_ration_days=_integer(
+            data["consecutive_ration_days"],
+            "social_policy.consecutive_ration_days",
+            minimum=0,
+        ),
+        current_worktime_mode=_string(
+            data["current_worktime_mode"], "social_policy.current_worktime_mode"
+        ),
+        worktime_output_numerator=_integer(
+            data["worktime_output_numerator"],
+            "social_policy.worktime_output_numerator",
+            minimum=1,
+        ),
+        worktime_output_denominator=_integer(
+            data["worktime_output_denominator"],
+            "social_policy.worktime_output_denominator",
+            minimum=1,
+        ),
+        consecutive_long_shift_days=_integer(
+            data["consecutive_long_shift_days"],
+            "social_policy.consecutive_long_shift_days",
+            minimum=0,
+        ),
+        overtime_building_id=_string(
+            data["overtime_building_id"],
+            "social_policy.overtime_building_id",
+            optional=True,
+        ),
+        overtime_output_numerator=_integer(
+            data["overtime_output_numerator"],
+            "social_policy.overtime_output_numerator",
+            minimum=1,
+        ),
+        overtime_output_denominator=_integer(
+            data["overtime_output_denominator"],
+            "social_policy.overtime_output_denominator",
+            minimum=1,
+        ),
+        firepit_enabled=_boolean(
+            data["firepit_enabled"], "social_policy.firepit_enabled"
+        ),
+        death_path=_string(data["death_path"], "social_policy.death_path"),
+        unhandled_bodies=_integer(
+            data["unhandled_bodies"], "social_policy.unhandled_bodies", minimum=0
+        ),
+        buried_bodies=_integer(
+            data["buried_bodies"], "social_policy.buried_bodies", minimum=0
+        ),
+        stored_bodies=_integer(
+            data["stored_bodies"], "social_policy.stored_bodies", minimum=0
+        ),
+        triage_building_id=_string(
+            data["triage_building_id"],
+            "social_policy.triage_building_id",
+            optional=True,
+        ),
+        triage_used_ever=_boolean(
+            data["triage_used_ever"], "social_policy.triage_used_ever"
+        ),
+        ending_tag_candidates=_string_list(
+            data["ending_tag_candidates"], "social_policy.ending_tag_candidates"
+        ),
+    )
+
+
+def _decode_medical(value: Any) -> MedicalState:
+    data = _object(value, "medical", _field_names(MedicalState))
+    return MedicalState(
+        **{
+            name: _integer(data[name], f"medical.{name}", minimum=0)
+            for name in _field_names(MedicalState)
+        }
+    )
+
+
 def _decode_technologies(value: Any) -> TechState:
     data = _object(value, "technologies", _field_names(TechState))
     return TechState(
@@ -590,6 +703,7 @@ def decode_game_state(
         migrations.register(1, _migrate_v1_to_v2)
         migrations.register(2, _migrate_v2_to_v3)
         migrations.register(3, _migrate_v3_to_v4)
+        migrations.register(4, _migrate_v4_to_v5)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -626,6 +740,8 @@ def decode_game_state(
                 data["building_management"]
             ),
             laws=_decode_laws(data["laws"]),
+            social_policy=_decode_social_policy(data["social_policy"]),
+            medical=_decode_medical(data["medical"]),
             technologies=_decode_technologies(data["technologies"]),
             events=_decode_events(data["events"]),
             promises=_decode_promises(data["promises"]),
@@ -641,14 +757,19 @@ def decode_game_state(
 
 
 def _migrate_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
+    source = deepcopy(document)
+    source.pop("social_policy", None)
+    source.pop("medical", None)
     v2_only_fields = {
         "housing",
         "hunger",
         "daily_survival",
         "building_management",
         "surface_resource_points",
+        "social_policy",
+        "medical",
     }
-    legacy = _object(document, "$", set(_field_names(GameState)) - v2_only_fields)
+    legacy = _object(source, "$", set(_field_names(GameState)) - v2_only_fields)
     legacy_furnace = _object(
         legacy["furnace"],
         "furnace",
@@ -696,11 +817,14 @@ def _migrate_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def _migrate_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
+    source = deepcopy(document)
+    source.pop("social_policy", None)
+    source.pop("medical", None)
     legacy = _object(
-        document,
+        source,
         "$",
         set(_field_names(GameState))
-        - {"building_management", "surface_resource_points"},
+        - {"building_management", "surface_resource_points", "social_policy", "medical"},
     )
     migrated = deepcopy(legacy)
 
@@ -721,6 +845,8 @@ def _migrate_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
     old_building_fields = set(_field_names(BuildingState)) - {
         "bound_resource_id",
         "production_remainder_numerator",
+        "production_multiplier_remainder_numerator",
+        "production_multiplier_remainder_denominator",
     }
     for key, raw_building in raw_buildings.items():
         building = _object(raw_building, f"buildings.{key}", old_building_fields)
@@ -795,7 +921,14 @@ def _migrate_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def _migrate_v3_to_v4(document: dict[str, Any]) -> dict[str, Any]:
-    legacy = _object(document, "$", set(_field_names(GameState)) - {"surface_resource_points"})
+    source = deepcopy(document)
+    source.pop("social_policy", None)
+    source.pop("medical", None)
+    legacy = _object(
+        source,
+        "$",
+        set(_field_names(GameState)) - {"surface_resource_points", "social_policy", "medical"},
+    )
     migrated = deepcopy(legacy)
 
     raw_buildings = migrated.get("buildings")
@@ -803,7 +936,9 @@ def _migrate_v3_to_v4(document: dict[str, Any]) -> dict[str, Any]:
         raise SaveDataError("buildings must be an object")
     buildings: dict[str, Any] = {}
     old_building_fields = set(_field_names(BuildingState)) - {
-        "production_remainder_numerator"
+        "production_remainder_numerator",
+        "production_multiplier_remainder_numerator",
+        "production_multiplier_remainder_denominator",
     }
     for key, raw_building in raw_buildings.items():
         building = _object(raw_building, f"buildings.{key}", old_building_fields)
@@ -854,8 +989,60 @@ def _migrate_v3_to_v4(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v4_to_v5(document: dict[str, Any]) -> dict[str, Any]:
+    legacy = _object(
+        document,
+        "$",
+        set(_field_names(GameState)) - {"social_policy", "medical"},
+    )
+    migrated = deepcopy(legacy)
+    for building in migrated["buildings"].values():
+        building["production_multiplier_remainder_numerator"] = 0
+        building["production_multiplier_remainder_denominator"] = 1
+    migrated["social_policy"] = {
+        "current_ration_mode": "normal",
+        "ration_food_numerator": 100,
+        "ration_food_denominator": 100,
+        "previous_ration_mode": None,
+        "previous_ration_days": 0,
+        "consecutive_ration_days": 0,
+        "current_worktime_mode": "normal",
+        "worktime_output_numerator": 100,
+        "worktime_output_denominator": 100,
+        "consecutive_long_shift_days": 0,
+        "overtime_building_id": None,
+        "overtime_output_numerator": 100,
+        "overtime_output_denominator": 100,
+        "firepit_enabled": False,
+        "death_path": "none",
+        "unhandled_bodies": 0,
+        "buried_bodies": 0,
+        "stored_bodies": 0,
+        "triage_building_id": None,
+        "triage_used_ever": False,
+        "ending_tag_candidates": [],
+    }
+    migrated["medical"] = {
+        "temporary_capacity": 5,
+        "building_capacity": 0,
+        "effective_capacity": 5,
+        "medical_pressure": 0,
+        "critical_treatment_progress": 0,
+        "medical_ration_sick_cured_today": 0,
+        "medical_ration_critical_progress_today": 0,
+    }
+    migrated["save_data_version"] = 5
+    return migrated
+
+
 def _validate_state_invariants(state: GameState) -> None:
     population = state.population
+    if len(set(state.laws.signed_law_ids)) != len(state.laws.signed_law_ids):
+        raise SaveDataError("signed law ids must be unique")
+    if len(set(state.laws.active_law_ids)) != len(state.laws.active_law_ids):
+        raise SaveDataError("active law ids must be unique")
+    if not set(state.laws.active_law_ids).issubset(state.laws.signed_law_ids):
+        raise SaveDataError("active laws must also be signed")
     if population.population_total != (
         population.population_alive + population.population_dead
     ):
@@ -891,6 +1078,72 @@ def _validate_state_invariants(state: GameState) -> None:
     )
     if hunger_total > population.population_alive:
         raise SaveDataError("hunger pools must not exceed living population")
+
+    social = state.social_policy
+    if social.current_ration_mode not in {
+        "normal",
+        "coarse_soup",
+        "rice_porridge",
+        "emergency",
+    }:
+        raise SaveDataError("unsupported ration mode")
+    if social.ration_food_numerator <= 0 or social.ration_food_denominator <= 0:
+        raise SaveDataError("ration food ratio must be positive")
+    if social.previous_ration_mode not in {
+        None,
+        "normal",
+        "coarse_soup",
+        "rice_porridge",
+    }:
+        raise SaveDataError("unsupported previous ration mode")
+    if (social.current_ration_mode == "emergency") != (
+        social.previous_ration_mode is not None
+    ):
+        raise SaveDataError("emergency ration must retain exactly one previous mode")
+    if social.previous_ration_mode is None and social.previous_ration_days != 0:
+        raise SaveDataError("inactive emergency ration cannot retain previous days")
+    if social.current_worktime_mode not in {"normal", "long_shift"}:
+        raise SaveDataError("unsupported worktime mode")
+    if min(
+        social.worktime_output_numerator,
+        social.worktime_output_denominator,
+        social.overtime_output_numerator,
+        social.overtime_output_denominator,
+    ) <= 0:
+        raise SaveDataError("work output ratios must be positive")
+    if social.overtime_building_id is None and (
+        social.overtime_output_numerator != 100
+        or social.overtime_output_denominator != 100
+    ):
+        raise SaveDataError("inactive overtime must use the neutral output ratio")
+    if social.death_path not in {"none", "cemetery", "cold_pit"}:
+        raise SaveDataError("unsupported death path")
+    accounted_bodies = (
+        social.unhandled_bodies + social.buried_bodies + social.stored_bodies
+    )
+    if accounted_bodies > population.population_dead:
+        raise SaveDataError("handled and unhandled bodies cannot exceed total deaths")
+    if social.overtime_building_id is not None and social.overtime_building_id not in state.buildings:
+        raise SaveDataError("overtime target must be a registered building")
+    if social.triage_building_id is not None and social.triage_building_id not in state.buildings:
+        raise SaveDataError("triage target must be a registered building")
+    if len(set(social.ending_tag_candidates)) != len(social.ending_tag_candidates):
+        raise SaveDataError("ending tag candidates must be unique")
+
+    medical = state.medical
+    if medical.effective_capacity != medical.temporary_capacity + medical.building_capacity:
+        raise SaveDataError("effective medical capacity must match its components")
+    expected_pressure = max(
+        population.sick_population + population.critical_population
+        - medical.effective_capacity,
+        0,
+    )
+    if medical.medical_pressure != expected_pressure:
+        raise SaveDataError("medical pressure must match population and capacity")
+    if medical.medical_ration_sick_cured_today > population.population_total:
+        raise SaveDataError("medical ration cured count exceeds total population")
+    if medical.medical_ration_critical_progress_today > population.population_total:
+        raise SaveDataError("medical ration progress count exceeds total population")
 
     daily = state.daily_survival
     if daily.effective_furnace_level > daily.target_furnace_level:
@@ -1035,6 +1288,8 @@ def _validate_building_rule_invariants(
             raise SaveDataError(f"unknown building type: {building.building_type}")
         if building.zone not in rule.allowed_zones:
             raise SaveDataError("building zone does not match its catalog rule")
+        if not set(rule.required_law_ids).issubset(state.laws.signed_law_ids):
+            raise SaveDataError("built building is missing a required signed law")
         if building.slot_size != rule.slot_size or building.can_heat != rule.can_heat:
             raise SaveDataError("building derived fields do not match the catalog")
         if building.heated_today and not rule.can_heat:
@@ -1053,6 +1308,11 @@ def _validate_building_rule_invariants(
                 raise SaveDataError("building production remainder must be below capacity")
         elif building.production_remainder_numerator:
             raise SaveDataError("unstaffed building cannot have a production remainder")
+        if (
+            building.production_multiplier_remainder_numerator
+            >= building.production_multiplier_remainder_denominator
+        ):
+            raise SaveDataError("building production multiplier remainder must be proper")
         if rule.binding_kind is None:
             if building.bound_resource_id is not None:
                 raise SaveDataError("building has an unsupported resource binding")
