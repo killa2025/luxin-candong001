@@ -401,6 +401,30 @@ class EndDaySettlementTests(unittest.TestCase):
         self.assertEqual(encode_game_state(state), before)
         self.assertIsNone(engine.last_autosave())
 
+    def test_final_state_validator_runs_before_autosave_sink(self) -> None:
+        state = GameState.initial(random_seed=10)
+        before = encode_game_state(state)
+        autosaves: list[object] = []
+        validated_days: list[int] = []
+        engine = EndDayEngine(autosave_sink=autosaves.append)
+
+        def reject_advanced_day(candidate: GameState) -> None:
+            validated_days.append(candidate.calendar.current_day)
+            if candidate.calendar.current_day == 2:
+                raise ValueError("final state rejected")
+
+        engine.register_state_validator(reject_advanced_day)
+        execution = engine.execute(state, request(END_DAY_COMMAND))
+
+        self.assertEqual(execution.result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(
+            execution.result.data["failed_stage"], "commit_state_validation"
+        )
+        self.assertEqual(validated_days, [1, 1, 2])
+        self.assertEqual(autosaves, [])
+        self.assertEqual(encode_game_state(state), before)
+        self.assertIsNone(engine.last_autosave())
+
     def test_same_seed_state_and_handlers_are_reproducible(self) -> None:
         def make_engine() -> EndDayEngine:
             engine = EndDayEngine()

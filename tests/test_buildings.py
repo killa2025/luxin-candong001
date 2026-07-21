@@ -24,6 +24,7 @@ from furnace_winter.gameplay import (
     WOODFUEL_COMMAND,
     BuildingSystem,
     EndDayEngine,
+    EndDayStage,
     SurvivalSystem,
     create_initial_survival_state,
 )
@@ -54,8 +55,8 @@ class BuildingPatchTests(unittest.TestCase):
     def make_system(self) -> BuildingSystem:
         return BuildingSystem(self.building_rules, self.survival_rules)
 
-    def make_engine(self) -> EndDayEngine:
-        engine = EndDayEngine()
+    def make_engine(self, autosave_sink=None) -> EndDayEngine:
+        engine = EndDayEngine(autosave_sink=autosave_sink)
         SurvivalSystem(self.survival_rules, self.building_rules).install(engine)
         self.make_system().install(engine)
         return engine
@@ -848,6 +849,70 @@ class BuildingPatchTests(unittest.TestCase):
         execution = self.settle_day(state)
         self.assertEqual(execution.result.code, ErrorCode.INTERNAL_ERROR)
         self.assertEqual(state, before)
+
+    def test_late_end_day_config_tampering_rolls_back_before_autosave(self) -> None:
+        state = self.make_state()
+        before = deepcopy(state)
+        autosaves: list[object] = []
+        engine = self.make_engine(autosaves.append)
+
+        def corrupt_storage(context) -> None:
+            context.state.resources.storage_capacity = 1799
+
+        engine.register_stage_handler(
+            EndDayStage.RESOLVE_TRUST_AND_PANIC, corrupt_storage
+        )
+        execution = self.settle_day(state, engine, "late-config-tamper")
+
+        self.assertEqual(execution.result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(execution.result.data["failed_stage"], "write_autosave")
+        self.assertEqual(state, before)
+        self.assertEqual(autosaves, [])
+        self.assertIsNone(execution.autosave)
+        self.assertIsNone(engine.last_autosave())
+
+    def test_unfinished_buildings_are_rejected_and_commands_roll_back(self) -> None:
+        cases = (
+            (
+                "basic_residence",
+                None,
+                "residence-start-001",
+            ),
+            (
+                "small_warehouse",
+                {"building_type": "small_warehouse", "zone": "storage_outer"},
+                None,
+            ),
+            (
+                "hunting_lodge",
+                {"building_type": "hunting_lodge", "zone": "outer_ring"},
+                None,
+            ),
+        )
+        for building_type, build_arguments, existing_id in cases:
+            with self.subTest(building_type=building_type):
+                state = self.make_state()
+                building_id = existing_id
+                if build_arguments is not None:
+                    built = self.execute(state, BUILD_COMMAND, build_arguments)
+                    self.assertTrue(built.accepted)
+                    building_id = built.data["building_id"]
+                assert building_id is not None
+                state.buildings[building_id].is_built = False
+                before = deepcopy(state)
+
+                with self.assertRaisesRegex(SaveDataError, "unfinished building"):
+                    validate_game_state(
+                        state, self.building_rules, self.survival_rules
+                    )
+                rejected = self.execute(
+                    state,
+                    BUILD_COMMAND,
+                    {"building_type": "canteen", "zone": "inner_ring"},
+                    f"unfinished-{building_type}",
+                )
+                self.assertEqual(rejected.code, ErrorCode.INTERNAL_ERROR)
+                self.assertEqual(state, before)
 
     def test_v2_migration_preserves_non_contiguous_and_custom_residence_ids(self) -> None:
         for existing_id in ("residence-start-004", "custom-start-home"):

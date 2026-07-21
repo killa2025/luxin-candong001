@@ -586,23 +586,14 @@ class BuildingSystem:
         return {"woodfuel_confirmed_today": True, "active_duration": "current_day_only"}
 
     def install(self, engine: EndDayEngine) -> None:
-        engine.register_stage_handler(EndDayStage.READ_FINAL_PLAN, self.validate_runtime_state)
+        engine.register_state_validator(self.validate_state)
         engine.register_stage_handler(EndDayStage.CALCULATE_BUILDING_TEMPERATURE, self.calculate_building_temperatures)
         engine.register_stage_handler(EndDayStage.RESOLVE_BUILDING_OPERATION, self.resolve_building_operation)
         engine.register_stage_handler(EndDayStage.RESOLVE_COLLECTION_AND_PRODUCTION, self.resolve_production)
         engine.register_stage_handler(EndDayStage.CLOSE_DAILY_EFFECTS, self.close_daily_effects)
 
-    def validate_runtime_state(self, context: EndDayContext) -> None:
-        try:
-            validate_game_state(context.state, self.rules, self.survival_rules)
-        except (SaveDataError, TypeError, ValueError) as exc:
-            context.abort(
-                ErrorCode.INTERNAL_ERROR,
-                {
-                    "reason": "invalid_building_state",
-                    "exception_type": type(exc).__name__,
-                },
-            )
+    def validate_state(self, state: GameState) -> None:
+        validate_game_state(state, self.rules, self.survival_rules)
 
     def calculate_building_temperatures(self, context: EndDayContext) -> None:
         state = context.state

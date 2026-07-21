@@ -1004,6 +1004,10 @@ def _validate_building_rule_invariants(
     )
     building_counts: dict[str, int] = {}
     for building in state.buildings.values():
+        if not building.is_built:
+            raise SaveDataError(
+                "building registry cannot contain an unfinished building"
+            )
         building_counts[building.building_type] = (
             building_counts.get(building.building_type, 0) + 1
         )
