@@ -344,16 +344,17 @@ class SurvivalSystem:
                 )
             )
 
-        food_numerator = (
-            state.population.population_alive
-            * self.rules.food_per_person
-            * state.social_policy.ration_food_numerator
+        ration_mode, ration_numerator, ration_denominator = self._effective_ration(
+            state
         )
-        food_required = (
-            food_numerator + state.social_policy.ration_food_denominator - 1
-        ) // state.social_policy.ration_food_denominator
+        food_required = self._food_required(
+            state.population.population_alive,
+            ration_numerator,
+            ration_denominator,
+        )
         available_food = state.resources.cooked_food + state.resources.raw_food
         if available_food < food_required:
+            food_eaten = max(available_food, 0)
             warnings.append(
                 RiskWarning(
                     "survival.food_shortfall",
@@ -361,7 +362,14 @@ class SurvivalSystem:
                     {
                         "available_food": available_food,
                         "required_food": food_required,
-                        "unfed_population": food_required - available_food,
+                        "ration_mode_used": ration_mode,
+                        "food_shortfall": food_required - food_eaten,
+                        "unfed_population": self._unfed_population(
+                            state.population.population_alive,
+                            food_eaten,
+                            ration_numerator,
+                            ration_denominator,
+                        ),
                     },
                 )
             )
@@ -479,22 +487,32 @@ class SurvivalSystem:
 
     def settle_food(self, context: EndDayContext) -> None:
         state = context.state
-        food_numerator = (
-            state.population.population_alive
-            * self.rules.food_per_person
-            * state.social_policy.ration_food_numerator
+        ration_mode, ration_numerator, ration_denominator = self._effective_ration(
+            state
         )
-        required = (
-            food_numerator + state.social_policy.ration_food_denominator - 1
-        ) // state.social_policy.ration_food_denominator
+        required = self._food_required(
+            state.population.population_alive,
+            ration_numerator,
+            ration_denominator,
+        )
         cooked_eaten = min(required, state.resources.cooked_food)
         state.resources.cooked_food -= cooked_eaten
         remaining = required - cooked_eaten
         raw_eaten = min(remaining, state.resources.raw_food)
         state.resources.raw_food -= raw_eaten
-        unfed = remaining - raw_eaten
+        food_eaten = cooked_eaten + raw_eaten
+        shortfall = required - food_eaten
+        unfed = self._unfed_population(
+            state.population.population_alive,
+            food_eaten,
+            ration_numerator,
+            ration_denominator,
+        )
+        state.daily_survival.ration_mode_used = ration_mode
+        state.daily_survival.food_required = required
         state.daily_survival.cooked_food_eaten = cooked_eaten
         state.daily_survival.raw_food_eaten = raw_eaten
+        state.daily_survival.food_shortfall = shortfall
         state.daily_survival.unfed_population = unfed
         state.daily_survival.storage_used = storage_used(state.resources)
         state.daily_survival.is_over_capacity = is_over_capacity(state.resources)
@@ -502,10 +520,51 @@ class SurvivalSystem:
             "survival.food.settled",
             {
                 "required_food": required,
+                "ration_mode_used": ration_mode,
                 "cooked_food_eaten": cooked_eaten,
                 "raw_food_eaten": raw_eaten,
+                "food_shortfall": shortfall,
                 "unfed_population": unfed,
             },
+        )
+
+    def _food_required(
+        self,
+        population_alive: int,
+        ration_numerator: int,
+        ration_denominator: int,
+    ) -> int:
+        numerator = (
+            population_alive * self.rules.food_per_person * ration_numerator
+        )
+        return (numerator + ration_denominator - 1) // ration_denominator
+
+    def _unfed_population(
+        self,
+        population_alive: int,
+        food_eaten: int,
+        ration_numerator: int,
+        ration_denominator: int,
+    ) -> int:
+        per_person_numerator = self.rules.food_per_person * ration_numerator
+        fed_population = min(
+            population_alive,
+            (food_eaten * ration_denominator) // per_person_numerator,
+        )
+        return population_alive - fed_population
+
+    @staticmethod
+    def _effective_ration(state: GameState) -> tuple[str, int, int]:
+        selected_mode = state.social_policy.current_ration_mode
+        if selected_mode != "normal" and not any(
+            building.building_type == "canteen" and building.is_operational
+            for building in state.buildings.values()
+        ):
+            return "normal", 100, 100
+        return (
+            selected_mode,
+            state.social_policy.ration_food_numerator,
+            state.social_policy.ration_food_denominator,
         )
 
     @staticmethod

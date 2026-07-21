@@ -161,6 +161,13 @@
     "overtime_output_denominator": 100,
     "overtime_medical_research_numerator": 150,
     "overtime_medical_research_denominator": 100,
+    "overtime_sick_divisor": 15,
+    "overtime_sick_minimum_if_staffed": 1,
+    "overtime_accident_risk_divisor": 20,
+    "overtime_cold_extra_sick_divisor": 30,
+    "long_shift_first_day_sick_divisor": 40,
+    "long_shift_consecutive_sick_divisor": 25,
+    "long_shift_cold_extra_sick_divisor": 40,
     "overtime_trust_change": -2,
     "overtime_panic_change": 3
   },

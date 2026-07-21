@@ -319,6 +319,12 @@ def _decode_daily_survival(value: Any) -> DailySurvivalState:
             data["heating_shortfall"], "daily_survival.heating_shortfall"
         ),
         zone_temperatures=zone_temperatures,
+        ration_mode_used=_string(
+            data["ration_mode_used"], "daily_survival.ration_mode_used"
+        ),
+        food_required=_integer(
+            data["food_required"], "daily_survival.food_required", minimum=0
+        ),
         cooked_food_eaten=_integer(
             data["cooked_food_eaten"],
             "daily_survival.cooked_food_eaten",
@@ -327,9 +333,22 @@ def _decode_daily_survival(value: Any) -> DailySurvivalState:
         raw_food_eaten=_integer(
             data["raw_food_eaten"], "daily_survival.raw_food_eaten", minimum=0
         ),
+        food_shortfall=_integer(
+            data["food_shortfall"], "daily_survival.food_shortfall", minimum=0
+        ),
         unfed_population=_integer(
             data["unfed_population"],
             "daily_survival.unfed_population",
+            minimum=0,
+        ),
+        worktime_sick_added=_integer(
+            data["worktime_sick_added"],
+            "daily_survival.worktime_sick_added",
+            minimum=0,
+        ),
+        overtime_accident_risk_points=_integer(
+            data["overtime_accident_risk_points"],
+            "daily_survival.overtime_accident_risk_points",
             minimum=0,
         ),
         storage_used=_integer(
@@ -828,11 +847,31 @@ def _migrate_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
     )
     migrated = deepcopy(legacy)
 
+    raw_daily = migrated["daily_survival"]
+    if not isinstance(raw_daily, Mapping):
+        raise SaveDataError("daily_survival must be an object")
+    normalized_daily = dict(raw_daily)
+    for future_field in (
+        "ration_mode_used",
+        "food_required",
+        "food_shortfall",
+        "worktime_sick_added",
+        "overtime_accident_risk_points",
+    ):
+        normalized_daily.pop(future_field, None)
     daily = _object(
-        migrated["daily_survival"],
+        normalized_daily,
         "daily_survival",
         set(_field_names(DailySurvivalState))
-        - {"woodfuel_wood_burned", "woodfuel_contribution"},
+        - {
+            "woodfuel_wood_burned",
+            "woodfuel_contribution",
+            "ration_mode_used",
+            "food_required",
+            "food_shortfall",
+            "worktime_sick_added",
+            "overtime_accident_risk_points",
+        },
     )
     daily["woodfuel_wood_burned"] = 0
     daily["woodfuel_contribution"] = 0
@@ -996,9 +1035,71 @@ def _migrate_v4_to_v5(document: dict[str, Any]) -> dict[str, Any]:
         set(_field_names(GameState)) - {"social_policy", "medical"},
     )
     migrated = deepcopy(legacy)
-    for building in migrated["buildings"].values():
+    raw_buildings = migrated["buildings"]
+    if not isinstance(raw_buildings, Mapping):
+        raise SaveDataError("buildings must be an object")
+    prepared_buildings: dict[str, dict[str, Any]] = {}
+    for building_id, raw_building in raw_buildings.items():
+        checked_id = _string(building_id, "buildings key")
+        assert isinstance(checked_id, str)
+        if not isinstance(raw_building, Mapping):
+            raise SaveDataError(f"buildings.{checked_id} must be an object")
+        building = dict(raw_building)
         building["production_multiplier_remainder_numerator"] = 0
         building["production_multiplier_remainder_denominator"] = 1
+        prepared_buildings[checked_id] = building
+    migrated["buildings"] = prepared_buildings
+    decoded_buildings = _decode_buildings(prepared_buildings)
+
+    raw_daily = migrated["daily_survival"]
+    if not isinstance(raw_daily, Mapping):
+        raise SaveDataError("daily_survival must be an object")
+    daily = dict(raw_daily)
+    cooked_eaten = _integer(
+        daily.get("cooked_food_eaten"),
+        "daily_survival.cooked_food_eaten",
+        minimum=0,
+    )
+    raw_eaten = _integer(
+        daily.get("raw_food_eaten"),
+        "daily_survival.raw_food_eaten",
+        minimum=0,
+    )
+    legacy_shortfall = _integer(
+        daily.get("unfed_population"),
+        "daily_survival.unfed_population",
+        minimum=0,
+    )
+    daily["ration_mode_used"] = "normal"
+    daily["food_required"] = cooked_eaten + raw_eaten + legacy_shortfall
+    daily["food_shortfall"] = legacy_shortfall
+    daily["worktime_sick_added"] = 0
+    daily["overtime_accident_risk_points"] = 0
+    _object(daily, "daily_survival", _field_names(DailySurvivalState))
+    migrated["daily_survival"] = daily
+
+    calendar = _decode_calendar(migrated["calendar"])
+    population = _decode_nonnegative_int_state(
+        migrated["population"], "population", PopulationState
+    )
+    assert isinstance(population, PopulationState)
+    temporary_capacity = 5 if calendar.current_day <= 3 else 0
+    building_capacity = 0
+    for building in decoded_buildings.values():
+        if not building.is_operational:
+            continue
+        staff = (
+            building.assigned_workers
+            + building.assigned_engineers
+            + building.assigned_children
+            + building.assigned_medical_apprentices
+            + building.assigned_engineering_apprentices
+        )
+        if building.building_type == "medical_station":
+            building_capacity += (10 * staff) // 5
+        elif building.building_type == "hospital":
+            building_capacity += (30 * staff) // 10
+    effective_capacity = temporary_capacity + building_capacity
     migrated["social_policy"] = {
         "current_ration_mode": "normal",
         "ration_food_numerator": 100,
@@ -1023,10 +1124,15 @@ def _migrate_v4_to_v5(document: dict[str, Any]) -> dict[str, Any]:
         "ending_tag_candidates": [],
     }
     migrated["medical"] = {
-        "temporary_capacity": 5,
-        "building_capacity": 0,
-        "effective_capacity": 5,
-        "medical_pressure": 0,
+        "temporary_capacity": temporary_capacity,
+        "building_capacity": building_capacity,
+        "effective_capacity": effective_capacity,
+        "medical_pressure": max(
+            population.sick_population
+            + population.critical_population
+            - effective_capacity,
+            0,
+        ),
         "critical_treatment_progress": 0,
         "medical_ration_sick_cured_today": 0,
         "medical_ration_critical_progress_today": 0,
@@ -1146,6 +1252,20 @@ def _validate_state_invariants(state: GameState) -> None:
         raise SaveDataError("medical ration progress count exceeds total population")
 
     daily = state.daily_survival
+    if daily.ration_mode_used not in {
+        "normal",
+        "coarse_soup",
+        "rice_porridge",
+        "emergency",
+    }:
+        raise SaveDataError("unsupported settled ration mode")
+    food_eaten = daily.cooked_food_eaten + daily.raw_food_eaten
+    if daily.food_shortfall != max(daily.food_required - food_eaten, 0):
+        raise SaveDataError("food shortfall must match required and eaten food")
+    if food_eaten > daily.food_required:
+        raise SaveDataError("food eaten cannot exceed required food")
+    if daily.unfed_population > population.population_total:
+        raise SaveDataError("unfed population cannot exceed total population")
     if daily.effective_furnace_level > daily.target_furnace_level:
         raise SaveDataError("effective furnace level cannot exceed the target level")
     if daily.coal_paid > daily.required_coal:

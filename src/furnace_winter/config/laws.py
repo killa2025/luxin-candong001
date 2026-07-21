@@ -53,6 +53,13 @@ class WorktimeRules:
     overtime_output_denominator: int
     overtime_medical_research_numerator: int
     overtime_medical_research_denominator: int
+    overtime_sick_divisor: int
+    overtime_sick_minimum_if_staffed: int
+    overtime_accident_risk_divisor: int
+    overtime_cold_extra_sick_divisor: int
+    long_shift_first_day_sick_divisor: int
+    long_shift_consecutive_sick_divisor: int
+    long_shift_cold_extra_sick_divisor: int
     overtime_trust_change: int
     overtime_panic_change: int
 
@@ -123,6 +130,13 @@ class LawRules:
                 raise LawConfigError("ration references an unknown law")
             if (ration.sick_after_days is None) != (ration.sick_population_divisor is None):
                 raise LawConfigError("ration sickness threshold and divisor must be paired")
+            if ration.sick_after_days is not None and ration.sick_after_days <= 0:
+                raise LawConfigError("ration sickness threshold must be positive")
+            if (
+                ration.sick_population_divisor is not None
+                and ration.sick_population_divisor <= 0
+            ):
+                raise LawConfigError("ration sickness divisor must be positive")
         positive_values = (
             self.worktime.long_shift_output_numerator,
             self.worktime.long_shift_output_denominator,
@@ -130,6 +144,13 @@ class LawRules:
             self.worktime.overtime_output_denominator,
             self.worktime.overtime_medical_research_numerator,
             self.worktime.overtime_medical_research_denominator,
+            self.worktime.overtime_sick_divisor,
+            self.worktime.overtime_sick_minimum_if_staffed,
+            self.worktime.overtime_accident_risk_divisor,
+            self.worktime.overtime_cold_extra_sick_divisor,
+            self.worktime.long_shift_first_day_sick_divisor,
+            self.worktime.long_shift_consecutive_sick_divisor,
+            self.worktime.long_shift_cold_extra_sick_divisor,
             self.medical.temporary_capacity,
             self.medical.medical_ration_food_per_patient,
             self.medical.medical_ration_max_patients,
@@ -137,9 +158,17 @@ class LawRules:
             self.actions.emergency_ration_cooldown_days,
             self.actions.memorial_cooldown_days,
             self.actions.unhandled_body_unit,
+            self.actions.unhandled_body_crisis_threshold,
         )
         if any(value <= 0 for value in positive_values):
             raise LawConfigError("positive law numeric values must be greater than zero")
+        if self.medical.temporary_capacity_through_day < 0:
+            raise LawConfigError("temporary medical capacity day must be nonnegative")
+        if (
+            self.medical.triage_cooldown_days is not None
+            and self.medical.triage_cooldown_days <= 0
+        ):
+            raise LawConfigError("triage cooldown must be positive when configured")
 
 
 def _object(value: Any, path: str) -> Mapping[str, Any]:

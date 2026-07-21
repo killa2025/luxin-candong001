@@ -31,6 +31,12 @@ _OVERTIME_TYPES = frozenset({
     "greenhouse", "improved_greenhouse", "small_coal_miner",
     "small_steel_miner", "large_coal_miner", "large_steel_miner", "logging_camp",
 })
+_LONG_SHIFT_EXCLUDED_TYPES = frozenset({
+    "child_shelter", "school", "small_tavern", "grand_casino",
+    "basic_residence", "improved_residence", "advanced_residence",
+    "small_warehouse", "cemetery", "cold_pit", "furnace_hall",
+    "patrol_station", "hot_spring_bath", "gathering_shelter",
+})
 
 
 def build_law_catalog(rules: LawRules | None = None) -> CommandCatalog:
@@ -174,7 +180,7 @@ class LawSystem:
             next_day = state.laws.cooldowns.get(_EMERGENCY_COOLDOWN, 1)
             if state.calendar.current_day < next_day:
                 return self._illegal("action_cooldown_active", next_available_day=next_day)
-            if not self._has_staffed_canteen(state):
+            if not self._has_operational_canteen(state):
                 return self._illegal("canteen_unavailable")
         return CommandValidation.valid()
 
@@ -317,6 +323,7 @@ class LawSystem:
 
     def _overtime(self, state: GameState, request: CommandRequest) -> dict[str, Any]:
         building_id = str(request.arguments["building_id"])
+        building = state.buildings[building_id]
         state.social_policy.overtime_building_id = building_id
         state.social_policy.overtime_output_numerator = self.rules.worktime.overtime_output_numerator
         state.social_policy.overtime_output_denominator = self.rules.worktime.overtime_output_denominator
@@ -324,7 +331,23 @@ class LawSystem:
             state, trust=self.rules.worktime.overtime_trust_change,
             panic=self.rules.worktime.overtime_panic_change,
         )
-        return {"building_id": building_id, "active_duration": "current_day_only", "cannot_cancel": True}
+        progress_numerator, progress_denominator = self.overtime_progress_multiplier(
+            state, building_id
+        )
+        return {
+            "building_id": building_id,
+            "active_duration": "current_day_only",
+            "cannot_cancel": True,
+            "progress_multiplier_numerator": progress_numerator,
+            "progress_multiplier_denominator": progress_denominator,
+            "progress_multiplier_applies_to": (
+                "medical"
+                if building.building_type in {"medical_station", "hospital"}
+                else "research"
+                if building.building_type == "research_institute"
+                else None
+            ),
+        }
 
     def _medical_ration(self, state: GameState, _request: CommandRequest) -> dict[str, Any]:
         rule = self.rules.medical
@@ -466,13 +489,28 @@ class LawSystem:
         state.medical.temporary_capacity = temporary
         state.medical.building_capacity = building_capacity
         state.medical.effective_capacity = temporary + building_capacity
-        ration = self.rules.rations[state.social_policy.current_ration_mode]
-        ration_day = state.social_policy.consecutive_ration_days + 1
+        ration_mode = self._effective_ration_mode(state)
+        ration = self.rules.rations[ration_mode]
+        ration_day = (
+            state.social_policy.consecutive_ration_days + 1
+            if ration_mode == state.social_policy.current_ration_mode
+            else 1
+        )
         ration_sick = 0
         if ration.sick_after_days is not None and ration_day >= ration.sick_after_days and ration.sick_population_divisor:
             ration_sick = min(state.population.healthy_population, state.population.population_alive // ration.sick_population_divisor)
         state.population.healthy_population -= ration_sick
         state.population.sick_population += ration_sick
+        requested_worktime_sick, accident_risk_points, worktime_details = (
+            self._worktime_health_effects(state)
+        )
+        worktime_sick = min(
+            state.population.healthy_population, requested_worktime_sick
+        )
+        state.population.healthy_population -= worktime_sick
+        state.population.sick_population += worktime_sick
+        state.daily_survival.worktime_sick_added = worktime_sick
+        state.daily_survival.overtime_accident_risk_points = accident_risk_points
         accounted = state.social_policy.unhandled_bodies + state.social_policy.buried_bodies + state.social_policy.stored_bodies
         new_bodies = max(state.population.population_dead - accounted, 0)
         state.social_policy.unhandled_bodies += new_bodies
@@ -489,21 +527,30 @@ class LawSystem:
             "temporary_capacity": temporary, "building_capacity": building_capacity,
             "effective_capacity": state.medical.effective_capacity,
             "medical_pressure": state.medical.medical_pressure,
+            "ration_mode_used": ration_mode,
             "ration_sick_added": ration_sick,
-            "worktime_health_risk_resolution": "deferred_unsealed",
+            "worktime_sick_added": worktime_sick,
+            "overtime_accident_risk_points": accident_risk_points,
+            "accident_resolution": "risk_points_only_result_not_sealed",
+            "worktime_details": worktime_details,
             "new_bodies": new_bodies, "unhandled_bodies": state.social_policy.unhandled_bodies,
         })
 
     def resolve_trust_and_panic(self, context: EndDayContext) -> None:
         state = context.state
-        ration = self.rules.rations[state.social_policy.current_ration_mode]
-        ration_day = state.social_policy.consecutive_ration_days + 1
+        ration_mode = self._effective_ration_mode(state)
+        ration = self.rules.rations[ration_mode]
+        ration_day = (
+            state.social_policy.consecutive_ration_days + 1
+            if ration_mode == state.social_policy.current_ration_mode
+            else 1
+        )
         trust_change = ration.daily_trust_change
         panic_change = ration.daily_panic_change
-        if state.social_policy.current_ration_mode == "rice_porridge" and ration_day % 2 == 0:
+        if ration_mode == "rice_porridge" and ration_day % 2 == 0:
             trust_change -= 1
             panic_change += 1
-        if state.social_policy.current_ration_mode == "coarse_soup" and ration_day >= 6:
+        if ration_mode == "coarse_soup" and ration_day >= 6:
             panic_change += 1
         if state.social_policy.current_worktime_mode == "long_shift":
             long_day = state.social_policy.consecutive_long_shift_days + 1
@@ -525,10 +572,15 @@ class LawSystem:
             panic_change += self.rules.actions.unhandled_body_crisis_extra_panic
             self._add_tag(state, "unhandled_bodies_crisis")
         self._change_emotion(state, trust=trust_change, panic=panic_change)
-        state.social_policy.consecutive_ration_days = ration_day
+        state.social_policy.consecutive_ration_days = (
+            ration_day
+            if ration_mode == state.social_policy.current_ration_mode
+            else 0
+        )
         context.emit("laws.trust_and_panic.resolved", {
             "trust_change": trust_change, "panic_change": panic_change,
-            "ration_days": ration_day,
+            "ration_mode_used": ration_mode,
+            "ration_days": state.social_policy.consecutive_ration_days,
             "long_shift_days": state.social_policy.consecutive_long_shift_days,
             "unhandled_bodies": state.social_policy.unhandled_bodies,
         })
@@ -584,6 +636,12 @@ class LawSystem:
             item for item in all_building_unlocks if item not in self.building_rules.buildings
         )
         unlocked_actions = sorted({item for law_id in signed for item in self.rules.laws[law_id].unlock_actions})
+        overtime_building_id = state.social_policy.overtime_building_id
+        progress_numerator, progress_denominator = (
+            self.overtime_progress_multiplier(state, overtime_building_id)
+            if overtime_building_id is not None
+            else (100, 100)
+        )
         return {
             "signed_law_ids": list(state.laws.signed_law_ids),
             "available_law_ids": sorted(available), "locked_laws": locked,
@@ -593,6 +651,11 @@ class LawSystem:
             "unlocked_action_ids": unlocked_actions,
             "ration_mode": state.social_policy.current_ration_mode,
             "worktime_mode": state.social_policy.current_worktime_mode,
+            "overtime_progress_multiplier": {
+                "building_id": overtime_building_id,
+                "numerator": progress_numerator,
+                "denominator": progress_denominator,
+            },
             "death_path": state.social_policy.death_path,
             "firepit_enabled": state.social_policy.firepit_enabled,
             "medical_capacity": self._current_medical_capacity(state),
@@ -603,6 +666,24 @@ class LawSystem:
             ),
             "action_next_available_days": {k: v for k, v in state.laws.cooldowns.items() if k != _LAW_COOLDOWN},
         }
+
+    def overtime_progress_multiplier(
+        self, state: GameState, building_id: str
+    ) -> tuple[int, int]:
+        """Return the exact treatment/research progress multiplier for a building."""
+
+        building = state.buildings.get(building_id)
+        if (
+            state.social_policy.overtime_building_id == building_id
+            and building is not None
+            and building.building_type
+            in {"medical_station", "hospital", "research_institute"}
+        ):
+            return (
+                self.rules.worktime.overtime_medical_research_numerator,
+                self.rules.worktime.overtime_medical_research_denominator,
+            )
+        return 100, 100
 
     def _current_medical_capacity(self, state: GameState) -> int:
         temporary = self.rules.medical.temporary_capacity if state.calendar.current_day <= self.rules.medical.temporary_capacity_through_day else 0
@@ -622,18 +703,113 @@ class LawSystem:
 
     @staticmethod
     def _building_medical_capacity(state: GameState) -> int:
-        return sum(
-            (10 * LawSystem._assigned_total(building)) // 5
-            for building in state.buildings.values()
-            if building.building_type == "medical_station" and building.is_operational
-        )
+        capacity = 0
+        for building in state.buildings.values():
+            if not building.is_operational:
+                continue
+            staff = LawSystem._assigned_total(building)
+            if building.building_type == "medical_station":
+                capacity += (10 * staff) // 5
+            elif building.building_type == "hospital":
+                capacity += (30 * staff) // 10
+        return capacity
 
     @staticmethod
-    def _has_staffed_canteen(state: GameState) -> bool:
+    def _has_operational_canteen(state: GameState) -> bool:
         return any(
-            building.building_type == "canteen" and building.is_built and LawSystem._assigned_total(building) > 0
+            building.building_type == "canteen" and building.is_operational
             for building in state.buildings.values()
         )
+
+    def _effective_ration_mode(self, state: GameState) -> str:
+        if (
+            state.daily_survival.settled_day == state.calendar.current_day
+            and state.daily_survival.ration_mode_used in self.rules.rations
+        ):
+            return state.daily_survival.ration_mode_used
+        if (
+            state.social_policy.current_ration_mode != "normal"
+            and not self._has_operational_canteen(state)
+        ):
+            return "normal"
+        return state.social_policy.current_ration_mode
+
+    def _worktime_health_effects(
+        self, state: GameState
+    ) -> tuple[int, int, dict[str, Any]]:
+        overtime_sick = 0
+        overtime_cold_sick = 0
+        accident_risk_points = 0
+        overtime_staff = 0
+        overtime_id = state.social_policy.overtime_building_id
+        if overtime_id is not None:
+            target = state.buildings[overtime_id]
+            overtime_staff = self._assigned_total(target)
+            overtime_sick = overtime_staff // self.rules.worktime.overtime_sick_divisor
+            if overtime_staff > 0:
+                overtime_sick = max(
+                    overtime_sick,
+                    self.rules.worktime.overtime_sick_minimum_if_staffed,
+                )
+                accident_divisor = self.rules.worktime.overtime_accident_risk_divisor
+                accident_risk_points = (
+                    overtime_staff + accident_divisor - 1
+                ) // accident_divisor
+            if self._is_severe_cold_work(target):
+                overtime_cold_sick = (
+                    overtime_staff
+                    // self.rules.worktime.overtime_cold_extra_sick_divisor
+                )
+
+        long_shift_sick = 0
+        long_shift_cold_sick = 0
+        long_shift_staff = 0
+        long_shift_cold_staff = 0
+        if state.social_policy.current_worktime_mode == "long_shift":
+            affected = [
+                building
+                for building in state.buildings.values()
+                if building.is_operational
+                and building.building_type not in _LONG_SHIFT_EXCLUDED_TYPES
+                and self._assigned_total(building) > 0
+            ]
+            long_shift_staff = sum(self._assigned_total(item) for item in affected)
+            long_shift_cold_staff = sum(
+                self._assigned_total(item)
+                for item in affected
+                if self._is_severe_cold_work(item)
+            )
+            long_shift_day = state.social_policy.consecutive_long_shift_days + 1
+            divisor = (
+                self.rules.worktime.long_shift_first_day_sick_divisor
+                if long_shift_day == 1
+                else self.rules.worktime.long_shift_consecutive_sick_divisor
+            )
+            long_shift_sick = long_shift_staff // divisor
+            long_shift_cold_sick = (
+                long_shift_cold_staff
+                // self.rules.worktime.long_shift_cold_extra_sick_divisor
+            )
+
+        total_sick = (
+            overtime_sick
+            + overtime_cold_sick
+            + long_shift_sick
+            + long_shift_cold_sick
+        )
+        return total_sick, accident_risk_points, {
+            "overtime_staff": overtime_staff,
+            "overtime_sick_added": overtime_sick,
+            "overtime_cold_extra_sick": overtime_cold_sick,
+            "long_shift_staff": long_shift_staff,
+            "long_shift_cold_staff": long_shift_cold_staff,
+            "long_shift_sick_added": long_shift_sick,
+            "long_shift_cold_extra_sick": long_shift_cold_sick,
+        }
+
+    @staticmethod
+    def _is_severe_cold_work(building: Any) -> bool:
+        return building.effective_temperature <= -46
 
     @staticmethod
     def _has_built_type(state: GameState, building_type: str) -> bool:

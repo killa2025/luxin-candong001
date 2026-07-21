@@ -89,9 +89,14 @@ class DailySurvivalState:
     woodfuel_contribution: int = 0
     heating_shortfall: bool = False
     zone_temperatures: dict[str, int] = field(default_factory=dict)
+    ration_mode_used: str = "normal"
+    food_required: int = 0
     cooked_food_eaten: int = 0
     raw_food_eaten: int = 0
+    food_shortfall: int = 0
     unfed_population: int = 0
+    worktime_sick_added: int = 0
+    overtime_accident_risk_points: int = 0
     storage_used: int = 0
     is_over_capacity: bool = False
 
