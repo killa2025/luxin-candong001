@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "config_status": "TEST_NUMERIC",
+  "queue": {
+    "max_major_per_day": 1,
+    "max_normal_with_major": 1,
+    "max_normal_without_major": 2
+  },
+  "thresholds": {
+    "food_warning_days_x10": 20,
+    "empty_pot_days_x10": 15,
+    "raw_food_days": 2,
+    "raw_food_window_days": 3,
+    "canteen_outage_days": 2,
+    "medical_gap_warning": 1,
+    "medical_gap_event": 5,
+    "medical_gap_major": 10,
+    "severe_patients": 5,
+    "persistent_severe_patients": 3,
+    "persistent_severe_days": 2,
+    "unhandled_body_event": 6,
+    "unhandled_body_major": 10,
+    "children_request_day_min": 5,
+    "unprotected_children": 10,
+    "child_labor_risk_points": 3,
+    "child_harm_from_work": 1,
+    "long_shift_days": 3,
+    "long_shift_risk_points": 3,
+    "overtime_window_days": 5,
+    "overtime_uses": 3,
+    "coal_warning_days_x10": 20,
+    "coal_event_days_x10": 10,
+    "coal_major_days_x10_after_black_frost": 5,
+    "furnace_pressure_warning": 80,
+    "furnace_pressure_event": 90,
+    "furnace_pressure_forced": 100,
+    "homeless_warning": 1,
+    "homeless_event": 20,
+    "homeless_major": 40,
+    "cold_exposure_event_level": 3,
+    "cold_exposure_major_level": 4,
+    "cold_exposure_status_delay_days": 1,
+    "cold_house_day_min": 4,
+    "trust_warning": 40,
+    "trust_event": 30,
+    "trust_major": 15,
+    "panic_warning": 65,
+    "panic_event": 75,
+    "panic_major": 90
+  },
+  "promise": {
+    "max_active": 2,
+    "deadline_cap_start_day": 42,
+    "deadline_cap_day": 48,
+    "disabled_from_day": 49,
+    "deadlines": {
+      "food": 3,
+      "medical": 4,
+      "housing": 4,
+      "body": 3,
+      "children": 4,
+      "labor": 3,
+      "coal": 3,
+      "furnace": 4,
+      "trust": 4,
+      "panic": 4
+    },
+    "effects": {
+      "ordinary": {"success_trust": 2, "success_panic": -1, "failure_trust": -6, "failure_panic": 6},
+      "serious": {"success_trust": 3, "success_panic": -2, "failure_trust": -8, "failure_panic": 8},
+      "critical": {"success_trust": 4, "success_panic": -3, "failure_trust": -10, "failure_panic": 10}
+    }
+  },
+  "events": {
+    "empty_pot": {"priority": 60, "cooldown_days": 4, "max_per_game": 0, "promise_type": "food", "promise_severity": "ordinary"},
+    "raw_food_dispute": {"priority": 61, "cooldown_days": 0, "max_per_game": 1, "promise_type": "food", "promise_severity": "ordinary"},
+    "medical_beds_emergency": {"priority": 55, "cooldown_days": 4, "max_per_game": 0, "promise_type": "medical", "promise_severity": "ordinary"},
+    "severe_case_backlog": {"priority": 52, "cooldown_days": 0, "max_per_game": 1, "promise_type": "medical", "promise_severity": "serious"},
+    "first_body": {"priority": 30, "cooldown_days": 0, "max_per_game": 1, "promise_type": null, "promise_severity": null},
+    "bodies_under_snow": {"priority": 54, "cooldown_days": 4, "max_per_game": 0, "promise_type": "body", "promise_severity": "ordinary"},
+    "children_request": {"priority": 62, "cooldown_days": 0, "max_per_game": 1, "promise_type": "children", "promise_severity": "ordinary"},
+    "red_frozen_hands": {"priority": 35, "cooldown_days": 0, "max_per_game": 1, "promise_type": null, "promise_severity": null},
+    "long_shift_collapse": {"priority": 63, "cooldown_days": 0, "max_per_game": 1, "promise_type": null, "promise_severity": null},
+    "overtime_empty_post": {"priority": 36, "cooldown_days": 0, "max_per_game": 2, "promise_type": "labor", "promise_severity": "serious"},
+    "coal_bottom": {"priority": 50, "cooldown_days": 5, "max_per_game": 0, "promise_type": "coal", "promise_severity": "ordinary"},
+    "furnace_redline": {"priority": 20, "cooldown_days": 4, "max_per_game": 0, "promise_type": "furnace", "promise_severity": "serious"},
+    "cold_house_night": {"priority": 51, "cooldown_days": 4, "max_per_game": 0, "promise_type": "housing", "promise_severity": "ordinary"},
+    "trust_crack": {"priority": 21, "cooldown_days": 5, "max_per_game": 0, "promise_type": "trust", "promise_severity": "serious"},
+    "city_unrest": {"priority": 22, "cooldown_days": 5, "max_per_game": 0, "promise_type": "panic", "promise_severity": "serious"},
+    "black_frost_echo": {"priority": 12, "cooldown_days": 0, "max_per_game": 1, "promise_type": null, "promise_severity": null},
+    "final_preparation_window": {"priority": 11, "cooldown_days": 0, "max_per_game": 1, "promise_type": null, "promise_severity": null},
+    "city_night_terror": {"priority": 10, "cooldown_days": 0, "max_per_game": 1, "promise_type": null, "promise_severity": null},
+    "seventh_frost_start": {"priority": 5, "cooldown_days": 0, "max_per_game": 1, "promise_type": null, "promise_severity": null}
+  },
+  "fixed_arrivals": {
+    "arrival_day6": {
+      "day": 6,
+      "options": {
+        "accept_all": {"total": 12, "workers": 6, "engineers": 0, "children": 3, "sick": 2, "critical": 1, "disabled": 0, "trust": 3, "panic": -1, "old_city": 0},
+        "accept_partial": {"total": 6, "workers": 3, "engineers": 0, "children": 1, "sick": 1, "critical": 1, "disabled": 0, "trust": 1, "panic": 1, "old_city": 0},
+        "reject": {"total": 0, "workers": 0, "engineers": 0, "children": 0, "sick": 0, "critical": 0, "disabled": 0, "trust": -4, "panic": 4, "old_city": 0}
+      }
+    },
+    "arrival_day19": {
+      "day": 19,
+      "options": {
+        "accept_all": {"total": 20, "workers": 10, "engineers": 4, "children": 2, "sick": 2, "critical": 1, "disabled": 1, "trust": 3, "panic": 0, "old_city": 0},
+        "accept_partial": {"total": 10, "workers": 5, "engineers": 2, "children": 1, "sick": 1, "critical": 0, "disabled": 1, "trust": 1, "panic": 1, "old_city": 0},
+        "reject": {"total": 0, "workers": 0, "engineers": 0, "children": 0, "sick": 0, "critical": 0, "disabled": 0, "trust": -5, "panic": 5, "old_city": 0}
+      }
+    },
+    "arrival_day37": {
+      "day": 37,
+      "options": {
+        "accept_all": {"total": 36, "workers": 14, "engineers": 2, "children": 8, "sick": 7, "critical": 3, "disabled": 2, "trust": 4, "panic": 2, "old_city": -5},
+        "accept_partial": {"total": 16, "workers": 7, "engineers": 1, "children": 3, "sick": 3, "critical": 1, "disabled": 1, "trust": -1, "panic": 3, "old_city": 4},
+        "reject": {"total": 0, "workers": 0, "engineers": 0, "children": 0, "sick": 0, "critical": 0, "disabled": 0, "trust": -8, "panic": 8, "old_city": 10}
+      }
+    }
+  },
+  "frostfall_warning_days": [34, 42, 46, 48, 49]
+}

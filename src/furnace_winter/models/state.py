@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 7
+CURRENT_SAVE_DATA_VERSION = 8
 FINAL_DAY = 55
 OVERTIME_BUILDING_TYPES = frozenset({
     "medical_station",
@@ -264,22 +264,101 @@ class TechState:
 
 
 @dataclass(slots=True)
+class EventRecord:
+    event_id: str
+    event_type: str
+    trigger_day: int
+    priority: int
+    trigger_reason_ids: list[str] = field(default_factory=list)
+    option_ids: list[str] = field(default_factory=list)
+    is_blocking: bool = False
+
+
+@dataclass(slots=True)
+class EventResolutionRecord:
+    event_id: str
+    option_id: str
+    event_type: str
+    resolved_day: int
+    trust_change: int | None = None
+    panic_change: int | None = None
+    population_added: int = 0
+    resource_changes: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class EventState:
-    active_event_ids: list[str] = field(default_factory=list)
+    active_events: dict[str, EventRecord] = field(default_factory=dict)
     resolved_event_ids: list[str] = field(default_factory=list)
+    resolution_history: list[EventResolutionRecord] = field(default_factory=list)
+    occurrence_counts: dict[str, int] = field(default_factory=dict)
+    cooldown_until_day: dict[str, int] = field(default_factory=dict)
+    suppressed_event_ids_today: list[str] = field(default_factory=list)
+    status_ids: list[str] = field(default_factory=list)
+    generated_for_day: int | None = None
+    metrics: dict[str, int] = field(default_factory=dict)
+    recent_raw_food_days: list[int] = field(default_factory=list)
+    recent_canteen_outage_days: list[int] = field(default_factory=list)
+    recent_overtime_days: list[int] = field(default_factory=list)
+    fixed_arrival_choices: dict[str, str] = field(default_factory=dict)
+    frostfall_warning_stage: str = "none"
+    frostfall_eve_status_shown: bool = False
+    seventh_frostfall_active: bool = False
+    hidden_achievements_unlocked: list[str] = field(default_factory=list)
+    hidden_achievement_popup_queue: list[str] = field(default_factory=list)
+    cold_exposure_deaths_total: int = 0
+    deaths_today_by_cause: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def active_event_ids(self) -> list[str]:
+        """Compatibility view for callers that only need stable event ids."""
+
+        return list(self.active_events)
+
+
+@dataclass(slots=True)
+class PromiseRecord:
+    promise_id: str
+    promise_type: str
+    source_event_id: str
+    created_day: int
+    deadline_day: int
+    severity: str
+    target: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class PromiseSettlementRecord:
+    promise_id: str
+    promise_type: str
+    settled_day: int
+    outcome: str
+    severity: str
+    trust_change: int
+    panic_change: int
 
 
 @dataclass(slots=True)
 class PromiseState:
-    active_promise_ids: list[str] = field(default_factory=list)
+    active_promises: dict[str, PromiseRecord] = field(default_factory=dict)
     completed_promise_ids: list[str] = field(default_factory=list)
     failed_promise_ids: list[str] = field(default_factory=list)
+    settlement_history: list[PromiseSettlementRecord] = field(default_factory=list)
+    next_sequence: int = 1
+
+    @property
+    def active_promise_ids(self) -> list[str]:
+        """Compatibility view for callers that only need stable promise ids."""
+
+        return list(self.active_promises)
 
 
 @dataclass(slots=True)
 class OldCityState:
     is_unlocked: bool = False
     active_stage_id: str | None = None
+    trigger_day: int = 24
+    activation_pending: bool = False
 
 
 @dataclass(slots=True)

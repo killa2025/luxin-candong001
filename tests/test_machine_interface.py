@@ -233,8 +233,10 @@ class MachineStartupTests(unittest.TestCase):
                 "game.cancel_research",
                 "game.research",
                 "game.set_overload",
+                "game.resolve_event",
             ],
         )
+        self.assertEqual(document["state"]["events"]["generated_for_day"], 1)
         self.assertEqual(len(document["state"]["surface_resource_points"]), 12)
 
 

@@ -185,6 +185,7 @@ RiskEvaluator = Callable[[GameState], Iterable[RiskWarning]]
 StageHandler = Callable[[EndDayContext], None]
 AutosaveSink = Callable[[AutosaveRecord], None]
 StateValidator = Callable[[GameState], None]
+NewDayHandler = Callable[[GameState], None]
 
 
 def _snapshot_object(value: Any, name: str) -> dict[str, Any]:
@@ -269,6 +270,7 @@ class EndDayEngine:
             stage: [] for stage in END_DAY_STAGES
         }
         self._state_validators: list[StateValidator] = []
+        self._new_day_handlers: list[NewDayHandler] = []
         self._autosave_sink = autosave_sink
         self._last_autosave: AutosaveRecord | None = None
         self._pending_confirmation: EndDayConfirmation | None = None
@@ -296,6 +298,17 @@ class EndDayEngine:
         if not callable(validator):
             raise TypeError("state validator must be callable")
         self._state_validators.append(validator)
+
+    def register_new_day_handler(self, handler: NewDayHandler) -> None:
+        """Run deterministic new-day work after the calendar advances.
+
+        Patch 007 uses this boundary for promise settlement and event generation;
+        failures still roll back the entire end-day transaction.
+        """
+
+        if not callable(handler):
+            raise TypeError("new day handler must be callable")
+        self._new_day_handlers.append(handler)
 
     def last_autosave(self) -> AutosaveRecord | None:
         return deepcopy(self._last_autosave)
@@ -604,6 +617,9 @@ class EndDayEngine:
                     )
                 elif current_stage is EndDayStage.ADVANCE_DAY:
                     self._advance_after_settlement(working)
+                    if working.calendar.current_day != settled_day:
+                        for handler in self._new_day_handlers:
+                            handler(working)
                 else:
                     context = EndDayContext(
                         state=working,

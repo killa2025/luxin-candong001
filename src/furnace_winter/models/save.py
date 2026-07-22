@@ -15,6 +15,8 @@ from furnace_winter.models.state import (
     BuildingState,
     CalendarState,
     DailySurvivalState,
+    EventRecord,
+    EventResolutionRecord,
     EventState,
     FinalResultState,
     FurnaceState,
@@ -26,6 +28,8 @@ from furnace_winter.models.state import (
     MedicalState,
     OldCityState,
     PopulationState,
+    PromiseRecord,
+    PromiseSettlementRecord,
     PromiseState,
     ResourceState,
     SocialPolicyState,
@@ -179,6 +183,22 @@ def _integer_object(value: Any, path: str) -> dict[str, int]:
         assert isinstance(checked_key, str)
         result[checked_key] = _integer(item, f"{path}.{checked_key}")
     return result
+
+
+def _string_map(value: Any, path: str) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise SaveDataError(f"{path} must be an object")
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        checked_key = _string(key, f"{path} key")
+        checked_value = _string(item, f"{path}.{checked_key}")
+        assert isinstance(checked_key, str) and isinstance(checked_value, str)
+        result[checked_key] = checked_value
+    return result
+
+
+def _raise_array(path: str) -> list[int]:
+    raise SaveDataError(f"{path} must be an array")
 
 
 def _decode_random(value: Any) -> RandomState:
@@ -712,25 +732,221 @@ def _decode_technologies(value: Any) -> TechState:
 
 def _decode_events(value: Any) -> EventState:
     data = _object(value, "events", _field_names(EventState))
+    raw_active = data["active_events"]
+    if not isinstance(raw_active, Mapping):
+        raise SaveDataError("events.active_events must be an object")
+    active_events: dict[str, EventRecord] = {}
+    for raw_id, raw_event in raw_active.items():
+        event_id = _string(raw_id, "events.active_events key")
+        assert isinstance(event_id, str)
+        item = _object(
+            raw_event,
+            f"events.active_events.{event_id}",
+            _field_names(EventRecord),
+        )
+        stored_id = _string(
+            item["event_id"], f"events.active_events.{event_id}.event_id"
+        )
+        if stored_id != event_id:
+            raise SaveDataError("active event id must match its map key")
+        active_events[event_id] = EventRecord(
+            event_id=event_id,
+            event_type=_string(
+                item["event_type"],
+                f"events.active_events.{event_id}.event_type",
+            ),
+            trigger_day=_integer(
+                item["trigger_day"],
+                f"events.active_events.{event_id}.trigger_day",
+                minimum=1,
+                maximum=FINAL_DAY,
+            ),
+            priority=_integer(
+                item["priority"],
+                f"events.active_events.{event_id}.priority",
+                minimum=1,
+            ),
+            trigger_reason_ids=_string_list(
+                item["trigger_reason_ids"],
+                f"events.active_events.{event_id}.trigger_reason_ids",
+            ),
+            option_ids=_string_list(
+                item["option_ids"],
+                f"events.active_events.{event_id}.option_ids",
+            ),
+            is_blocking=_boolean(
+                item["is_blocking"],
+                f"events.active_events.{event_id}.is_blocking",
+            ),
+        )
+    raw_history = data["resolution_history"]
+    if not isinstance(raw_history, list):
+        raise SaveDataError("events.resolution_history must be an array")
+    resolution_history: list[EventResolutionRecord] = []
+    for index, raw_record in enumerate(raw_history):
+        path = f"events.resolution_history[{index}]"
+        item = _object(raw_record, path, _field_names(EventResolutionRecord))
+        resolution_history.append(
+            EventResolutionRecord(
+                event_id=_string(item["event_id"], f"{path}.event_id"),
+                option_id=_string(item["option_id"], f"{path}.option_id"),
+                event_type=_string(item["event_type"], f"{path}.event_type"),
+                resolved_day=_integer(
+                    item["resolved_day"], f"{path}.resolved_day", minimum=1, maximum=FINAL_DAY
+                ),
+                trust_change=(
+                    None
+                    if item["trust_change"] is None
+                    else _integer(item["trust_change"], f"{path}.trust_change")
+                ),
+                panic_change=(
+                    None
+                    if item["panic_change"] is None
+                    else _integer(item["panic_change"], f"{path}.panic_change")
+                ),
+                population_added=_integer(
+                    item["population_added"], f"{path}.population_added", minimum=0
+                ),
+                resource_changes=_integer_object(
+                    item["resource_changes"], f"{path}.resource_changes"
+                ),
+            )
+        )
     return EventState(
-        active_event_ids=_string_list(data["active_event_ids"], "events.active_event_ids"),
+        active_events=active_events,
         resolved_event_ids=_string_list(
             data["resolved_event_ids"], "events.resolved_event_ids"
+        ),
+        resolution_history=resolution_history,
+        occurrence_counts=_nonnegative_int_object(
+            data["occurrence_counts"], "events.occurrence_counts"
+        ),
+        cooldown_until_day=_nonnegative_int_object(
+            data["cooldown_until_day"], "events.cooldown_until_day"
+        ),
+        suppressed_event_ids_today=_string_list(
+            data["suppressed_event_ids_today"],
+            "events.suppressed_event_ids_today",
+        ),
+        status_ids=_string_list(data["status_ids"], "events.status_ids"),
+        generated_for_day=(
+            None
+            if data["generated_for_day"] is None
+            else _integer(
+                data["generated_for_day"],
+                "events.generated_for_day",
+                minimum=1,
+                maximum=FINAL_DAY,
+            )
+        ),
+        metrics=_integer_object(data["metrics"], "events.metrics"),
+        recent_raw_food_days=[
+            _integer(item, f"events.recent_raw_food_days[{index}]", minimum=1, maximum=FINAL_DAY)
+            for index, item in enumerate(data["recent_raw_food_days"])
+        ] if isinstance(data["recent_raw_food_days"], list) else _raise_array("events.recent_raw_food_days"),
+        recent_canteen_outage_days=[
+            _integer(item, f"events.recent_canteen_outage_days[{index}]", minimum=1, maximum=FINAL_DAY)
+            for index, item in enumerate(data["recent_canteen_outage_days"])
+        ] if isinstance(data["recent_canteen_outage_days"], list) else _raise_array("events.recent_canteen_outage_days"),
+        recent_overtime_days=[
+            _integer(item, f"events.recent_overtime_days[{index}]", minimum=1, maximum=FINAL_DAY)
+            for index, item in enumerate(data["recent_overtime_days"])
+        ] if isinstance(data["recent_overtime_days"], list) else _raise_array("events.recent_overtime_days"),
+        fixed_arrival_choices=_string_map(
+            data["fixed_arrival_choices"], "events.fixed_arrival_choices"
+        ),
+        frostfall_warning_stage=_string(
+            data["frostfall_warning_stage"], "events.frostfall_warning_stage"
+        ),
+        frostfall_eve_status_shown=_boolean(
+            data["frostfall_eve_status_shown"],
+            "events.frostfall_eve_status_shown",
+        ),
+        seventh_frostfall_active=_boolean(
+            data["seventh_frostfall_active"],
+            "events.seventh_frostfall_active",
+        ),
+        hidden_achievements_unlocked=_string_list(
+            data["hidden_achievements_unlocked"],
+            "events.hidden_achievements_unlocked",
+        ),
+        hidden_achievement_popup_queue=_string_list(
+            data["hidden_achievement_popup_queue"],
+            "events.hidden_achievement_popup_queue",
+        ),
+        cold_exposure_deaths_total=_integer(
+            data["cold_exposure_deaths_total"],
+            "events.cold_exposure_deaths_total",
+            minimum=0,
+        ),
+        deaths_today_by_cause=_nonnegative_int_object(
+            data["deaths_today_by_cause"], "events.deaths_today_by_cause"
         ),
     )
 
 
 def _decode_promises(value: Any) -> PromiseState:
     data = _object(value, "promises", _field_names(PromiseState))
+    raw_active = data["active_promises"]
+    if not isinstance(raw_active, Mapping):
+        raise SaveDataError("promises.active_promises must be an object")
+    active_promises: dict[str, PromiseRecord] = {}
+    for raw_id, raw_promise in raw_active.items():
+        promise_id = _string(raw_id, "promises.active_promises key")
+        assert isinstance(promise_id, str)
+        item = _object(
+            raw_promise,
+            f"promises.active_promises.{promise_id}",
+            _field_names(PromiseRecord),
+        )
+        if item["promise_id"] != promise_id:
+            raise SaveDataError("active promise id must match its map key")
+        active_promises[promise_id] = PromiseRecord(
+            promise_id=promise_id,
+            promise_type=_string(item["promise_type"], f"promises.active_promises.{promise_id}.promise_type"),
+            source_event_id=_string(item["source_event_id"], f"promises.active_promises.{promise_id}.source_event_id"),
+            created_day=_integer(item["created_day"], f"promises.active_promises.{promise_id}.created_day", minimum=1, maximum=FINAL_DAY),
+            deadline_day=_integer(item["deadline_day"], f"promises.active_promises.{promise_id}.deadline_day", minimum=1, maximum=FINAL_DAY),
+            severity=_string(item["severity"], f"promises.active_promises.{promise_id}.severity"),
+            target=_integer_object(item["target"], f"promises.active_promises.{promise_id}.target"),
+        )
+    raw_history = data["settlement_history"]
+    if not isinstance(raw_history, list):
+        raise SaveDataError("promises.settlement_history must be an array")
+    settlement_history: list[PromiseSettlementRecord] = []
+    for index, raw_record in enumerate(raw_history):
+        path = f"promises.settlement_history[{index}]"
+        item = _object(raw_record, path, _field_names(PromiseSettlementRecord))
+        settlement_history.append(
+            PromiseSettlementRecord(
+                promise_id=_string(item["promise_id"], f"{path}.promise_id"),
+                promise_type=_string(
+                    item["promise_type"], f"{path}.promise_type"
+                ),
+                settled_day=_integer(
+                    item["settled_day"], f"{path}.settled_day", minimum=1, maximum=FINAL_DAY
+                ),
+                outcome=_string(item["outcome"], f"{path}.outcome"),
+                severity=_string(item["severity"], f"{path}.severity"),
+                trust_change=_integer(
+                    item["trust_change"], f"{path}.trust_change"
+                ),
+                panic_change=_integer(
+                    item["panic_change"], f"{path}.panic_change"
+                ),
+            )
+        )
     return PromiseState(
-        active_promise_ids=_string_list(
-            data["active_promise_ids"], "promises.active_promise_ids"
-        ),
+        active_promises=active_promises,
         completed_promise_ids=_string_list(
             data["completed_promise_ids"], "promises.completed_promise_ids"
         ),
         failed_promise_ids=_string_list(
             data["failed_promise_ids"], "promises.failed_promise_ids"
+        ),
+        settlement_history=settlement_history,
+        next_sequence=_integer(
+            data["next_sequence"], "promises.next_sequence", minimum=1
         ),
     )
 
@@ -741,6 +957,12 @@ def _decode_old_city(value: Any) -> OldCityState:
         is_unlocked=_boolean(data["is_unlocked"], "old_city.is_unlocked"),
         active_stage_id=_string(
             data["active_stage_id"], "old_city.active_stage_id", optional=True
+        ),
+        trigger_day=_integer(
+            data["trigger_day"], "old_city.trigger_day", minimum=1, maximum=FINAL_DAY
+        ),
+        activation_pending=_boolean(
+            data["activation_pending"], "old_city.activation_pending"
         ),
     )
 
@@ -778,6 +1000,7 @@ def decode_game_state(
         migrations.register(4, _migrate_v4_to_v5)
         migrations.register(5, _migrate_v5_to_v6)
         migrations.register(6, _migrate_v6_to_v7)
+        migrations.register(7, _migrate_v7_to_v8)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -1297,9 +1520,225 @@ def _migrate_v6_to_v7(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v7_to_v8(document: dict[str, Any]) -> dict[str, Any]:
+    legacy = _object(document, "$", _field_names(GameState))
+    migrated = deepcopy(legacy)
+    if not isinstance(migrated["events"], Mapping):
+        raise SaveDataError("events must be an object")
+    raw_events = dict(migrated["events"])
+    if "active_event_ids" in raw_events:
+        events = _object(
+            raw_events,
+            "events",
+            ("active_event_ids", "resolved_event_ids"),
+        )
+        if events["active_event_ids"]:
+            raise SaveDataError(
+                "v7 active event ids cannot be migrated without Patch 007 event records"
+            )
+        migrated["events"] = {
+            "active_events": {},
+            "resolved_event_ids": _string_list(
+                events["resolved_event_ids"], "events.resolved_event_ids"
+            ),
+            "resolution_history": [],
+            "occurrence_counts": {},
+            "cooldown_until_day": {},
+            "suppressed_event_ids_today": [],
+            "status_ids": [],
+            "generated_for_day": None,
+            "metrics": {},
+            "recent_raw_food_days": [],
+            "recent_canteen_outage_days": [],
+            "recent_overtime_days": [],
+            "fixed_arrival_choices": {},
+            "frostfall_warning_stage": "none",
+            "frostfall_eve_status_shown": False,
+            "seventh_frostfall_active": False,
+            "hidden_achievements_unlocked": [],
+            "hidden_achievement_popup_queue": [],
+            "cold_exposure_deaths_total": 0,
+            "deaths_today_by_cause": {},
+        }
+    else:
+        # Some tests and importers build an older-version envelope around a
+        # current empty state. Accept that already-expanded representation;
+        # strict decoding after the migration still validates every field.
+        migrated["events"] = _object(raw_events, "events", _field_names(EventState))
+
+    if not isinstance(migrated["promises"], Mapping):
+        raise SaveDataError("promises must be an object")
+    raw_promises = dict(migrated["promises"])
+    if "active_promise_ids" in raw_promises:
+        promises = _object(
+            raw_promises,
+            "promises",
+            (
+                "active_promise_ids",
+                "completed_promise_ids",
+                "failed_promise_ids",
+            ),
+        )
+        if promises["active_promise_ids"]:
+            raise SaveDataError(
+                "v7 active promise ids cannot be migrated without Patch 007 promise records"
+            )
+        migrated["promises"] = {
+            "active_promises": {},
+            "completed_promise_ids": _string_list(
+                promises["completed_promise_ids"],
+                "promises.completed_promise_ids",
+            ),
+            "failed_promise_ids": _string_list(
+                promises["failed_promise_ids"], "promises.failed_promise_ids"
+            ),
+            "settlement_history": [],
+            "next_sequence": 1,
+        }
+    else:
+        migrated["promises"] = _object(
+            raw_promises, "promises", _field_names(PromiseState)
+        )
+
+    if not isinstance(migrated["old_city"], Mapping):
+        raise SaveDataError("old_city must be an object")
+    raw_old_city = dict(migrated["old_city"])
+    if set(raw_old_city) == {"is_unlocked", "active_stage_id"}:
+        old_city = _object(
+            raw_old_city,
+            "old_city",
+            ("is_unlocked", "active_stage_id"),
+        )
+        migrated["old_city"] = {
+            **old_city,
+            "trigger_day": 24,
+            "activation_pending": False,
+        }
+    else:
+        migrated["old_city"] = _object(
+            raw_old_city, "old_city", _field_names(OldCityState)
+        )
+    migrated["save_data_version"] = 8
+    return migrated
+
+
 def _validate_state_invariants(state: GameState) -> None:
     population = state.population
     technologies = state.technologies
+    events = state.events
+    promises = state.promises
+    if len(set(events.resolved_event_ids)) != len(events.resolved_event_ids):
+        raise SaveDataError("resolved event ids must be unique")
+    if len(set(events.suppressed_event_ids_today)) != len(
+        events.suppressed_event_ids_today
+    ):
+        raise SaveDataError("suppressed event ids must be unique")
+    if len(set(events.status_ids)) != len(events.status_ids):
+        raise SaveDataError("event status ids must be unique")
+    if set(events.active_events) & set(events.resolved_event_ids):
+        raise SaveDataError("active and resolved events must be disjoint")
+    for resolution in events.resolution_history:
+        if resolution.event_id not in events.resolved_event_ids:
+            raise SaveDataError("event history must reference a resolved event")
+        if resolution.event_type not in {"major", "normal"}:
+            raise SaveDataError("event history contains an unsupported event type")
+        if resolution.resolved_day > state.calendar.current_day:
+            raise SaveDataError("event history cannot come from a future day")
+        if set(resolution.resource_changes) != {
+            "coal", "wood", "steel", "raw_food", "cooked_food"
+        }:
+            raise SaveDataError("event history resource changes are incomplete")
+    major_count = 0
+    normal_count = 0
+    for event_id, event in events.active_events.items():
+        if event.event_id != event_id:
+            raise SaveDataError("active event id must match its map key")
+        if events.occurrence_counts.get(event_id, 0) < 1:
+            raise SaveDataError("active events must be counted when displayed")
+        if event.event_type not in {"major", "normal"}:
+            raise SaveDataError("unsupported active event type")
+        if event.trigger_day != state.calendar.current_day:
+            raise SaveDataError("active events must belong to the current day")
+        if len(set(event.option_ids)) != len(event.option_ids) or not event.option_ids:
+            raise SaveDataError("active events must expose unique executable options")
+        if event.is_blocking != (event.event_type == "major"):
+            raise SaveDataError("only major events may block end_day")
+        if event.event_type == "major":
+            major_count += 1
+        else:
+            normal_count += 1
+    if major_count > 1 or normal_count > (1 if major_count else 2):
+        raise SaveDataError("active event queue exceeds the daily display limits")
+    if events.generated_for_day is not None and events.generated_for_day != state.calendar.current_day:
+        raise SaveDataError("generated event day must match the current day")
+    if len(set(events.hidden_achievements_unlocked)) != len(
+        events.hidden_achievements_unlocked
+    ):
+        raise SaveDataError("hidden achievements must be unique")
+    if not set(events.hidden_achievement_popup_queue).issubset(
+        events.hidden_achievements_unlocked
+    ):
+        raise SaveDataError("achievement popup queue must contain unlocked achievements")
+    if events.frostfall_warning_stage not in {
+        "none", "day34", "day42", "day46", "day48", "day49"
+    }:
+        raise SaveDataError("unsupported frostfall warning stage")
+    if events.generated_for_day is not None:
+        if events.seventh_frostfall_active != (state.calendar.current_day >= 49):
+            raise SaveDataError("seventh frostfall flag must match the calendar")
+    elif events.active_events:
+        raise SaveDataError("active events require a generated event day")
+    if set(events.fixed_arrival_choices) - {"arrival_day6", "arrival_day19", "arrival_day37"}:
+        raise SaveDataError("unknown fixed arrival choice key")
+    if any(choice not in {"accept_all", "accept_partial", "reject"} for choice in events.fixed_arrival_choices.values()):
+        raise SaveDataError("unsupported fixed arrival choice")
+    if len(promises.active_promises) > 2:
+        raise SaveDataError("at most two promises may be active")
+    active_types: set[str] = set()
+    settled_promises = set(promises.completed_promise_ids) | set(promises.failed_promise_ids)
+    if set(promises.completed_promise_ids) & set(promises.failed_promise_ids):
+        raise SaveDataError("completed and failed promise ids must be disjoint")
+    if len(set(promises.completed_promise_ids)) != len(promises.completed_promise_ids) or len(set(promises.failed_promise_ids)) != len(promises.failed_promise_ids):
+        raise SaveDataError("settled promise ids must be unique")
+    if set(promises.active_promises) & settled_promises:
+        raise SaveDataError("active and settled promises must be disjoint")
+    settlement_ids: set[str] = set()
+    for settlement in promises.settlement_history:
+        if settlement.promise_id in settlement_ids:
+            raise SaveDataError("a promise may only be recorded as settled once")
+        settlement_ids.add(settlement.promise_id)
+        if settlement.outcome == "success":
+            expected_ids = promises.completed_promise_ids
+        elif settlement.outcome == "failure":
+            expected_ids = promises.failed_promise_ids
+        else:
+            raise SaveDataError("unsupported promise settlement outcome")
+        if settlement.promise_id not in expected_ids:
+            raise SaveDataError("promise history disagrees with settled promise ids")
+        if settlement.settled_day > state.calendar.current_day:
+            raise SaveDataError("promise history cannot come from a future day")
+    for promise_id, promise in promises.active_promises.items():
+        if promise.promise_id != promise_id:
+            raise SaveDataError("active promise id must match its map key")
+        if promise.promise_type in active_types:
+            raise SaveDataError("only one active promise of each type is allowed")
+        active_types.add(promise.promise_type)
+        if promise.severity not in {"ordinary", "serious", "critical"}:
+            raise SaveDataError("unsupported promise severity")
+        if promise.deadline_day < promise.created_day:
+            raise SaveDataError("promise deadline cannot precede its creation day")
+        if promise.created_day >= 49:
+            raise SaveDataError("normal promises cannot be created during frostfall")
+        if promise.created_day >= 42 and promise.deadline_day > 48:
+            raise SaveDataError("late normal promise deadline cannot exceed day 48")
+    if state.old_city.trigger_day != 24:
+        raise SaveDataError("old city trigger interface must remain fixed at day 24")
+    if state.old_city.activation_pending and state.calendar.current_day < 24:
+        raise SaveDataError("old city activation cannot be pending before day 24")
+    if state.old_city.is_unlocked and state.old_city.activation_pending:
+        raise SaveDataError("unlocked old city state cannot remain activation-pending")
+    if not state.old_city.is_unlocked and state.old_city.active_stage_id is not None:
+        raise SaveDataError("locked old city state cannot have an active stage")
     if len(set(technologies.researched_tech_ids)) != len(
         technologies.researched_tech_ids
     ):
