@@ -3,6 +3,7 @@
   "config_status": "FINAL",
   "configs": [
     "buildings.json",
+    "laws.json",
     "survival.json"
   ]
 }

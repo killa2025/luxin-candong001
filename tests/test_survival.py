@@ -17,6 +17,7 @@ from furnace_winter.gameplay import (
 )
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
+    CURRENT_SAVE_DATA_VERSION,
     GameState,
     HardFailType,
     SaveDataError,
@@ -345,10 +346,12 @@ class SurvivalPatchTests(unittest.TestCase):
         for building in legacy["buildings"].values():
             del building["bound_resource_id"]
             del building["production_remainder_numerator"]
+            del building["production_multiplier_remainder_numerator"]
+            del building["production_multiplier_remainder_denominator"]
         legacy["furnace"]["mode_id"] = None
         migrated = decode_game_state(legacy)
 
-        self.assertEqual(migrated.save_data_version, 4)
+        self.assertEqual(migrated.save_data_version, CURRENT_SAVE_DATA_VERSION)
         self.assertEqual(migrated.housing.capacity, 40)
         self.assertEqual(migrated.furnace.mode_id, "level_1")
 

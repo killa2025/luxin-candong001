@@ -6,8 +6,21 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 4
+CURRENT_SAVE_DATA_VERSION = 6
 FINAL_DAY = 55
+OVERTIME_BUILDING_TYPES = frozenset({
+    "medical_station",
+    "hospital",
+    "research_institute",
+    "canteen",
+    "greenhouse",
+    "improved_greenhouse",
+    "small_coal_miner",
+    "small_steel_miner",
+    "large_coal_miner",
+    "large_steel_miner",
+    "logging_camp",
+})
 
 
 class HardFailType(StrEnum):
@@ -89,9 +102,14 @@ class DailySurvivalState:
     woodfuel_contribution: int = 0
     heating_shortfall: bool = False
     zone_temperatures: dict[str, int] = field(default_factory=dict)
+    ration_mode_used: str = "normal"
+    food_required: int = 0
     cooked_food_eaten: int = 0
     raw_food_eaten: int = 0
+    food_shortfall: int = 0
     unfed_population: int = 0
+    worktime_sick_added: int = 0
+    overtime_accident_risk_points: int = 0
     storage_used: int = 0
     is_over_capacity: bool = False
 
@@ -139,6 +157,8 @@ class BuildingState:
     is_shutdown_by_temperature: bool = False
     bound_resource_id: str | None = None
     production_remainder_numerator: int = 0
+    production_multiplier_remainder_numerator: int = 0
+    production_multiplier_remainder_denominator: int = 1
 
 
 @dataclass(slots=True)
@@ -186,6 +206,47 @@ class LawState:
     signed_law_ids: list[str] = field(default_factory=list)
     active_law_ids: list[str] = field(default_factory=list)
     cooldowns: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SocialPolicyState:
+    """006A modes, one-day actions, and aggregate death handling state."""
+
+    current_ration_mode: str = "normal"
+    ration_food_numerator: int = 100
+    ration_food_denominator: int = 100
+    previous_ration_mode: str | None = None
+    previous_ration_days: int = 0
+    consecutive_ration_days: int = 0
+    consecutive_ration_mode: str = "normal"
+    current_worktime_mode: str = "normal"
+    worktime_output_numerator: int = 100
+    worktime_output_denominator: int = 100
+    consecutive_long_shift_days: int = 0
+    overtime_building_id: str | None = None
+    overtime_output_numerator: int = 100
+    overtime_output_denominator: int = 100
+    firepit_enabled: bool = False
+    death_path: str = "none"
+    unhandled_bodies: int = 0
+    buried_bodies: int = 0
+    stored_bodies: int = 0
+    triage_building_id: str | None = None
+    triage_used_ever: bool = False
+    ending_tag_candidates: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class MedicalState:
+    """Aggregate V1 medical capacity and deterministic action summaries."""
+
+    temporary_capacity: int = 5
+    building_capacity: int = 0
+    effective_capacity: int = 5
+    medical_pressure: int = 0
+    critical_treatment_progress: int = 0
+    medical_ration_sick_cured_today: int = 0
+    medical_ration_critical_progress_today: int = 0
 
 
 @dataclass(slots=True)
@@ -249,6 +310,8 @@ class GameState:
         default_factory=BuildingManagementState
     )
     laws: LawState = field(default_factory=LawState)
+    social_policy: SocialPolicyState = field(default_factory=SocialPolicyState)
+    medical: MedicalState = field(default_factory=MedicalState)
     technologies: TechState = field(default_factory=TechState)
     events: EventState = field(default_factory=EventState)
     promises: PromiseState = field(default_factory=PromiseState)

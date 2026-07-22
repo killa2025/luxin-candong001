@@ -394,6 +394,8 @@ class BuildingPatchTests(unittest.TestCase):
         for building in legacy["buildings"].values():
             del building["bound_resource_id"]
             del building["production_remainder_numerator"]
+            del building["production_multiplier_remainder_numerator"]
+            del building["production_multiplier_remainder_denominator"]
 
         migrated = decode_game_state(legacy)
 
@@ -928,6 +930,8 @@ class BuildingPatchTests(unittest.TestCase):
                 source["building_id"] = existing_id
                 del source["bound_resource_id"]
                 del source["production_remainder_numerator"]
+                del source["production_multiplier_remainder_numerator"]
+                del source["production_multiplier_remainder_denominator"]
                 legacy["buildings"] = {existing_id: source}
 
                 migrated = decode_game_state(legacy)
