@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import fields
 
-from furnace_winter.config import BuildingRules, SurvivalRules
+from furnace_winter.config import BuildingRules, SurvivalRules, TechnologyRules
 from furnace_winter.gameplay.end_day import (
     EndDayContext,
     EndDayEngine,
@@ -27,6 +27,7 @@ from furnace_winter.models import (
     BuildingState,
     DailySurvivalState,
     GameState,
+    HardFailType,
     HousingState,
     PopulationState,
     ResourceState,
@@ -88,16 +89,35 @@ def projected_furnace_level(
     state: GameState,
     survival_rules: SurvivalRules,
     building_rules: BuildingRules | None,
+    technology_rules: TechnologyRules | None = None,
 ) -> int:
     target_level = furnace_level(state.furnace.mode_id)
-    available_fuel = state.resources.coal + projected_woodfuel_available(
+    reserved_overload_coal = 0
+    if technology_rules is not None and target_level > 0:
+        overload = technology_rules.overload.levels[state.furnace.overload_level]
+        if state.resources.coal >= overload.coal_cost:
+            reserved_overload_coal = overload.coal_cost
+    available_fuel = state.resources.coal - reserved_overload_coal + projected_woodfuel_available(
         state, building_rules
     )
     return max(
         level
         for level in range(target_level + 1)
-        if survival_rules.furnace_levels[level].coal_cost <= available_fuel
+        if furnace_coal_cost(state, survival_rules, level) <= available_fuel
     )
+
+
+def furnace_coal_cost(
+    state: GameState, survival_rules: SurvivalRules, level: int
+) -> int:
+    if level == 0:
+        return 0
+    researched = set(state.technologies.researched_tech_ids)
+    if "tech_furnace_coal_saving_2" in researched:
+        return {1: 35, 2: 68, 3: 120}[level]
+    if "tech_furnace_coal_saving_1" in researched:
+        return {1: 40, 2: 75, 3: 135}[level]
+    return survival_rules.furnace_levels[level].coal_cost
 
 
 def projected_building_insulation_bonus(
@@ -146,14 +166,33 @@ def projected_building_temperature(
     building_rules: BuildingRules,
     survival_rules: SurvivalRules,
     effective_furnace_level: int,
+    technology_rules: TechnologyRules | None = None,
     *,
     include_heat: bool,
 ) -> int:
     zone = "outer_ring" if building.zone == "storage_outer" else building.zone
+    overload_bonus = (
+        technology_rules.overload.levels[state.furnace.overload_level].temperature_bonus
+        if technology_rules is not None
+        and effective_furnace_level > 0
+        and state.resources.coal
+        >= technology_rules.overload.levels[state.furnace.overload_level].coal_cost
+        else 0
+    )
+    final_bonus = (
+        3
+        if 49 <= state.calendar.current_day <= 55
+        and effective_furnace_level > 0
+        and "tech_final_furnace_stability"
+        in state.technologies.researched_tech_ids
+        else 0
+    )
     return (
         survival_rules.weather_for_day(state.calendar.current_day)
         + survival_rules.furnace_levels[effective_furnace_level].heating
         + survival_rules.zone_modifiers[zone]
+        + overload_bonus
+        + final_bonus
         + projected_building_insulation_bonus(state, building)
         + (projected_heat_bonus(state, building_rules) if include_heat else 0)
     )
@@ -164,6 +203,7 @@ def is_building_expected_operational(
     building: BuildingState,
     building_rules: BuildingRules,
     survival_rules: SurvivalRules,
+    technology_rules: TechnologyRules | None = None,
 ) -> bool:
     """Return whether a built and staffed building is expected to run today."""
 
@@ -184,7 +224,7 @@ def is_building_expected_operational(
     if rule.min_operating_temperature is None:
         return True
     effective_level = projected_furnace_level(
-        state, survival_rules, building_rules
+        state, survival_rules, building_rules, technology_rules
     )
     temperature = projected_building_temperature(
         state,
@@ -192,6 +232,7 @@ def is_building_expected_operational(
         building_rules,
         survival_rules,
         effective_level,
+        technology_rules,
         include_heat=building.heated_today,
     )
     return temperature >= rule.min_operating_temperature
@@ -294,9 +335,11 @@ class SurvivalSystem:
         self,
         rules: SurvivalRules,
         building_rules: BuildingRules | None = None,
+        technology_rules: TechnologyRules | None = None,
     ) -> None:
         self.rules = rules
         self.building_rules = building_rules
+        self.technology_rules = technology_rules
         self._catalog = build_survival_catalog()
         self._validator = CommandValidator(self._catalog)
 
@@ -331,7 +374,12 @@ class SurvivalSystem:
             )
 
         try:
-            validate_game_state(state, self.building_rules, self.rules)
+            validate_game_state(
+                state,
+                self.building_rules,
+                self.rules,
+                self.technology_rules,
+            )
         except (SaveDataError, TypeError, ValueError) as exc:
             details = {
                 "failed_stage": "input_state_validation",
@@ -366,9 +414,16 @@ class SurvivalSystem:
         working = deepcopy(state)
         working.furnace.is_active = level > 0
         working.furnace.mode_id = furnace_mode_id(level)
+        if level == 0:
+            working.furnace.overload_level = 0
         working.command_sequence += 1
         try:
-            validate_game_state(working, self.building_rules, self.rules)
+            validate_game_state(
+                working,
+                self.building_rules,
+                self.rules,
+                self.technology_rules,
+            )
         except (SaveDataError, TypeError, ValueError) as exc:
             details = {
                 "failed_stage": "result_state_validation",
@@ -432,6 +487,11 @@ class SurvivalSystem:
             EndDayStage.RESOLVE_ACTUAL_HEATING,
             self.resolve_actual_heating,
         )
+        if self.technology_rules is not None:
+            engine.register_stage_handler(
+                EndDayStage.UPDATE_FURNACE_PRESSURE,
+                self.update_furnace_pressure,
+            )
         engine.register_stage_handler(
             EndDayStage.CALCULATE_ZONE_TEMPERATURE,
             self.calculate_zone_temperatures,
@@ -448,7 +508,14 @@ class SurvivalSystem:
     def evaluate_risks(self, state: GameState) -> tuple[RiskWarning, ...]:
         warnings: list[RiskWarning] = []
         target_level = furnace_level(state.furnace.mode_id)
-        required_coal = self.rules.furnace_levels[target_level].coal_cost
+        required_coal = furnace_coal_cost(state, self.rules, target_level)
+        overload_rule = (
+            self.technology_rules.overload.levels[state.furnace.overload_level]
+            if self.technology_rules is not None
+            else None
+        )
+        if overload_rule is not None:
+            required_coal += overload_rule.coal_cost
         affordable_level = self._affordable_level(target_level, state)
         if target_level == 0:
             warnings.append(
@@ -471,6 +538,37 @@ class SurvivalSystem:
                     },
                 )
             )
+        if overload_rule is not None and overload_rule.level > 0:
+            if state.resources.coal < overload_rule.coal_cost:
+                warnings.append(
+                    RiskWarning(
+                        "survival.overload_fuel_shortfall",
+                        RiskWarningLevel.B_STRONG,
+                        {
+                            "available_coal": state.resources.coal,
+                            "required_overload_coal": overload_rule.coal_cost,
+                            "target_overload_level": overload_rule.level,
+                        },
+                    )
+                )
+            pressure = state.furnace.pressure
+            threshold = self.technology_rules.overload.redline_threshold
+            if state.furnace.pressure_redline_warned and pressure >= threshold:
+                warnings.append(
+                    RiskWarning(
+                        "survival.overload_after_redline",
+                        RiskWarningLevel.B_STRONG,
+                        {"pressure": pressure, "overload_level": overload_rule.level},
+                    )
+                )
+            elif pressure >= self.technology_rules.overload.high_pressure_threshold:
+                warnings.append(
+                    RiskWarning(
+                        "survival.furnace_high_pressure",
+                        RiskWarningLevel.B_STRONG,
+                        {"pressure": pressure, "overload_level": overload_rule.level},
+                    )
+                )
 
         ration_mode, ration_numerator, ration_denominator = self._effective_ration(
             state
@@ -524,7 +622,7 @@ class SurvivalSystem:
 
     def _affordable_level(self, target_level: int, state: GameState) -> int:
         projected = projected_furnace_level(
-            state, self.rules, self.building_rules
+            state, self.rules, self.building_rules, self.technology_rules
         )
         return min(projected, target_level)
 
@@ -534,11 +632,29 @@ class SurvivalSystem:
     def settle_heating(self, context: EndDayContext) -> None:
         state = context.state
         target_level = furnace_level(state.furnace.mode_id)
-        target_rule = self.rules.furnace_levels[target_level]
+        target_base_cost = furnace_coal_cost(state, self.rules, target_level)
+        target_overload_level = state.furnace.overload_level
+        target_overload_rule = (
+            self.technology_rules.overload.levels[target_overload_level]
+            if self.technology_rules is not None
+            else None
+        )
+        effective_overload_level = 0
+        overload_paid = 0
+        if (
+            target_overload_rule is not None
+            and target_level > 0
+            and state.resources.coal >= target_overload_rule.coal_cost
+        ):
+            effective_overload_level = target_overload_level
+            overload_paid = target_overload_rule.coal_cost
         effective_level = self._affordable_level(target_level, state)
-        effective_rule = self.rules.furnace_levels[effective_level]
-        coal_paid = min(state.resources.coal, effective_rule.coal_cost)
-        contribution = effective_rule.coal_cost - coal_paid
+        effective_base_cost = furnace_coal_cost(state, self.rules, effective_level)
+        if effective_level == 0:
+            overload_paid = 0
+        state.resources.coal -= overload_paid
+        coal_paid = min(state.resources.coal, effective_base_cost)
+        contribution = effective_base_cost - coal_paid
         wood_burned = 0
         if contribution:
             if self.building_rules is None:
@@ -551,11 +667,24 @@ class SurvivalSystem:
             base_temperature=self.rules.weather_for_day(context.settled_day),
             target_furnace_level=target_level,
             effective_furnace_level=effective_level,
-            required_coal=target_rule.coal_cost,
+            required_coal=target_base_cost + (
+                target_overload_rule.coal_cost if target_overload_rule else 0
+            ),
             coal_paid=coal_paid,
             woodfuel_wood_burned=wood_burned,
             woodfuel_contribution=contribution,
-            heating_shortfall=effective_level < target_level,
+            target_overload_level=target_overload_level,
+            effective_overload_level=effective_overload_level if effective_level > 0 else 0,
+            overload_coal_paid=overload_paid if effective_level > 0 else 0,
+            overload_temperature_bonus=(
+                self.technology_rules.overload.levels[effective_overload_level].temperature_bonus
+                if self.technology_rules is not None and effective_level > 0
+                else 0
+            ),
+            heating_shortfall=(
+                effective_level < target_level
+                or effective_overload_level < target_overload_level
+            ),
             storage_used=storage_used(state.resources),
             is_over_capacity=is_over_capacity(state.resources),
         )
@@ -564,11 +693,13 @@ class SurvivalSystem:
             {
                 "target_level": target_level,
                 "effective_level": effective_level,
-                "required_coal": target_rule.coal_cost,
+                "required_coal": target_base_cost
+                + (target_overload_rule.coal_cost if target_overload_rule else 0),
                 "coal_paid": coal_paid,
+                "overload_coal_paid": overload_paid if effective_level > 0 else 0,
                 "woodfuel_wood_burned": wood_burned,
                 "woodfuel_contribution": contribution,
-                "heating_shortfall": effective_level < target_level,
+                "heating_shortfall": state.daily_survival.heating_shortfall,
             },
         )
 
@@ -580,16 +711,74 @@ class SurvivalSystem:
         effective_level = summary.effective_furnace_level
         context.state.furnace.mode_id = furnace_mode_id(effective_level)
         context.state.furnace.is_active = effective_level > 0
+        context.state.furnace.overload_level = summary.effective_overload_level
         context.emit(
             "survival.heating.actual_level_resolved",
             {"effective_level": effective_level},
+        )
+
+    def update_furnace_pressure(self, context: EndDayContext) -> None:
+        assert self.technology_rules is not None
+        state = context.state
+        pressure_before = state.furnace.pressure
+        overload_level = state.daily_survival.effective_overload_level
+        if overload_level > 0:
+            if (
+                state.furnace.pressure_redline_warned
+                and pressure_before >= self.technology_rules.overload.redline_threshold
+            ):
+                state.final_result.hard_fail_type = HardFailType.CORE_COLLAPSE
+                state.final_result.is_finalized = True
+            rule = self.technology_rules.overload.levels[overload_level]
+            growth = (
+                rule.stabilized_pressure_growth
+                if "tech_overload_stability" in state.technologies.researched_tech_ids
+                else rule.pressure_growth
+            )
+            if (
+                49 <= context.settled_day <= 55
+                and "tech_final_furnace_stability"
+                in state.technologies.researched_tech_ids
+            ):
+                growth = max(growth - 5, 0)
+            state.furnace.pressure += growth
+        else:
+            cooling = (
+                self.technology_rules.overload.active_cooling
+                if state.furnace.is_active
+                else self.technology_rules.overload.furnace_off_cooling
+            )
+            state.furnace.pressure = max(state.furnace.pressure - cooling, 0)
+        if state.furnace.pressure >= self.technology_rules.overload.redline_threshold:
+            state.furnace.pressure_redline_warned = True
+        else:
+            state.furnace.pressure_redline_warned = False
+        context.emit(
+            "survival.furnace_pressure.updated",
+            {
+                "pressure_before": pressure_before,
+                "pressure_after": state.furnace.pressure,
+                "overload_level": overload_level,
+                "redline_warned": state.furnace.pressure_redline_warned,
+            },
         )
 
     def calculate_zone_temperatures(self, context: EndDayContext) -> None:
         summary = context.state.daily_survival
         if summary.base_temperature is None:
             context.abort(ErrorCode.INTERNAL_ERROR, {"reason": "heating_not_settled"})
-        heating = self.rules.furnace_levels[summary.effective_furnace_level].heating
+        heating = (
+            self.rules.furnace_levels[summary.effective_furnace_level].heating
+            + summary.overload_temperature_bonus
+            + (
+                3
+                if 49 <= context.settled_day <= 55
+                and summary.effective_furnace_level > 0
+                and "tech_final_furnace_stability"
+                in context.state.technologies.researched_tech_ids
+                else 0
+            )
+        )
         summary.zone_temperatures = {
             zone: summary.base_temperature + heating + modifier
             for zone, modifier in self.rules.zone_modifiers.items()

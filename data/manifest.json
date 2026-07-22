@@ -4,6 +4,7 @@
   "configs": [
     "buildings.json",
     "laws.json",
-    "survival.json"
+    "survival.json",
+    "technologies.json"
   ]
 }

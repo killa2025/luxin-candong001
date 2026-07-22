@@ -64,6 +64,62 @@ class SaveMigrationRegistry:
         if version > self.current_version:
             raise SaveDataError(f"save version {version} is newer than supported version")
 
+        # Older regression fixtures are sometimes produced by downgrading the
+        # version field of a current, otherwise blank state. Normalize only the
+        # newly introduced Patch 006 zero-value fields; non-zero research still
+        # cannot be silently converted to the old day-based representation.
+        if version < 7:
+            furnace = migrated.get("furnace")
+            if isinstance(furnace, Mapping):
+                normalized_furnace = dict(furnace)
+                if "overload_level" in normalized_furnace:
+                    overload_level = normalized_furnace.pop("overload_level")
+                    if (
+                        overload_level != 0
+                        or isinstance(overload_level, bool)
+                    ):
+                        raise SaveDataError(
+                            "legacy save cannot contain an active Patch 006 overload"
+                        )
+                if "pressure_redline_warned" in normalized_furnace:
+                    warned = normalized_furnace.pop("pressure_redline_warned")
+                    if warned is not False:
+                        raise SaveDataError(
+                            "legacy save cannot contain a Patch 006 redline warning"
+                        )
+                migrated["furnace"] = normalized_furnace
+            daily = migrated.get("daily_survival")
+            if isinstance(daily, Mapping):
+                normalized_daily = dict(daily)
+                for name in (
+                    "target_overload_level",
+                    "effective_overload_level",
+                    "overload_coal_paid",
+                    "overload_temperature_bonus",
+                ):
+                    if name in normalized_daily:
+                        value = normalized_daily.pop(name)
+                        if value != 0 or isinstance(value, bool):
+                            raise SaveDataError(
+                                f"legacy save cannot contain non-zero {name}"
+                            )
+                migrated["daily_survival"] = normalized_daily
+            technologies = migrated.get("technologies")
+            if isinstance(technologies, Mapping):
+                normalized_technologies = dict(technologies)
+                if "research_progress_units" in normalized_technologies:
+                    progress = normalized_technologies.pop("research_progress_units")
+                    required = normalized_technologies.pop(
+                        "research_required_units", None
+                    )
+                    active = normalized_technologies.get("active_research_id")
+                    if active is not None or progress != 0 or required != 0:
+                        raise SaveDataError(
+                            "current active research cannot be represented by a legacy save"
+                        )
+                    normalized_technologies["research_progress_days"] = 0
+                migrated["technologies"] = normalized_technologies
+
         while version < self.current_version:
             migration = self._migrations.get(version)
             if migration is None:
@@ -87,6 +143,21 @@ def encode_game_state(state: GameState) -> dict[str, Any]:
 
 def _field_names(model: type[Any]) -> tuple[str, ...]:
     return tuple(item.name for item in fields(model))
+
+
+_PATCH_006_DAILY_FIELDS = frozenset(
+    {
+        "target_overload_level",
+        "effective_overload_level",
+        "overload_coal_paid",
+        "overload_temperature_bonus",
+    }
+)
+_V6_DAILY_SURVIVAL_FIELDS = tuple(
+    name
+    for name in _field_names(DailySurvivalState)
+    if name not in _PATCH_006_DAILY_FIELDS
+)
 
 
 def _object(value: Any, path: str, required: tuple[str, ...]) -> dict[str, Any]:
@@ -232,6 +303,12 @@ def _decode_furnace(value: Any) -> FurnaceState:
         is_active=_boolean(data["is_active"], "furnace.is_active"),
         mode_id=_string(data["mode_id"], "furnace.mode_id"),
         pressure=_integer(data["pressure"], "furnace.pressure", minimum=0),
+        overload_level=_integer(
+            data["overload_level"], "furnace.overload_level", minimum=0, maximum=2
+        ),
+        pressure_redline_warned=_boolean(
+            data["pressure_redline_warned"], "furnace.pressure_redline_warned"
+        ),
     )
     if state.mode_id not in {"off", "level_1", "level_2", "level_3"}:
         raise SaveDataError(f"unsupported furnace.mode_id: {state.mode_id}")
@@ -314,6 +391,28 @@ def _decode_daily_survival(value: Any) -> DailySurvivalState:
         woodfuel_contribution=_integer(
             data["woodfuel_contribution"],
             "daily_survival.woodfuel_contribution",
+            minimum=0,
+        ),
+        target_overload_level=_integer(
+            data["target_overload_level"],
+            "daily_survival.target_overload_level",
+            minimum=0,
+            maximum=2,
+        ),
+        effective_overload_level=_integer(
+            data["effective_overload_level"],
+            "daily_survival.effective_overload_level",
+            minimum=0,
+            maximum=2,
+        ),
+        overload_coal_paid=_integer(
+            data["overload_coal_paid"],
+            "daily_survival.overload_coal_paid",
+            minimum=0,
+        ),
+        overload_temperature_bonus=_integer(
+            data["overload_temperature_bonus"],
+            "daily_survival.overload_temperature_bonus",
             minimum=0,
         ),
         heating_shortfall=_boolean(
@@ -654,9 +753,14 @@ def _decode_technologies(value: Any) -> TechState:
             "technologies.active_research_id",
             optional=True,
         ),
-        research_progress_days=_integer(
-            data["research_progress_days"],
-            "technologies.research_progress_days",
+        research_progress_units=_integer(
+            data["research_progress_units"],
+            "technologies.research_progress_units",
+            minimum=0,
+        ),
+        research_required_units=_integer(
+            data["research_required_units"],
+            "technologies.research_required_units",
             minimum=0,
         ),
     )
@@ -729,6 +833,7 @@ def decode_game_state(
         migrations.register(3, _migrate_v3_to_v4)
         migrations.register(4, _migrate_v4_to_v5)
         migrations.register(5, _migrate_v5_to_v6)
+        migrations.register(6, _migrate_v6_to_v7)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -868,7 +973,7 @@ def _migrate_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
     daily = _object(
         normalized_daily,
         "daily_survival",
-        set(_field_names(DailySurvivalState))
+        set(_V6_DAILY_SURVIVAL_FIELDS)
         - {
             "woodfuel_wood_burned",
             "woodfuel_contribution",
@@ -1081,7 +1186,7 @@ def _migrate_v4_to_v5(document: dict[str, Any]) -> dict[str, Any]:
     daily["food_shortfall"] = legacy_shortfall
     daily["worktime_sick_added"] = 0
     daily["overtime_accident_risk_points"] = 0
-    _object(daily, "daily_survival", _field_names(DailySurvivalState))
+    _object(daily, "daily_survival", _V6_DAILY_SURVIVAL_FIELDS)
     migrated["daily_survival"] = daily
 
     calendar = _decode_calendar(migrated["calendar"])
@@ -1200,8 +1305,77 @@ def _migrate_v5_to_v6(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v6_to_v7(document: dict[str, Any]) -> dict[str, Any]:
+    migrated = deepcopy(document)
+    furnace = _object(
+        migrated.get("furnace"),
+        "furnace",
+        ("is_active", "mode_id", "pressure"),
+    )
+    furnace["overload_level"] = 0
+    furnace["pressure_redline_warned"] = False
+    migrated["furnace"] = furnace
+
+    added_daily_fields = _PATCH_006_DAILY_FIELDS
+    daily = _object(
+        migrated.get("daily_survival"),
+        "daily_survival",
+        _V6_DAILY_SURVIVAL_FIELDS,
+    )
+    for name in added_daily_fields:
+        daily[name] = 0
+    migrated["daily_survival"] = daily
+
+    technologies = _object(
+        migrated.get("technologies"),
+        "technologies",
+        ("researched_tech_ids", "active_research_id", "research_progress_days"),
+    )
+    progress_days = _integer(
+        technologies.pop("research_progress_days"),
+        "technologies.research_progress_days",
+        minimum=0,
+    )
+    active_research_id = _string(
+        technologies.get("active_research_id"),
+        "technologies.active_research_id",
+        optional=True,
+    )
+    if active_research_id is not None or progress_days != 0:
+        raise SaveDataError(
+            "v6 active research cannot be migrated before Patch 006 rules exist"
+        )
+    technologies["research_progress_units"] = 0
+    technologies["research_required_units"] = 0
+    migrated["technologies"] = technologies
+    migrated["save_data_version"] = 7
+    return migrated
+
+
 def _validate_state_invariants(state: GameState) -> None:
     population = state.population
+    technologies = state.technologies
+    if len(set(technologies.researched_tech_ids)) != len(
+        technologies.researched_tech_ids
+    ):
+        raise SaveDataError("researched tech ids must be unique")
+    if technologies.active_research_id is None:
+        if (
+            technologies.research_progress_units != 0
+            or technologies.research_required_units != 0
+        ):
+            raise SaveDataError("inactive research must have zero progress and requirement")
+    else:
+        if technologies.active_research_id in technologies.researched_tech_ids:
+            raise SaveDataError("active research must not already be completed")
+        if technologies.research_required_units <= 0:
+            raise SaveDataError("active research must have a positive requirement")
+        if technologies.research_progress_units >= technologies.research_required_units:
+            raise SaveDataError("active research progress must be below its requirement")
+    if state.furnace.overload_level > 0 and not state.furnace.is_active:
+        raise SaveDataError("furnace overload requires an active furnace")
+    if state.furnace.pressure_redline_warned != (state.furnace.pressure >= 100):
+        raise SaveDataError("furnace redline warning must match pressure threshold")
     if len(set(state.laws.signed_law_ids)) != len(state.laws.signed_law_ids):
         raise SaveDataError("signed law ids must be unique")
     if len(set(state.laws.active_law_ids)) != len(state.laws.active_law_ids):
@@ -1427,6 +1601,7 @@ def _validate_building_rule_invariants(
     state: GameState,
     rules: Any,
     survival_rules: Any | None,
+    technology_rules: Any | None = None,
 ) -> None:
     if state.building_management.zone_slot_capacity != dict(rules.zone_slot_capacity):
         raise SaveDataError("building slot capacity must match building rules")
@@ -1503,6 +1678,10 @@ def _validate_building_rule_invariants(
             raise SaveDataError("building zone does not match its catalog rule")
         if not set(rule.required_law_ids).issubset(state.laws.signed_law_ids):
             raise SaveDataError("built building is missing a required signed law")
+        if not set(rule.required_tech_ids).issubset(
+            state.technologies.researched_tech_ids
+        ):
+            raise SaveDataError("built building is missing a required technology")
         if building.slot_size != rule.slot_size or building.can_heat != rule.can_heat:
             raise SaveDataError("building derived fields do not match the catalog")
         if building.heated_today and not rule.can_heat:
@@ -1538,7 +1717,15 @@ def _validate_building_rule_invariants(
             bound_ids.add(building.bound_resource_id)
         expected_housing_capacity += rule.housing_capacity
         if expected_storage_capacity is not None:
-            expected_storage_capacity += rule.storage_capacity_add
+            storage_add = rule.storage_capacity_add
+            if (
+                technology_rules is not None
+                and building.building_type == "small_warehouse"
+                and "tech_storage_expansion"
+                in state.technologies.researched_tech_ids
+            ):
+                storage_add = 600
+            expected_storage_capacity += storage_add
         if building.building_type == "basic_residence":
             expected_basic_residences += 1
 
@@ -1584,6 +1771,7 @@ def validate_game_state(
     state: GameState,
     building_rules: Any | None = None,
     survival_rules: Any | None = None,
+    technology_rules: Any | None = None,
 ) -> None:
     """Validate an in-memory state with the same rules used at the save boundary."""
 
@@ -1600,9 +1788,66 @@ def validate_game_state(
         raise SaveDataError(f"invalid game state: {exc}") from exc
     if restored != state:
         raise SaveDataError("game state does not match the canonical runtime schema")
+    if technology_rules is not None:
+        _validate_technology_rule_invariants(state, technology_rules)
     if building_rules is not None:
         if survival_rules is None:
             raise SaveDataError(
                 "survival rules are required for config-aware building validation"
             )
-        _validate_building_rule_invariants(state, building_rules, survival_rules)
+        _validate_building_rule_invariants(
+            state,
+            building_rules,
+            survival_rules,
+            technology_rules,
+        )
+
+
+def _validate_technology_rule_invariants(
+    state: GameState, technology_rules: Any
+) -> None:
+    known = set(technology_rules.technologies)
+    completed = set(state.technologies.researched_tech_ids)
+    if completed - known:
+        raise SaveDataError("state contains unknown researched technologies")
+    for tech_id in completed:
+        rule = technology_rules.technologies[tech_id]
+        if not set(rule.prerequisite_tech_ids).issubset(completed):
+            raise SaveDataError("researched technology is missing a prerequisite")
+        tier_unlock = technology_rules.tier_unlock_tech_id(rule.tier)
+        if tier_unlock is not None and tier_unlock not in completed:
+            raise SaveDataError("researched technology tier is not unlocked")
+
+    active = state.technologies.active_research_id
+    if active is not None:
+        if active not in known:
+            raise SaveDataError("active research id is unknown")
+        rule = technology_rules.technologies[active]
+        if not set(rule.prerequisite_tech_ids).issubset(completed):
+            raise SaveDataError("active research is missing a prerequisite")
+        tier_unlock = technology_rules.tier_unlock_tech_id(rule.tier)
+        if tier_unlock is not None and tier_unlock not in completed:
+            raise SaveDataError("active research tier is not unlocked")
+        required = (
+            rule.research_days
+            * technology_rules.research.progress_units_per_day
+        )
+        if state.technologies.research_required_units != required:
+            raise SaveDataError(
+                "active research duration does not match technology rules"
+            )
+
+    overload_rule = technology_rules.overload.levels.get(
+        state.furnace.overload_level
+    )
+    if overload_rule is None:
+        raise SaveDataError("state contains an unknown overload level")
+    if (
+        overload_rule.required_tech_id is not None
+        and overload_rule.required_tech_id not in completed
+    ):
+        raise SaveDataError("selected overload level is not unlocked")
+    if state.furnace.pressure_redline_warned != (
+        state.furnace.pressure >= technology_rules.overload.redline_threshold
+    ):
+        raise SaveDataError("redline warning must match configured pressure threshold")
