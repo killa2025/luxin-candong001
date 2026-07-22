@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
 
 from furnace_winter.config import (
+    EventConfigError,
     load_building_rules,
     load_event_rules,
     load_law_rules,
@@ -29,6 +32,7 @@ from furnace_winter.gameplay import (
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
     CURRENT_SAVE_DATA_VERSION,
+    EventResolutionRecord,
     PromiseRecord,
     DeterministicRandom,
     SaveDataError,
@@ -58,6 +62,32 @@ class EventPatchTests(unittest.TestCase):
             random_seed=7007,
         )
         state.calendar.current_day = day
+        # Tests that jump directly to a later day still model the mandatory
+        # earlier arrivals explicitly. A real save may never skip these nodes.
+        for event_id, rule in self.event_rules.fixed_arrivals.items():
+            if rule.day >= day:
+                continue
+            effect = rule.options["reject"]
+            state.events.fixed_arrival_choices[event_id] = "reject"
+            state.events.resolved_event_ids.append(event_id)
+            state.events.occurrence_counts[event_id] = 1
+            state.events.resolution_history.append(
+                EventResolutionRecord(
+                    event_id=event_id,
+                    option_id="reject",
+                    event_type="major",
+                    resolved_day=rule.day,
+                    trust_change=effect.trust,
+                    panic_change=effect.panic,
+                    resource_changes={
+                        "coal": 0,
+                        "wood": 0,
+                        "steel": 0,
+                        "raw_food": 0,
+                        "cooked_food": 0,
+                    },
+                )
+            )
         return state
 
     def event_system(self) -> EventSystem:
@@ -209,6 +239,7 @@ class EventPatchTests(unittest.TestCase):
         resources_before = deepcopy(state.resources)
         population_before = deepcopy(state.population)
         morale_before = deepcopy(state.trust_panic)
+        resolved_before = list(state.events.resolved_event_ids)
         system = self.event_system()
 
         system.initialize_day(state)
@@ -222,7 +253,7 @@ class EventPatchTests(unittest.TestCase):
         self.assertEqual(state.population, population_before)
         self.assertEqual(state.trust_panic, morale_before)
         self.assertEqual(state.promises.active_promises, {})
-        self.assertEqual(state.events.resolved_event_ids, [])
+        self.assertEqual(state.events.resolved_event_ids, resolved_before)
 
     def test_ignored_normal_event_counts_as_shown_without_hidden_resolution(self) -> None:
         state = self.make_state(day=5)
@@ -354,6 +385,34 @@ class EventPatchTests(unittest.TestCase):
         system.begin_new_day(state)
         self.assertIn("cold_house_night", state.events.active_events)
 
+    def test_cold_house_furnace_prompt_has_no_event_effect_or_fuel_gate(self) -> None:
+        state = self.make_state(day=5)
+        state.events.metrics["cold_exposure_level"] = 3
+        state.events.metrics["cold_exposure_warning_streak"] = 1
+        system = self.event_system()
+        system.initialize_day(state)
+        self.assertIn("cold_house_night", state.events.active_events)
+
+        state.resources.coal = 0
+        state.resources.wood = 0
+        state.daily_survival.storage_used = storage_used(state.resources)
+        furnace_before = deepcopy(state.furnace)
+        resources_before = deepcopy(state.resources)
+        morale_before = deepcopy(state.trust_panic)
+        exposure_before = state.events.metrics["cold_exposure_level"]
+
+        result = self.execute(
+            system, state, "cold_house_night", "increase_furnace_prompt"
+        )
+
+        self.assertEqual(result.code, ErrorCode.OK)
+        self.assertEqual(state.furnace, furnace_before)
+        self.assertEqual(state.resources, resources_before)
+        self.assertEqual(state.trust_panic, morale_before)
+        self.assertEqual(
+            state.events.metrics["cold_exposure_level"], exposure_before
+        )
+
     def test_event_views_expose_text_ids_options_and_exact_previews(self) -> None:
         state = self.make_state(day=6)
         system = self.event_system()
@@ -423,6 +482,183 @@ class EventPatchTests(unittest.TestCase):
         harmed.events.metrics["overtime_harm_today"] = 1
         system.initialize_day(harmed)
         self.assertIn("overtime_empty_post", harmed.events.active_events)
+
+    def test_labor_promise_checks_both_recent_completed_days(self) -> None:
+        state = self.make_state(day=5)
+        promise = PromiseRecord(
+            promise_id="promise-0001",
+            promise_type="labor",
+            source_event_id="overtime_empty_post",
+            created_day=2,
+            deadline_day=5,
+            severity="serious",
+            target={"trust_at_creation": 50, "panic_at_creation": 20},
+        )
+        system = self.event_system()
+
+        state.events.recent_overtime_days = [3]
+        self.assertFalse(system._promise_succeeded(state, promise))
+        state.events.recent_overtime_days = [2]
+        self.assertTrue(system._promise_succeeded(state, promise))
+
+    def test_canteen_outage_requires_two_consecutive_recent_days(self) -> None:
+        separated = self.make_state(day=4)
+        separated.events.recent_canteen_outage_days = [1, 3]
+        system = self.event_system()
+        system.initialize_day(separated)
+        self.assertNotIn("raw_food_dispute", separated.events.active_events)
+
+        consecutive = self.make_state(day=4)
+        consecutive.events.recent_canteen_outage_days = [2, 3]
+        system.initialize_day(consecutive)
+        self.assertIn("raw_food_dispute", consecutive.events.active_events)
+
+    def test_food_event_options_require_and_deduct_the_full_cost(self) -> None:
+        cases = (
+            ("red_frozen_hands", "cold_care", 15),
+            ("long_shift_collapse", "food_compensation", 40),
+            ("overtime_empty_post", "food_compensation", 60),
+        )
+        for event_id, option_id, cost in cases:
+            with self.subTest(event_id=event_id, inventory="short"):
+                state = self.make_state(day=10)
+                if event_id == "red_frozen_hands":
+                    state.laws.signed_law_ids.append("child_labor_low_risk_law")
+                    state.events.metrics["child_labor_risk_points"] = 3
+                elif event_id == "long_shift_collapse":
+                    state.social_policy.consecutive_long_shift_days = 3
+                else:
+                    state.events.metrics["overtime_harm_today"] = 1
+                state.resources.cooked_food = cost - 1
+                state.daily_survival.storage_used = storage_used(state.resources)
+                system = self.event_system()
+                system.initialize_day(state)
+                before = deepcopy(state)
+                rejected = self.execute(system, state, event_id, option_id)
+                self.assertEqual(rejected.code, ErrorCode.ILLEGAL_COMMAND)
+                self.assertEqual(state, before)
+
+            for inventory in (cost, cost + 7):
+                with self.subTest(event_id=event_id, inventory=inventory):
+                    state = self.make_state(day=10)
+                    if event_id == "red_frozen_hands":
+                        state.laws.signed_law_ids.append(
+                            "child_labor_low_risk_law"
+                        )
+                        state.events.metrics["child_labor_risk_points"] = 3
+                    elif event_id == "long_shift_collapse":
+                        state.social_policy.consecutive_long_shift_days = 3
+                    else:
+                        state.events.metrics["overtime_harm_today"] = 1
+                    state.resources.cooked_food = inventory
+                    state.daily_survival.storage_used = storage_used(state.resources)
+                    system = self.event_system()
+                    system.initialize_day(state)
+                    result = self.execute(system, state, event_id, option_id)
+                    self.assertEqual(result.code, ErrorCode.OK)
+                    self.assertEqual(state.resources.cooked_food, inventory - cost)
+
+    def test_event_config_rejects_runtime_incompatible_mutations(self) -> None:
+        source = json.loads((ROOT / "data" / "events.json").read_text("utf-8"))
+
+        def wrong_promise(document):
+            document["events"]["empty_pot"]["promise_type"] = "medical"
+
+        def swapped_arrival_days(document):
+            document["fixed_arrivals"]["arrival_day6"]["day"] = 19
+            document["fixed_arrivals"]["arrival_day19"]["day"] = 6
+
+        def changed_raw_window(document):
+            document["thresholds"]["raw_food_window_days"] = 4
+
+        for mutate in (wrong_promise, swapped_arrival_days, changed_raw_window):
+            with self.subTest(mutation=mutate.__name__), tempfile.TemporaryDirectory() as temp_dir:
+                document = deepcopy(source)
+                mutate(document)
+                path = Path(temp_dir) / "events.json"
+                path.write_text(
+                    json.dumps(document, ensure_ascii=False), encoding="utf-8"
+                )
+                with self.assertRaises(EventConfigError):
+                    load_event_rules(path)
+
+    def test_recent_day_history_and_promise_sequence_are_strict(self) -> None:
+        base = encode_game_state(self.make_state(day=5))
+        mutations = []
+        for values in ([1, 1], [3, 2], [5]):
+            document = deepcopy(base)
+            document["events"]["recent_overtime_days"] = values
+            mutations.append(document)
+        malformed = deepcopy(base)
+        malformed["promises"]["completed_promise_ids"] = ["promise-1"]
+        malformed["promises"]["next_sequence"] = 2
+        mutations.append(malformed)
+        reused = deepcopy(base)
+        reused["promises"]["completed_promise_ids"] = ["promise-0005"]
+        reused["promises"]["next_sequence"] = 5
+        mutations.append(reused)
+
+        for document in mutations:
+            with self.subTest(document=document):
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(document)
+
+    def test_fixed_arrival_history_cannot_be_removed_from_v8_save(self) -> None:
+        state = self.make_state(day=6)
+        system = self.event_system()
+        system.initialize_day(state)
+        self.assertEqual(
+            self.execute(system, state, "arrival_day6", "reject").code,
+            ErrorCode.OK,
+        )
+        state.calendar.current_day = 7
+        system.begin_new_day(state)
+        base = encode_game_state(state)
+
+        mutations = []
+        without_choice = deepcopy(base)
+        without_choice["events"]["fixed_arrival_choices"] = {}
+        mutations.append(without_choice)
+        without_resolved = deepcopy(base)
+        without_resolved["events"]["resolved_event_ids"].remove("arrival_day6")
+        mutations.append(without_resolved)
+        without_history = deepcopy(base)
+        without_history["events"]["resolution_history"] = [
+            item
+            for item in without_history["events"]["resolution_history"]
+            if item["event_id"] != "arrival_day6"
+        ]
+        mutations.append(without_history)
+
+        for document in mutations:
+            with self.subTest(document=document):
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(document)
+
+    def test_v7_migration_rejects_days_after_first_mandatory_arrival(self) -> None:
+        for day, accepted in ((5, True), (6, True), (7, False), (19, False), (37, False)):
+            with self.subTest(day=day):
+                legacy = encode_game_state(self.make_state())
+                legacy["calendar"]["current_day"] = day
+                legacy["save_data_version"] = 7
+                legacy["events"] = {
+                    "active_event_ids": [],
+                    "resolved_event_ids": [],
+                }
+                legacy["promises"] = {
+                    "active_promise_ids": [],
+                    "completed_promise_ids": [],
+                    "failed_promise_ids": [],
+                }
+                legacy["old_city"] = {
+                    "is_unlocked": False,
+                    "active_stage_id": None,
+                }
+                if accepted:
+                    self.assertEqual(decode_game_state(legacy).calendar.current_day, day)
+                else:
+                    with self.assertRaises(SaveDataError):
+                        decode_game_state(legacy)
 
     def test_long_shift_event_suspends_only_the_following_day(self) -> None:
         state = self.make_state()

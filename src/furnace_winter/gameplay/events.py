@@ -13,10 +13,6 @@ from furnace_winter.gameplay.end_day import (
     RiskWarning,
     RiskWarningLevel,
 )
-from furnace_winter.gameplay.survival import (
-    furnace_coal_cost,
-    projected_woodfuel_available,
-)
 from furnace_winter.interface import (
     ArgumentKind,
     CommandCatalog,
@@ -526,8 +522,13 @@ class EventSystem:
         if kind == "children":
             return self._unprotected_children(state) == 0
         if kind == "labor":
+            first_recent_day = state.calendar.current_day - 2
+            last_recent_day = state.calendar.current_day - 1
             return (
-                not any(day >= state.calendar.current_day - 1 for day in state.events.recent_overtime_days)
+                not any(
+                    first_recent_day <= day <= last_recent_day
+                    for day in state.events.recent_overtime_days
+                )
                 and (
                     state.social_policy.current_worktime_mode == "normal"
                     or state.events.metrics.get("long_shift_suspended_until_day")
@@ -616,8 +617,8 @@ class EventSystem:
         if food_days_x10 < thresholds["empty_pot_days_x10"] and state.events.metrics.get("food_warning_streak", 0) >= 1:
             candidates.append(("empty_pot", "normal"))
         if (
-            len(state.events.recent_raw_food_days) >= thresholds["raw_food_days"]
-            or len(state.events.recent_canteen_outage_days) >= thresholds["canteen_outage_days"]
+            len(self._recent_raw_food_days(state)) >= thresholds["raw_food_days"]
+            or self._has_recent_consecutive_canteen_outage(state)
         ):
             candidates.append(("raw_food_dispute", "normal"))
         patients = state.population.sick_population + state.population.critical_population
@@ -772,11 +773,8 @@ class EventSystem:
                 continue
             if option_id == "overload_off_prompt" and state.furnace.overload_level == 0:
                 continue
-            if option_id == "increase_furnace_prompt" and not self._can_raise_furnace(
-                state
-            ):
-                continue
-            if option_id in {"cold_care", "food_compensation"} and state.resources.cooked_food == 0:
+            food_cost = self._event_food_cost(state, event_id, option_id)
+            if food_cost is not None and state.resources.cooked_food < food_cost:
                 continue
             available.append(option_id)
         return tuple(available)
@@ -793,9 +791,9 @@ class EventSystem:
         if event_id == "empty_pot":
             reasons.append("food_reserve_below_threshold")
         elif event_id == "raw_food_dispute":
-            if len(state.events.recent_raw_food_days) >= thresholds["raw_food_days"]:
+            if len(self._recent_raw_food_days(state)) >= thresholds["raw_food_days"]:
                 reasons.append("recent_raw_food_days_reached")
-            if len(state.events.recent_canteen_outage_days) >= thresholds["canteen_outage_days"]:
+            if self._has_recent_consecutive_canteen_outage(state):
                 reasons.append("recent_canteen_outage_days_reached")
         elif event_id == "medical_beds_emergency":
             reasons.append("medical_capacity_gap_reached")
@@ -904,11 +902,8 @@ class EventSystem:
                 return "memorial_on_cooldown"
         if option_id == "overload_off_prompt" and state.furnace.overload_level == 0:
             return "overload_already_off"
-        if option_id == "increase_furnace_prompt":
-            if state.furnace.level >= max(self.survival_rules.furnace_levels):
-                return "furnace_already_at_maximum"
-            return "insufficient_furnace_fuel"
-        if option_id in {"cold_care", "food_compensation"}:
+        food_cost = self._event_food_cost(state, event_id, option_id)
+        if food_cost is not None and state.resources.cooked_food < food_cost:
             return "insufficient_cooked_food"
         return "option_not_offered_when_event_activated"
 
@@ -974,7 +969,6 @@ class EventSystem:
             ("coal_bottom", "maintain"): (-2, 3),
             ("furnace_redline", "overload_off_prompt"): (0, -1),
             ("furnace_redline", "maintain_overload"): (-4, 5),
-            ("cold_house_night", "temporary_shelter"): (1, -1),
             ("cold_house_night", "maintain"): (-3, 3),
             ("trust_crack", "public_explanation"): (1, 1),
             ("trust_crack", "avoid_questions"): (-3, 2),
@@ -993,16 +987,18 @@ class EventSystem:
         elif (event_id, option_id) == ("red_frozen_hands", "suspend_high_risk"):
             state.events.metrics["child_high_risk_work_suspended_until_day"] = state.calendar.current_day + 1
         elif (event_id, option_id) == ("red_frozen_hands", "cold_care"):
-            state.resources.cooked_food -= min(state.population.children, 20, state.resources.cooked_food)
+            cost = self._event_food_cost(state, event_id, option_id)
+            assert cost is not None
+            state.resources.cooked_food -= cost
             state.events.metrics["child_cold_risk_reduction_until_day"] = state.calendar.current_day
             state.events.metrics["child_cold_risk_numerator"] = 50
             state.events.metrics["child_cold_risk_denominator"] = 100
         elif (event_id, option_id) == ("long_shift_collapse", "suspend_long_shift"):
             state.events.metrics["long_shift_suspended_until_day"] = state.calendar.current_day + 1
         elif option_id == "food_compensation":
-            workers = state.population.workers + state.population.engineers
-            maximum = 60 if event_id == "overtime_empty_post" else 40
-            state.resources.cooked_food -= min(workers, maximum, state.resources.cooked_food)
+            cost = self._event_food_cost(state, event_id, option_id)
+            assert cost is not None
+            state.resources.cooked_food -= cost
 
     def _apply_arrival(self, state: GameState, event_id: str, option_id: str) -> None:
         effect = self.rules.fixed_arrivals[event_id].options[option_id]
@@ -1095,8 +1091,18 @@ class EventSystem:
         else:
             state.events.metrics["persistent_severe_days"] = 0
         state.events.metrics["previous_critical_patients"] = critical
-        state.events.recent_raw_food_days = [item for item in state.events.recent_raw_food_days if item >= day - 2]
-        state.events.recent_canteen_outage_days = [item for item in state.events.recent_canteen_outage_days if item >= day - 2]
+        raw_window = self.rules.thresholds["raw_food_window_days"]
+        canteen_window = self.rules.thresholds["canteen_outage_days"]
+        state.events.recent_raw_food_days = [
+            item
+            for item in state.events.recent_raw_food_days
+            if item >= day - raw_window + 1
+        ]
+        state.events.recent_canteen_outage_days = [
+            item
+            for item in state.events.recent_canteen_outage_days
+            if item >= day - canteen_window + 1
+        ]
         state.events.recent_overtime_days = [item for item in state.events.recent_overtime_days if item >= day - 4]
         if self._food_days_x10(state) < self.rules.thresholds["food_warning_days_x10"]:
             state.events.metrics["food_warning_streak"] = state.events.metrics.get("food_warning_streak", 0) + 1
@@ -1195,6 +1201,7 @@ class EventSystem:
                 raise SaveDataError("fixed arrival choice does not match event rules")
             if self.rules.fixed_arrivals[event_id].day > state.calendar.current_day:
                 raise SaveDataError("fixed arrival choice cannot come from a future day")
+        self._validate_fixed_arrival_history(state)
         expected_frost_stage = "none"
         for day, stage in sorted(_FROST_STAGE_BY_DAY.items()):
             if state.calendar.current_day >= day:
@@ -1273,18 +1280,80 @@ class EventSystem:
         cost = self.survival_rules.furnace_levels[self._current_furnace_level(state)].coal_cost
         return (state.resources.coal * 10) // cost if cost else 10_000
 
-    def _can_raise_furnace(self, state: GameState) -> bool:
-        current = self._current_furnace_level(state)
-        if current >= max(self.survival_rules.furnace_levels):
-            return False
-        next_level = current + 1
-        required = furnace_coal_cost(
-            state, self.survival_rules, next_level
+    def _recent_raw_food_days(self, state: GameState) -> list[int]:
+        first_day = (
+            state.calendar.current_day
+            - self.rules.thresholds["raw_food_window_days"]
         )
-        available = state.resources.coal + projected_woodfuel_available(
-            state, self.building_rules
+        last_day = state.calendar.current_day - 1
+        return [
+            day
+            for day in state.events.recent_raw_food_days
+            if first_day <= day <= last_day
+        ]
+
+    def _has_recent_consecutive_canteen_outage(self, state: GameState) -> bool:
+        required = self.rules.thresholds["canteen_outage_days"]
+        last_day = state.calendar.current_day - 1
+        first_day = last_day - required + 1
+        return all(
+            day in state.events.recent_canteen_outage_days
+            for day in range(first_day, last_day + 1)
         )
-        return available >= required
+
+    @staticmethod
+    def _event_food_cost(
+        state: GameState, event_id: str, option_id: str
+    ) -> int | None:
+        if (event_id, option_id) == ("red_frozen_hands", "cold_care"):
+            return min(state.population.children, 20)
+        if option_id == "food_compensation":
+            workers = state.population.workers + state.population.engineers
+            return min(workers, 60 if event_id == "overtime_empty_post" else 40)
+        return None
+
+    def _validate_fixed_arrival_history(self, state: GameState) -> None:
+        for event_id, rule in self.rules.fixed_arrivals.items():
+            choice = state.events.fixed_arrival_choices.get(event_id)
+            histories = [
+                item
+                for item in state.events.resolution_history
+                if item.event_id == event_id
+            ]
+            resolved = event_id in state.events.resolved_event_ids
+            active = event_id in state.events.active_events
+            count = state.events.occurrence_counts.get(event_id, 0)
+            if active:
+                if (
+                    state.calendar.current_day != rule.day
+                    or choice is not None
+                    or resolved
+                    or histories
+                    or count != 1
+                ):
+                    raise SaveDataError("active fixed arrival state is inconsistent")
+                continue
+            if choice is not None:
+                if (
+                    not resolved
+                    or count != 1
+                    or len(histories) != 1
+                    or histories[0].option_id != choice
+                    or histories[0].event_type != "major"
+                    or histories[0].resolved_day != rule.day
+                ):
+                    raise SaveDataError(
+                        "fixed arrival choice, history, and resolution disagree"
+                    )
+                continue
+            if resolved or histories or count or state.calendar.current_day > rule.day:
+                raise SaveDataError("a past fixed arrival cannot be skipped")
+            if (
+                state.calendar.current_day == rule.day
+                and state.events.generated_for_day == rule.day
+                and not active
+            ):
+                raise SaveDataError("today's fixed arrival must remain active or resolved")
 
     @staticmethod
     def _current_furnace_level(state: GameState) -> int:

@@ -36,6 +36,21 @@ _EVENT_IDS = {
     "seventh_frost_start",
 }
 _ARRIVAL_IDS = {"arrival_day6", "arrival_day19", "arrival_day37"}
+_ARRIVAL_DAYS = {"arrival_day6": 6, "arrival_day19": 19, "arrival_day37": 37}
+_EVENT_PROMISES: dict[str, tuple[str, str]] = {
+    "empty_pot": ("food", "ordinary"),
+    "raw_food_dispute": ("food", "ordinary"),
+    "medical_beds_emergency": ("medical", "ordinary"),
+    "severe_case_backlog": ("medical", "serious"),
+    "bodies_under_snow": ("body", "ordinary"),
+    "children_request": ("children", "ordinary"),
+    "overtime_empty_post": ("labor", "serious"),
+    "coal_bottom": ("coal", "ordinary"),
+    "furnace_redline": ("furnace", "serious"),
+    "cold_house_night": ("housing", "ordinary"),
+    "trust_crack": ("trust", "serious"),
+    "city_unrest": ("panic", "serious"),
+}
 _THRESHOLD_IDS = {
     "food_warning_days_x10",
     "empty_pot_days_x10",
@@ -304,6 +319,13 @@ def load_event_rules(path: Path) -> EventRules:
             raise EventConfigError(f"event {event_id} uses an unknown promise type")
         if severity is not None and severity not in effects:
             raise EventConfigError(f"event {event_id} uses an unknown promise severity")
+        expected_promise = _EVENT_PROMISES.get(event_id)
+        if (promise_type, severity) != (
+            expected_promise if expected_promise is not None else (None, None)
+        ):
+            raise EventConfigError(
+                f"event {event_id} promise type or severity disagrees with Patch 007"
+            )
         events[event_id] = EventRule(
             event_id=event_id,
             priority=_integer(item["priority"], f"$.events.{event_id}.priority", minimum=1),
@@ -323,6 +345,10 @@ def load_event_rules(path: Path) -> EventRules:
         item = _object(raw_arrival, f"$.fixed_arrivals.{event_id}")
         _exact(item, {"day", "options"}, f"$.fixed_arrivals.{event_id}")
         day = _integer(item["day"], f"$.fixed_arrivals.{event_id}.day", minimum=1)
+        if day != _ARRIVAL_DAYS[event_id]:
+            raise EventConfigError(
+                f"fixed arrival {event_id} must occur on day {_ARRIVAL_DAYS[event_id]}"
+            )
         if day in seen_days:
             raise EventConfigError("fixed arrival days must be unique")
         seen_days.add(day)
@@ -360,6 +386,8 @@ def load_event_rules(path: Path) -> EventRules:
     thresholds = _int_map(data["thresholds"], "$.thresholds", minimum=0)
     if set(thresholds) != _THRESHOLD_IDS:
         raise EventConfigError("threshold catalog must match Patch 007")
+    if thresholds["raw_food_window_days"] != 3:
+        raise EventConfigError("raw food event window must remain three days")
     ordered_thresholds = (
         ("food_warning_days_x10", "empty_pot_days_x10", ">="),
         ("medical_gap_warning", "medical_gap_event", "<="),

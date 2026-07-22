@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, fields
@@ -41,6 +42,24 @@ from furnace_winter.models.state import (
 
 class SaveDataError(ValueError):
     pass
+
+
+_FIXED_ARRIVAL_DAYS = {
+    "arrival_day6": 6,
+    "arrival_day19": 19,
+    "arrival_day37": 37,
+}
+_PROMISE_ID_PATTERN = re.compile(r"^promise-([0-9]{4,})$")
+
+
+def _promise_sequence(promise_id: str) -> int:
+    match = _PROMISE_ID_PATTERN.fullmatch(promise_id)
+    if match is None:
+        raise SaveDataError("promise ids must use the canonical promise-0001 format")
+    sequence = int(match.group(1))
+    if sequence < 1 or f"promise-{sequence:04d}" != promise_id:
+        raise SaveDataError("promise ids must use the canonical promise-0001 format")
+    return sequence
 
 
 Migration = Callable[[dict[str, Any]], dict[str, Any]]
@@ -1523,6 +1542,12 @@ def _migrate_v6_to_v7(document: dict[str, Any]) -> dict[str, Any]:
 def _migrate_v7_to_v8(document: dict[str, Any]) -> dict[str, Any]:
     legacy = _object(document, "$", _field_names(GameState))
     migrated = deepcopy(legacy)
+    calendar = _object(
+        migrated["calendar"], "calendar", _field_names(CalendarState)
+    )
+    current_day = _integer(
+        calendar["current_day"], "calendar.current_day", minimum=1, maximum=FINAL_DAY
+    )
     if not isinstance(migrated["events"], Mapping):
         raise SaveDataError("events must be an object")
     raw_events = dict(migrated["events"])
@@ -1535,6 +1560,10 @@ def _migrate_v7_to_v8(document: dict[str, Any]) -> dict[str, Any]:
         if events["active_event_ids"]:
             raise SaveDataError(
                 "v7 active event ids cannot be migrated without Patch 007 event records"
+            )
+        if current_day > _FIXED_ARRIVAL_DAYS["arrival_day6"]:
+            raise SaveDataError(
+                "v7 saves after day 6 cannot reconstruct mandatory fixed arrivals"
             )
         migrated["events"] = {
             "active_events": {},
@@ -1583,17 +1612,23 @@ def _migrate_v7_to_v8(document: dict[str, Any]) -> dict[str, Any]:
             raise SaveDataError(
                 "v7 active promise ids cannot be migrated without Patch 007 promise records"
             )
+        completed_ids = _string_list(
+            promises["completed_promise_ids"],
+            "promises.completed_promise_ids",
+        )
+        failed_ids = _string_list(
+            promises["failed_promise_ids"], "promises.failed_promise_ids"
+        )
+        settled_sequences = [
+            _promise_sequence(promise_id)
+            for promise_id in completed_ids + failed_ids
+        ]
         migrated["promises"] = {
             "active_promises": {},
-            "completed_promise_ids": _string_list(
-                promises["completed_promise_ids"],
-                "promises.completed_promise_ids",
-            ),
-            "failed_promise_ids": _string_list(
-                promises["failed_promise_ids"], "promises.failed_promise_ids"
-            ),
+            "completed_promise_ids": completed_ids,
+            "failed_promise_ids": failed_ids,
             "settlement_history": [],
-            "next_sequence": 1,
+            "next_sequence": max(settled_sequences, default=0) + 1,
         }
     else:
         migrated["promises"] = _object(
@@ -1637,6 +1672,19 @@ def _validate_state_invariants(state: GameState) -> None:
         raise SaveDataError("event status ids must be unique")
     if set(events.active_events) & set(events.resolved_event_ids):
         raise SaveDataError("active and resolved events must be disjoint")
+    legal_settled_day = max(
+        state.calendar.current_day - 1,
+        state.daily_survival.settled_day or 0,
+    )
+    for name, days in (
+        ("recent_raw_food_days", events.recent_raw_food_days),
+        ("recent_canteen_outage_days", events.recent_canteen_outage_days),
+        ("recent_overtime_days", events.recent_overtime_days),
+    ):
+        if days != sorted(set(days)):
+            raise SaveDataError(f"events.{name} must be sorted and unique")
+        if any(day > legal_settled_day for day in days):
+            raise SaveDataError(f"events.{name} cannot contain an unsettled day")
     for resolution in events.resolution_history:
         if resolution.event_id not in events.resolved_event_ids:
             raise SaveDataError("event history must reference a resolved event")
@@ -1692,6 +1740,50 @@ def _validate_state_invariants(state: GameState) -> None:
         raise SaveDataError("unknown fixed arrival choice key")
     if any(choice not in {"accept_all", "accept_partial", "reject"} for choice in events.fixed_arrival_choices.values()):
         raise SaveDataError("unsupported fixed arrival choice")
+    if events.generated_for_day is not None:
+        for event_id, arrival_day in _FIXED_ARRIVAL_DAYS.items():
+            choice = events.fixed_arrival_choices.get(event_id)
+            histories = [
+                item
+                for item in events.resolution_history
+                if item.event_id == event_id
+            ]
+            resolved = event_id in events.resolved_event_ids
+            active = event_id in events.active_events
+            count = events.occurrence_counts.get(event_id, 0)
+            if active:
+                if (
+                    state.calendar.current_day != arrival_day
+                    or choice is not None
+                    or resolved
+                    or histories
+                    or count != 1
+                ):
+                    raise SaveDataError("active fixed arrival state is inconsistent")
+                continue
+            if choice is not None:
+                if (
+                    not resolved
+                    or count != 1
+                    or len(histories) != 1
+                    or histories[0].option_id != choice
+                    or histories[0].event_type != "major"
+                    or histories[0].resolved_day != arrival_day
+                ):
+                    raise SaveDataError(
+                        "fixed arrival choice, history, and resolution disagree"
+                    )
+            elif (
+                resolved
+                or histories
+                or count
+                or state.calendar.current_day > arrival_day
+                or (
+                    state.calendar.current_day == arrival_day
+                    and events.generated_for_day == arrival_day
+                )
+            ):
+                raise SaveDataError("a generated save cannot skip a fixed arrival")
     if len(promises.active_promises) > 2:
         raise SaveDataError("at most two promises may be active")
     active_types: set[str] = set()
@@ -1702,6 +1794,15 @@ def _validate_state_invariants(state: GameState) -> None:
         raise SaveDataError("settled promise ids must be unique")
     if set(promises.active_promises) & settled_promises:
         raise SaveDataError("active and settled promises must be disjoint")
+    all_promise_ids = (
+        list(promises.active_promises)
+        + promises.completed_promise_ids
+        + promises.failed_promise_ids
+        + [item.promise_id for item in promises.settlement_history]
+    )
+    promise_sequences = [_promise_sequence(item) for item in all_promise_ids]
+    if promises.next_sequence <= max(promise_sequences, default=0):
+        raise SaveDataError("next promise sequence must exceed every existing promise id")
     settlement_ids: set[str] = set()
     for settlement in promises.settlement_history:
         if settlement.promise_id in settlement_ids:
