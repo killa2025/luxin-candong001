@@ -38,6 +38,7 @@ from furnace_winter.models import (
     decode_game_state,
     encode_game_state,
 )
+from tests import downgrade_to_pre_patch006_schema
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1017,6 +1018,7 @@ class LawPatchTests(unittest.TestCase):
         restored = decode_game_state(encode_game_state(state))
         self.assertEqual(restored, state)
         legacy = encode_game_state(self.make_state())
+        downgrade_to_pre_patch006_schema(legacy)
         legacy["save_data_version"] = 4
         del legacy["social_policy"]
         del legacy["medical"]
@@ -1047,6 +1049,7 @@ class LawPatchTests(unittest.TestCase):
                     state.social_policy.ration_food_numerator = 50
                     state.social_policy.ration_food_denominator = 100
                 document = encode_game_state(state)
+                downgrade_to_pre_patch006_schema(document)
                 document["save_data_version"] = 5
                 del document["social_policy"]["consecutive_ration_mode"]
 
@@ -1131,6 +1134,7 @@ class LawPatchTests(unittest.TestCase):
         state.social_policy.consecutive_ration_days = 5
         state.social_policy.consecutive_ration_mode = "coarse_soup"
         legacy = encode_game_state(state)
+        downgrade_to_pre_patch006_schema(legacy)
         legacy["save_data_version"] = 5
         del legacy["social_policy"]["consecutive_ration_mode"]
 
@@ -1196,6 +1200,7 @@ class LawPatchTests(unittest.TestCase):
         restored = decode_game_state(encode_game_state(state))
         self.law_system().validate_state(restored)
         legacy = encode_game_state(state)
+        downgrade_to_pre_patch006_schema(legacy)
         legacy["save_data_version"] = 5
         del legacy["social_policy"]["consecutive_ration_mode"]
         migrated = decode_game_state(legacy)
@@ -1282,6 +1287,7 @@ class LawPatchTests(unittest.TestCase):
                 state.population.healthy_population = 74
                 state.population.sick_population = 6
                 legacy = encode_game_state(state)
+                downgrade_to_pre_patch006_schema(legacy)
                 legacy["save_data_version"] = 4
                 del legacy["social_policy"]
                 del legacy["medical"]
@@ -1297,6 +1303,7 @@ class LawPatchTests(unittest.TestCase):
 
     def test_v4_migration_rejects_malformed_building_containers_uniformly(self) -> None:
         base = encode_game_state(self.make_state())
+        downgrade_to_pre_patch006_schema(base)
         base["save_data_version"] = 4
         del base["social_policy"]
         del base["medical"]

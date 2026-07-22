@@ -223,6 +223,33 @@ def validate_config_tree(root: Path) -> ValidationReport:
                     ValidationIssue(path, "$", f"科技规则结构校验失败：{exc}")
                 )
 
+    buildings_path = root / "buildings.json"
+    technologies_path = root / "technologies.json"
+    linked_paths = {buildings_path, technologies_path}
+    if (
+        linked_paths.issubset(config_files)
+        and not any(issue.path in linked_paths for issue in issues)
+    ):
+        try:
+            from furnace_winter.config.buildings import load_building_rules
+            from furnace_winter.config.technologies import (
+                load_technology_rules,
+                validate_technology_building_links,
+            )
+
+            validate_technology_building_links(
+                load_technology_rules(technologies_path),
+                load_building_rules(buildings_path),
+            )
+        except (OSError, ValueError) as exc:
+            issues.append(
+                ValidationIssue(
+                    technologies_path,
+                    "$",
+                    f"建筑与科技跨配置校验失败：{exc}",
+                )
+            )
+
     manifest_path = root / "manifest.json"
     if manifest_path in config_files and not validate_config_file(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))

@@ -64,6 +64,25 @@ class TechnologyPatchTests(unittest.TestCase):
             self.law_rules,
         )
 
+    @staticmethod
+    def unlock_overload(state, level: int) -> None:
+        completed = [
+            "tech_drawing_board",
+            "tech_drafting_instrument",
+            "tech_mechanical_calculator",
+            "tech_furnace_power_stability_1",
+            "tech_overload_tuning",
+        ]
+        if level == 2:
+            completed.extend(
+                [
+                    "tech_difference_engine",
+                    "tech_overload_stability",
+                ]
+            )
+        state.technologies.researched_tech_ids.extend(completed)
+        state.furnace.overload_level = level
+
     def building_system(self) -> BuildingSystem:
         return BuildingSystem(
             self.building_rules,
@@ -321,6 +340,84 @@ class TechnologyPatchTests(unittest.TestCase):
         self.assertEqual(cooled.result.code, ErrorCode.OK)
         self.assertEqual(state.furnace.pressure, 0)
 
+    def test_base_heating_is_paid_before_overload_with_and_without_woodfuel(self) -> None:
+        cases = (
+            (False, 45, 0, 0),
+            (True, 25, 80, 80),
+        )
+        for with_woodfuel, coal, wood, expected_wood_burned in cases:
+            with self.subTest(with_woodfuel=with_woodfuel):
+                state = self.make_state()
+                self.unlock_overload(state, 1)
+                state.resources.coal = coal
+                state.resources.wood = wood
+                state.building_management.woodfuel_confirmed_today = with_woodfuel
+
+                engine = self.engine()
+                result = self.settle(engine, state)
+
+                self.assertEqual(result.result.code, ErrorCode.OK)
+                self.assertEqual(state.daily_survival.effective_furnace_level, 1)
+                self.assertEqual(state.daily_survival.effective_overload_level, 0)
+                self.assertEqual(state.daily_survival.overload_coal_paid, 0)
+                self.assertEqual(
+                    state.daily_survival.woodfuel_wood_burned,
+                    expected_wood_burned,
+                )
+                self.assertTrue(state.daily_survival.heating_shortfall)
+                self.assertEqual(state.resources.coal, 0)
+                self.assertIsNotNone(engine.last_autosave())
+
+    def test_level_three_base_heating_is_not_sacrificed_for_overload(self) -> None:
+        state = self.make_state()
+        self.unlock_overload(state, 1)
+        state.furnace.mode_id = "level_3"
+        state.resources.coal = self.survival_rules.furnace_levels[3].coal_cost
+        state.resources.wood = 0
+
+        result = self.settle(self.engine(), state)
+
+        self.assertEqual(result.result.code, ErrorCode.OK)
+        self.assertEqual(state.daily_survival.effective_furnace_level, 3)
+        self.assertEqual(state.daily_survival.effective_overload_level, 0)
+        self.assertEqual(state.resources.coal, 0)
+
+    def test_pressure_warnings_use_projected_effective_overload_growth(self) -> None:
+        cases = (
+            (1, 60, "survival.furnace_high_pressure", 85),
+            (1, 76, "survival.furnace_pressure_redline_risk", 101),
+            (49, 79, "survival.furnace_high_pressure", 99),
+        )
+        for day, pressure, warning_id, projected_pressure in cases:
+            with self.subTest(day=day, pressure=pressure):
+                state = self.make_state()
+                self.unlock_overload(state, 2)
+                if day == 49:
+                    state.technologies.researched_tech_ids.extend(
+                        [
+                            "tech_automatic_forming_machine",
+                            "tech_furnace_coal_saving_1",
+                            "tech_furnace_coal_saving_2",
+                            "tech_building_insulation_1",
+                            "tech_building_insulation_2",
+                            "tech_final_furnace_stability",
+                        ]
+                    )
+                state.calendar.current_day = day
+                state.furnace.pressure = pressure
+                state.resources.coal = 300
+
+                warnings = SurvivalSystem(
+                    self.survival_rules,
+                    self.building_rules,
+                    self.technology_rules,
+                ).evaluate_risks(state)
+                warning = next(item for item in warnings if item.warning_id == warning_id)
+
+                self.assertEqual(
+                    warning.details["projected_pressure"], projected_pressure
+                )
+
     def test_continuing_overload_after_redline_causes_core_collapse(self) -> None:
         state = self.make_state()
         state.technologies.researched_tech_ids.extend(
@@ -447,6 +544,39 @@ class TechnologyPatchTests(unittest.TestCase):
         self.assertEqual(migrated.furnace.overload_level, 0)
         self.assertFalse(migrated.furnace.pressure_redline_warned)
 
+    def test_v6_schema_is_strict_and_pressure_boundary_migrates(self) -> None:
+        current = encode_game_state(self.make_state())
+        mislabeled = deepcopy(current)
+        mislabeled["save_data_version"] = 6
+        with self.assertRaises(SaveDataError):
+            decode_game_state(mislabeled)
+
+        for pressure, expected_warned in ((99, False), (100, True)):
+            with self.subTest(pressure=pressure):
+                legacy = deepcopy(current)
+                legacy["save_data_version"] = 6
+                legacy["furnace"].pop("overload_level")
+                legacy["furnace"].pop("pressure_redline_warned")
+                legacy["furnace"]["pressure"] = pressure
+                for field in (
+                    "target_overload_level",
+                    "effective_overload_level",
+                    "overload_coal_paid",
+                    "overload_temperature_bonus",
+                ):
+                    legacy["daily_survival"].pop(field)
+                legacy["technologies"].pop("research_progress_units")
+                legacy["technologies"].pop("research_required_units")
+                legacy["technologies"]["research_progress_days"] = 0
+
+                migrated = decode_game_state(legacy)
+
+                self.assertEqual(migrated.furnace.pressure, pressure)
+                self.assertEqual(
+                    migrated.furnace.pressure_redline_warned,
+                    expected_warned,
+                )
+
     def test_technology_config_rejects_cycles(self) -> None:
         data = json.loads((ROOT / "data" / "technologies.json").read_text("utf-8"))
         data["technologies"]["tech_drawing_board"]["prerequisite_tech_ids"] = [
@@ -460,6 +590,49 @@ class TechnologyPatchTests(unittest.TestCase):
             path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             with self.assertRaises(TechnologyConfigError):
                 load_technology_rules(path)
+
+    def test_technology_catalog_and_overload_semantics_are_strict(self) -> None:
+        source = json.loads(
+            (ROOT / "data" / "technologies.json").read_text("utf-8")
+        )
+        mutations = (
+            lambda data: data["technologies"].pop("tech_hunting_equipment"),
+            lambda data: data["technologies"].update(
+                {"tech_extra": deepcopy(data["technologies"]["tech_hunting_equipment"])}
+            ),
+            lambda data: data["technologies"]["tech_hunting_equipment"].update(
+                {"display_name": "绘图板"}
+            ),
+            lambda data: data["overload"]["levels"].update(
+                {"01": data["overload"]["levels"].pop("1")}
+            ),
+            lambda data: data["overload"]["levels"]["0"].update(
+                {"coal_cost": 1}
+            ),
+            lambda data: data["overload"].update({"redline_threshold": 101}),
+        )
+        for index, mutate in enumerate(mutations):
+            with self.subTest(index=index), TemporaryDirectory() as directory:
+                data = deepcopy(source)
+                mutate(data)
+                path = Path(directory) / "technologies.json"
+                path.write_text(
+                    json.dumps(data, ensure_ascii=False), encoding="utf-8"
+                )
+                with self.assertRaises(TechnologyConfigError):
+                    load_technology_rules(path)
+
+    def test_responsible_owner_technology_conflict_decisions_are_applied(self) -> None:
+        greenhouse = self.technology_rules.technologies[
+            "tech_greenhouse_cultivation"
+        ]
+        advanced_housing = self.technology_rules.technologies[
+            "tech_advanced_housing_standard"
+        ]
+
+        self.assertEqual(greenhouse.prerequisite_tech_ids, ())
+        self.assertEqual(advanced_housing.tier, 4)
+        self.assertEqual(self.technology_rules.config_status.value, "TEST_NUMERIC")
 
     def test_unknown_or_unlocked_technology_state_is_rejected(self) -> None:
         state = self.make_state()

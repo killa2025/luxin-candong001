@@ -25,6 +25,7 @@ from furnace_winter.models import (
     encode_game_state,
     validate_game_state,
 )
+from tests import downgrade_to_pre_patch006_schema
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -337,6 +338,7 @@ class SurvivalPatchTests(unittest.TestCase):
         self.assertEqual(restored, state)
 
         legacy = encode_game_state(state)
+        downgrade_to_pre_patch006_schema(legacy)
         legacy["save_data_version"] = 1
         del legacy["building_management"]
         del legacy["surface_resource_points"]

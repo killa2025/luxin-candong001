@@ -64,62 +64,6 @@ class SaveMigrationRegistry:
         if version > self.current_version:
             raise SaveDataError(f"save version {version} is newer than supported version")
 
-        # Older regression fixtures are sometimes produced by downgrading the
-        # version field of a current, otherwise blank state. Normalize only the
-        # newly introduced Patch 006 zero-value fields; non-zero research still
-        # cannot be silently converted to the old day-based representation.
-        if version < 7:
-            furnace = migrated.get("furnace")
-            if isinstance(furnace, Mapping):
-                normalized_furnace = dict(furnace)
-                if "overload_level" in normalized_furnace:
-                    overload_level = normalized_furnace.pop("overload_level")
-                    if (
-                        overload_level != 0
-                        or isinstance(overload_level, bool)
-                    ):
-                        raise SaveDataError(
-                            "legacy save cannot contain an active Patch 006 overload"
-                        )
-                if "pressure_redline_warned" in normalized_furnace:
-                    warned = normalized_furnace.pop("pressure_redline_warned")
-                    if warned is not False:
-                        raise SaveDataError(
-                            "legacy save cannot contain a Patch 006 redline warning"
-                        )
-                migrated["furnace"] = normalized_furnace
-            daily = migrated.get("daily_survival")
-            if isinstance(daily, Mapping):
-                normalized_daily = dict(daily)
-                for name in (
-                    "target_overload_level",
-                    "effective_overload_level",
-                    "overload_coal_paid",
-                    "overload_temperature_bonus",
-                ):
-                    if name in normalized_daily:
-                        value = normalized_daily.pop(name)
-                        if value != 0 or isinstance(value, bool):
-                            raise SaveDataError(
-                                f"legacy save cannot contain non-zero {name}"
-                            )
-                migrated["daily_survival"] = normalized_daily
-            technologies = migrated.get("technologies")
-            if isinstance(technologies, Mapping):
-                normalized_technologies = dict(technologies)
-                if "research_progress_units" in normalized_technologies:
-                    progress = normalized_technologies.pop("research_progress_units")
-                    required = normalized_technologies.pop(
-                        "research_required_units", None
-                    )
-                    active = normalized_technologies.get("active_research_id")
-                    if active is not None or progress != 0 or required != 0:
-                        raise SaveDataError(
-                            "current active research cannot be represented by a legacy save"
-                        )
-                    normalized_technologies["research_progress_days"] = 0
-                migrated["technologies"] = normalized_technologies
-
         while version < self.current_version:
             migration = self._migrations.get(version)
             if migration is None:
@@ -1313,7 +1257,8 @@ def _migrate_v6_to_v7(document: dict[str, Any]) -> dict[str, Any]:
         ("is_active", "mode_id", "pressure"),
     )
     furnace["overload_level"] = 0
-    furnace["pressure_redline_warned"] = False
+    pressure = _integer(furnace["pressure"], "furnace.pressure", minimum=0)
+    furnace["pressure_redline_warned"] = pressure >= 100
     migrated["furnace"] = furnace
 
     added_daily_fields = _PATCH_006_DAILY_FIELDS
@@ -1541,8 +1486,13 @@ def _validate_state_invariants(state: GameState) -> None:
         raise SaveDataError("woodfuel burned wood cannot be less than its contribution")
     if daily.heating_shortfall != (
         daily.effective_furnace_level < daily.target_furnace_level
+        or daily.effective_overload_level < daily.target_overload_level
     ):
-        raise SaveDataError("heating_shortfall must match target and effective levels")
+        raise SaveDataError(
+            "heating_shortfall must match furnace and overload target levels"
+        )
+    if daily.effective_overload_level > daily.target_overload_level:
+        raise SaveDataError("effective overload level cannot exceed its target")
     if daily.settled_day is None:
         if daily.base_temperature is not None or daily.zone_temperatures:
             raise SaveDataError("unsettled survival summary cannot contain temperatures")

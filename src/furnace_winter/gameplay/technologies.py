@@ -10,6 +10,7 @@ from furnace_winter.config import (
     SurvivalRules,
     TechnologyRules,
 )
+from furnace_winter.config.technologies import validate_technology_building_links
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage
 from furnace_winter.interface import (
     ArgumentKind,
@@ -64,22 +65,7 @@ class TechnologySystem:
         self.building_rules = building_rules
         self.survival_rules = survival_rules
         self.law_rules = law_rules
-        referenced_tech_ids = {
-            tech_id
-            for rule in building_rules.buildings.values()
-            for tech_id in rule.required_tech_ids
-        }
-        referenced_tech_ids.update(
-            upgrade.required_tech_id for upgrade in building_rules.upgrades.values()
-        )
-        referenced_tech_ids.add(building_rules.heat.enhancement_tech_id)
-        unknown_references = sorted(
-            referenced_tech_ids - set(rules.technologies)
-        )
-        if unknown_references:
-            raise ValueError(
-                f"building rules reference unknown technologies: {unknown_references}"
-            )
+        validate_technology_building_links(rules, building_rules)
         self._catalog = build_technology_catalog(rules)
         self._validator = CommandValidator(self._catalog)
 

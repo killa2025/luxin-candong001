@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     state_parser = subparsers.add_parser(
         "state",
-        help="输出 Patch 004 建筑与采集闭环的机器可读开局状态",
+        help="输出 Patch 006 炉律、科技研究与过载闭环的机器可读开局状态",
     )
     state_parser.add_argument(
         "--seed",

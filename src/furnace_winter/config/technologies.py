@@ -14,6 +14,49 @@ class TechnologyConfigError(ValueError):
     pass
 
 
+PATCH_006_TECH_IDS = frozenset(
+    {
+        "tech_advanced_housing_standard",
+        "tech_automatic_forming_machine",
+        "tech_building_insulation_1",
+        "tech_building_insulation_2",
+        "tech_canteen_process_improvement",
+        "tech_coal_seam_support",
+        "tech_deep_coal_seam_extraction",
+        "tech_deep_steel_seam_extraction",
+        "tech_deep_well_mine_frame",
+        "tech_difference_engine",
+        "tech_drafting_instrument",
+        "tech_drawing_board",
+        "tech_emergency_heating_device",
+        "tech_field_cold_weather_equipment",
+        "tech_final_furnace_stability",
+        "tech_furnace_coal_saving_1",
+        "tech_furnace_coal_saving_2",
+        "tech_furnace_power_stability_1",
+        "tech_greenhouse_cultivation",
+        "tech_greenhouse_improvement",
+        "tech_hospital_standardization",
+        "tech_housing_insulation_1",
+        "tech_hunting_equipment",
+        "tech_improved_housing_standard",
+        "tech_mechanical_calculator",
+        "tech_medical_building_insulation",
+        "tech_medical_tools_improvement",
+        "tech_overload_stability",
+        "tech_overload_tuning",
+        "tech_scattered_gathering_tools",
+        "tech_sheltered_gathering_shed_improvement",
+        "tech_small_coal_mining_improvement",
+        "tech_small_steel_mining_improvement",
+        "tech_steel_screening",
+        "tech_storage_expansion",
+        "tech_wood_processing_1",
+        "tech_wood_processing_2",
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class TechnologyRule:
     tech_id: str
@@ -85,6 +128,81 @@ class TechnologyRules:
                 f"tier {tier} must have exactly one unlock technology"
             )
         return matches[0]
+
+
+def validate_technology_building_links(
+    technology_rules: TechnologyRules,
+    building_rules: Any,
+) -> None:
+    """Validate every Patch 006 building/upgrade/heat technology link both ways."""
+
+    technologies = technology_rules.technologies
+    known_tech_ids = set(technologies)
+    for building_type, building in building_rules.buildings.items():
+        for tech_id in building.required_tech_ids:
+            if tech_id not in known_tech_ids:
+                raise TechnologyConfigError(
+                    f"building {building_type} references unknown technology {tech_id}"
+                )
+            rule = technologies[tech_id]
+            if (
+                rule.effect_kind != "unlock_building"
+                or building_type not in rule.effect_targets
+            ):
+                raise TechnologyConfigError(
+                    f"building {building_type} and technology {tech_id} disagree"
+                )
+
+    for upgrade_id, upgrade in building_rules.upgrades.items():
+        tech_id = upgrade.required_tech_id
+        if tech_id not in known_tech_ids:
+            raise TechnologyConfigError(
+                f"upgrade {upgrade_id} references unknown technology {tech_id}"
+            )
+        rule = technologies[tech_id]
+        if rule.effect_kind != "unlock_upgrade" or upgrade_id not in rule.effect_targets:
+            raise TechnologyConfigError(
+                f"upgrade {upgrade_id} and technology {tech_id} disagree"
+            )
+
+    heat_tech_id = building_rules.heat.enhancement_tech_id
+    if heat_tech_id not in known_tech_ids:
+        raise TechnologyConfigError(
+            f"heat references unknown technology {heat_tech_id}"
+        )
+    heat_rule = technologies[heat_tech_id]
+    if heat_rule.effect_kind != "upgrade_command" or "game.heat" not in heat_rule.effect_targets:
+        raise TechnologyConfigError(
+            f"heat and technology {heat_tech_id} disagree"
+        )
+
+    for tech_id, rule in technologies.items():
+        if rule.effect_kind == "unlock_building":
+            for building_type in rule.effect_targets:
+                building = building_rules.buildings.get(building_type)
+                if building is None:
+                    raise TechnologyConfigError(
+                        f"technology {tech_id} references unknown building {building_type}"
+                    )
+                if tech_id not in building.required_tech_ids:
+                    raise TechnologyConfigError(
+                        f"technology {tech_id} and building {building_type} disagree"
+                    )
+        elif rule.effect_kind == "unlock_upgrade":
+            for upgrade_id in rule.effect_targets:
+                upgrade = building_rules.upgrades.get(upgrade_id)
+                if upgrade is None:
+                    raise TechnologyConfigError(
+                        f"technology {tech_id} references unknown upgrade {upgrade_id}"
+                    )
+                if upgrade.required_tech_id != tech_id:
+                    raise TechnologyConfigError(
+                        f"technology {tech_id} and upgrade {upgrade_id} disagree"
+                    )
+        elif "game.heat" in rule.effect_targets and tech_id != heat_tech_id:
+            raise TechnologyConfigError(
+                f"technology {tech_id} conflicts with the configured heat technology"
+            )
 
 
 def _object(value: Any, path: str) -> dict[str, Any]:
@@ -191,12 +309,13 @@ def load_technology_rules(path: Path) -> TechnologyRules:
         "$.overload",
     )
     raw_levels = _object(overload_data["levels"], "$.overload.levels")
+    if set(raw_levels) != {"0", "1", "2"}:
+        raise TechnologyConfigError(
+            "overload level keys must be exactly the canonical strings 0, 1, and 2"
+        )
     levels: dict[int, OverloadLevelRule] = {}
     for raw_level, raw_rule in raw_levels.items():
-        try:
-            level = int(raw_level)
-        except (TypeError, ValueError) as exc:
-            raise TechnologyConfigError("overload level keys must be integers") from exc
+        level = int(raw_level)
         item = _object(raw_rule, f"$.overload.levels.{raw_level}")
         _exact(
             item,
@@ -225,6 +344,35 @@ def load_technology_rules(path: Path) -> TechnologyRules:
         )
     if set(levels) != {0, 1, 2}:
         raise TechnologyConfigError("overload levels must be exactly 0, 1, and 2")
+    zero_level = levels[0]
+    if (
+        zero_level.temperature_bonus != 0
+        or zero_level.coal_cost != 0
+        or zero_level.pressure_growth != 0
+        or zero_level.stabilized_pressure_growth != 0
+        or zero_level.required_tech_id is not None
+    ):
+        raise TechnologyConfigError("overload level 0 must have only zero effects")
+    expected_unlocks = {
+        1: "tech_overload_tuning",
+        2: "tech_overload_stability",
+    }
+    for level, required_tech_id in expected_unlocks.items():
+        rule = levels[level]
+        if rule.required_tech_id != required_tech_id:
+            raise TechnologyConfigError(
+                f"overload level {level} must require {required_tech_id}"
+            )
+        if (
+            rule.temperature_bonus <= 0
+            or rule.coal_cost <= 0
+            or rule.pressure_growth <= 0
+            or rule.stabilized_pressure_growth <= 0
+            or rule.stabilized_pressure_growth > rule.pressure_growth
+        ):
+            raise TechnologyConfigError(
+                f"overload level {level} must have positive sealed effects"
+            )
     overload = OverloadRules(
         levels=levels,
         active_cooling=_integer(overload_data["active_cooling"], "$.overload.active_cooling"),
@@ -234,6 +382,8 @@ def load_technology_rules(path: Path) -> TechnologyRules:
     )
     if overload.high_pressure_threshold >= overload.redline_threshold:
         raise TechnologyConfigError("high-pressure threshold must be below redline")
+    if overload.redline_threshold != 100:
+        raise TechnologyConfigError("Patch 006 redline threshold must equal 100")
 
     raw_technologies = _object(data["technologies"], "$.technologies")
     technologies: dict[str, TechnologyRule] = {}
@@ -283,6 +433,17 @@ def load_technology_rules(path: Path) -> TechnologyRules:
             effect_targets=_strings(item["effect_targets"], f"$.technologies.{normalized_id}.effect_targets"),
             effect_status=effect_status,
         )
+
+    actual_tech_ids = set(technologies)
+    if actual_tech_ids != PATCH_006_TECH_IDS:
+        raise TechnologyConfigError(
+            "Patch 006 technology catalog mismatch: "
+            f"missing={sorted(PATCH_006_TECH_IDS - actual_tech_ids)}, "
+            f"unknown={sorted(actual_tech_ids - PATCH_006_TECH_IDS)}"
+        )
+    display_names = [rule.display_name for rule in technologies.values()]
+    if len(set(display_names)) != len(display_names):
+        raise TechnologyConfigError("technology display names must be unique")
 
     for rule in technologies.values():
         if rule.tier > 5:
