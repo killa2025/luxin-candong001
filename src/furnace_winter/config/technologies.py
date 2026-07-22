@@ -56,6 +56,46 @@ PATCH_006_TECH_IDS = frozenset(
     }
 )
 
+PATCH_006_TECH_STRUCTURE = {
+    "tech_drawing_board": (0, (), "unlock_tier", ("T1",), "ACTIVE"),
+    "tech_drafting_instrument": (1, (), "unlock_tier", ("T2",), "ACTIVE"),
+    "tech_mechanical_calculator": (2, (), "unlock_tier", ("T3",), "ACTIVE"),
+    "tech_difference_engine": (3, (), "unlock_tier", ("T4",), "ACTIVE"),
+    "tech_automatic_forming_machine": (4, (), "unlock_tier", ("T5",), "ACTIVE"),
+    "tech_furnace_coal_saving_1": (0, (), "passive", ("furnace_coal_cost",), "ACTIVE"),
+    "tech_building_insulation_1": (0, (), "passive", ("building_temperature",), "ACTIVE"),
+    "tech_furnace_power_stability_1": (1, (), "deferred", ("furnace_stability",), "DEFERRED"),
+    "tech_emergency_heating_device": (1, (), "upgrade_command", ("game.heat",), "ACTIVE"),
+    "tech_furnace_coal_saving_2": (2, ("tech_furnace_coal_saving_1",), "passive", ("furnace_coal_cost",), "ACTIVE"),
+    "tech_building_insulation_2": (2, ("tech_building_insulation_1",), "passive", ("building_temperature",), "ACTIVE"),
+    "tech_field_cold_weather_equipment": (2, ("tech_building_insulation_1",), "passive", ("outdoor_exposure_risk",), "ACTIVE"),
+    "tech_overload_tuning": (3, ("tech_furnace_power_stability_1",), "unlock_command", ("game.set_overload:1",), "ACTIVE"),
+    "tech_overload_stability": (4, ("tech_overload_tuning",), "upgrade_command", ("game.set_overload:2", "overload_pressure"), "ACTIVE"),
+    "tech_final_furnace_stability": (5, ("tech_furnace_coal_saving_2", "tech_building_insulation_2", "tech_overload_stability"), "passive", ("final_frost_furnace",), "ACTIVE"),
+    "tech_scattered_gathering_tools": (0, (), "deferred", ("surface_gathering",), "DEFERRED"),
+    "tech_wood_processing_1": (0, (), "unlock_building", ("logging_camp",), "ACTIVE"),
+    "tech_sheltered_gathering_shed_improvement": (1, ("tech_scattered_gathering_tools",), "deferred", ("gathering_shelter_risk",), "DEFERRED"),
+    "tech_coal_seam_support": (1, (), "unlock_building", ("small_coal_miner",), "ACTIVE"),
+    "tech_steel_screening": (1, (), "unlock_building", ("small_steel_miner",), "ACTIVE"),
+    "tech_wood_processing_2": (2, ("tech_wood_processing_1",), "passive", ("logging_camp_output",), "ACTIVE"),
+    "tech_small_coal_mining_improvement": (2, ("tech_coal_seam_support",), "passive", ("small_coal_miner_output",), "ACTIVE"),
+    "tech_small_steel_mining_improvement": (2, ("tech_steel_screening",), "passive", ("small_steel_miner_output",), "ACTIVE"),
+    "tech_storage_expansion": (2, (), "passive", ("small_warehouse_capacity",), "ACTIVE"),
+    "tech_deep_well_mine_frame": (3, (), "deferred", ("large_miner_prerequisite",), "DEFERRED"),
+    "tech_deep_coal_seam_extraction": (4, ("tech_deep_well_mine_frame", "tech_small_coal_mining_improvement"), "deferred", ("large_coal_miner",), "DEFERRED"),
+    "tech_deep_steel_seam_extraction": (4, ("tech_deep_well_mine_frame", "tech_small_steel_mining_improvement"), "deferred", ("large_steel_miner",), "DEFERRED"),
+    "tech_hunting_equipment": (0, (), "deferred", ("hunting_output",), "DEFERRED"),
+    "tech_housing_insulation_1": (0, (), "passive", ("residence_temperature",), "ACTIVE"),
+    "tech_canteen_process_improvement": (1, (), "passive", ("canteen_processing",), "ACTIVE"),
+    "tech_medical_tools_improvement": (1, (), "passive", ("medical_station_capacity",), "ACTIVE"),
+    "tech_greenhouse_cultivation": (2, (), "unlock_building", ("greenhouse",), "ACTIVE"),
+    "tech_medical_building_insulation": (2, ("tech_medical_tools_improvement",), "passive", ("medical_building_temperature",), "ACTIVE"),
+    "tech_improved_housing_standard": (2, ("tech_housing_insulation_1",), "unlock_upgrade", ("basic_to_improved_residence",), "ACTIVE"),
+    "tech_hospital_standardization": (3, ("tech_medical_tools_improvement",), "unlock_building", ("hospital",), "ACTIVE"),
+    "tech_greenhouse_improvement": (4, ("tech_greenhouse_cultivation",), "unlock_upgrade", ("greenhouse_to_improved",), "ACTIVE"),
+    "tech_advanced_housing_standard": (4, ("tech_improved_housing_standard",), "unlock_upgrade", ("improved_to_advanced_residence",), "ACTIVE"),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class TechnologyRule:
@@ -441,6 +481,20 @@ def load_technology_rules(path: Path) -> TechnologyRules:
             f"missing={sorted(PATCH_006_TECH_IDS - actual_tech_ids)}, "
             f"unknown={sorted(actual_tech_ids - PATCH_006_TECH_IDS)}"
         )
+    if set(PATCH_006_TECH_STRUCTURE) != PATCH_006_TECH_IDS:
+        raise TechnologyConfigError("internal Patch 006 technology contract mismatch")
+    for tech_id, rule in technologies.items():
+        actual_structure = (
+            rule.tier,
+            rule.prerequisite_tech_ids,
+            rule.effect_kind,
+            rule.effect_targets,
+            rule.effect_status,
+        )
+        if actual_structure != PATCH_006_TECH_STRUCTURE[tech_id]:
+            raise TechnologyConfigError(
+                f"{tech_id} does not match the Patch 006 structural contract"
+            )
     display_names = [rule.display_name for rule in technologies.values()]
     if len(set(display_names)) != len(display_names):
         raise TechnologyConfigError("technology display names must be unique")

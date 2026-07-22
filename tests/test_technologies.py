@@ -35,6 +35,7 @@ from furnace_winter.models import (
     SaveDataError,
     decode_game_state,
     encode_game_state,
+    validate_game_state,
 )
 
 
@@ -367,6 +368,12 @@ class TechnologyPatchTests(unittest.TestCase):
                 self.assertTrue(state.daily_survival.heating_shortfall)
                 self.assertEqual(state.resources.coal, 0)
                 self.assertIsNotNone(engine.last_autosave())
+                validate_game_state(
+                    state,
+                    self.building_rules,
+                    self.survival_rules,
+                    self.technology_rules,
+                )
 
     def test_level_three_base_heating_is_not_sacrificed_for_overload(self) -> None:
         state = self.make_state()
@@ -610,6 +617,18 @@ class TechnologyPatchTests(unittest.TestCase):
                 {"coal_cost": 1}
             ),
             lambda data: data["overload"].update({"redline_threshold": 101}),
+            lambda data: data["technologies"]["tech_furnace_coal_saving_1"].update(
+                {"effect_targets": ["wrong_target"]}
+            ),
+            lambda data: data["technologies"]["tech_furnace_coal_saving_1"].update(
+                {"effect_kind": "unlock_command"}
+            ),
+            lambda data: data["technologies"]["tech_hunting_equipment"].update(
+                {"effect_kind": "passive", "effect_status": "ACTIVE"}
+            ),
+            lambda data: data["technologies"]["tech_furnace_coal_saving_1"].update(
+                {"tier": 1}
+            ),
         )
         for index, mutate in enumerate(mutations):
             with self.subTest(index=index), TemporaryDirectory() as directory:
@@ -621,6 +640,65 @@ class TechnologyPatchTests(unittest.TestCase):
                 )
                 with self.assertRaises(TechnologyConfigError):
                     load_technology_rules(path)
+
+    def test_overload_daily_summary_is_strict_with_and_without_config(self) -> None:
+        initial = encode_game_state(self.make_state())
+        for field in ("overload_coal_paid", "overload_temperature_bonus"):
+            with self.subTest(inactive_field=field):
+                forged = deepcopy(initial)
+                forged["daily_survival"][field] = 999
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(forged)
+
+        unsettled = deepcopy(initial)
+        unsettled["daily_survival"]["target_overload_level"] = 1
+        unsettled["daily_survival"]["heating_shortfall"] = True
+        with self.assertRaises(SaveDataError):
+            decode_game_state(unsettled)
+
+        for level, expected_coal, expected_bonus in ((1, 25, 8), (2, 55, 14)):
+            with self.subTest(valid_level=level):
+                state = self.make_state()
+                self.unlock_overload(state, level)
+                state.resources.coal = 300
+                result = self.settle(self.engine(), state)
+                self.assertEqual(result.result.code, ErrorCode.OK)
+                self.assertEqual(
+                    state.daily_survival.overload_coal_paid, expected_coal
+                )
+                self.assertEqual(
+                    state.daily_survival.overload_temperature_bonus,
+                    expected_bonus,
+                )
+                validate_game_state(
+                    state,
+                    self.building_rules,
+                    self.survival_rules,
+                    self.technology_rules,
+                )
+
+                encoded = encode_game_state(state)
+                for field in (
+                    "overload_coal_paid",
+                    "overload_temperature_bonus",
+                ):
+                    with self.subTest(level=level, forged_field=field):
+                        forged = deepcopy(encoded)
+                        forged["daily_survival"][field] += 1
+                        decoded = decode_game_state(forged)
+                        with self.assertRaises(SaveDataError):
+                            validate_game_state(
+                                decoded,
+                                self.building_rules,
+                                self.survival_rules,
+                                self.technology_rules,
+                            )
+
+                no_base = deepcopy(encoded)
+                no_base["daily_survival"]["effective_furnace_level"] = 0
+                no_base["daily_survival"]["heating_shortfall"] = True
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(no_base)
 
     def test_responsible_owner_technology_conflict_decisions_are_applied(self) -> None:
         greenhouse = self.technology_rules.technologies[

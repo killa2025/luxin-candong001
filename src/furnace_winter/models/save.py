@@ -1493,9 +1493,28 @@ def _validate_state_invariants(state: GameState) -> None:
         )
     if daily.effective_overload_level > daily.target_overload_level:
         raise SaveDataError("effective overload level cannot exceed its target")
+    if daily.effective_overload_level == 0 and (
+        daily.overload_coal_paid != 0
+        or daily.overload_temperature_bonus != 0
+    ):
+        raise SaveDataError("inactive daily overload must have zero payment and bonus")
+    if (
+        daily.effective_overload_level > 0
+        and daily.effective_furnace_level == 0
+    ):
+        raise SaveDataError("effective daily overload requires effective base heating")
     if daily.settled_day is None:
-        if daily.base_temperature is not None or daily.zone_temperatures:
-            raise SaveDataError("unsettled survival summary cannot contain temperatures")
+        if (
+            daily.base_temperature is not None
+            or daily.zone_temperatures
+            or daily.target_overload_level != 0
+            or daily.effective_overload_level != 0
+            or daily.overload_coal_paid != 0
+            or daily.overload_temperature_bonus != 0
+        ):
+            raise SaveDataError(
+                "unsettled survival summary cannot contain settlement effects"
+            )
     else:
         if daily.base_temperature is None:
             raise SaveDataError("settled survival summary requires base_temperature")
@@ -1801,3 +1820,23 @@ def _validate_technology_rule_invariants(
         state.furnace.pressure >= technology_rules.overload.redline_threshold
     ):
         raise SaveDataError("redline warning must match configured pressure threshold")
+    daily = state.daily_survival
+    daily_overload_rule = technology_rules.overload.levels.get(
+        daily.effective_overload_level
+    )
+    if daily_overload_rule is None:
+        raise SaveDataError("daily survival contains an unknown overload level")
+    if (
+        daily_overload_rule.required_tech_id is not None
+        and daily_overload_rule.required_tech_id not in completed
+    ):
+        raise SaveDataError("daily overload level is not unlocked")
+    if daily.overload_coal_paid != daily_overload_rule.coal_cost:
+        raise SaveDataError("daily overload payment does not match technology rules")
+    if (
+        daily.overload_temperature_bonus
+        != daily_overload_rule.temperature_bonus
+    ):
+        raise SaveDataError(
+            "daily overload temperature bonus does not match technology rules"
+        )
