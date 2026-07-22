@@ -42,6 +42,17 @@ from furnace_winter.config.validator import (
     validate_config_file,
     validate_config_tree,
 )
+from furnace_winter.config.events import (
+    ArrivalEffectRule,
+    EventConfigError,
+    EventRule,
+    EventRules,
+    FixedArrivalRule,
+    PromiseEffectRule,
+    PromiseRules,
+    QueueRules,
+    load_event_rules,
+)
 from furnace_winter.config.technologies import (
     OverloadLevelRule,
     OverloadRules,
@@ -53,12 +64,17 @@ from furnace_winter.config.technologies import (
 )
 
 __all__ = [
+    "ArrivalEffectRule",
     "BuildingConfigError",
     "BuildingRule",
     "BuildingRules",
     "ConfigLoadError",
     "ConfigStatus",
+    "EventConfigError",
+    "EventRule",
+    "EventRules",
     "FurnaceLevelRule",
+    "FixedArrivalRule",
     "HeatRule",
     "LoadedConfig",
     "LawConfigError",
@@ -66,6 +82,9 @@ __all__ = [
     "LawRules",
     "OverloadLevelRule",
     "OverloadRules",
+    "PromiseEffectRule",
+    "PromiseRules",
+    "QueueRules",
     "ResearchRules",
     "MedicalActionRules",
     "RationRule",
@@ -85,6 +104,7 @@ __all__ = [
     "WorktimeRules",
     "load_config_file",
     "load_config_tree",
+    "load_event_rules",
     "load_building_rules",
     "load_law_rules",
     "load_technology_rules",

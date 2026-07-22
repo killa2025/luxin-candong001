@@ -196,6 +196,13 @@ class LawSystem:
         mode = str(request.arguments["mode"])
         if state.social_policy.current_worktime_mode == mode:
             return self._illegal("worktime_mode_already_active")
+        if mode == "long_shift" and self._is_long_shift_suspended(state):
+            return self._illegal(
+                "long_shift_temporarily_suspended",
+                suspended_until_day=state.events.metrics[
+                    "long_shift_suspended_until_day"
+                ],
+            )
         if mode == "long_shift" and "long_shift_law" not in state.laws.signed_law_ids:
             return self._illegal("law_prerequisite_missing", missing_law_ids=["long_shift_law"])
         return CommandValidation.valid()
@@ -418,6 +425,12 @@ class LawSystem:
         engine.register_stage_handler(EndDayStage.RESOLVE_TRUST_AND_PANIC, self.resolve_trust_and_panic)
         engine.register_stage_handler(EndDayStage.CLOSE_ACTION_EFFECTS, self.close_action_effects)
         engine.register_stage_handler(EndDayStage.CLOSE_DAILY_EFFECTS, self.close_daily_effects)
+        engine.register_new_day_handler(self.prepare_new_day)
+
+    def prepare_new_day(self, state: GameState) -> None:
+        """Apply Patch 007's one-day long-shift suspension boundary."""
+
+        self._sync_worktime_ratio(state)
 
     def validate_state(self, state: GameState) -> None:
         validate_game_state(
@@ -465,6 +478,7 @@ class LawSystem:
                 self.rules.worktime.long_shift_output_denominator,
             )
             if state.social_policy.current_worktime_mode == "long_shift"
+            and not self._is_long_shift_suspended(state)
             else (100, 100)
         )
         if (
@@ -502,7 +516,10 @@ class LawSystem:
             state.population.sick_population + state.population.critical_population - effective_capacity,
             0,
         )
-        if state.social_policy.current_worktime_mode == "long_shift":
+        if (
+            state.social_policy.current_worktime_mode == "long_shift"
+            and not self._is_long_shift_suspended(state)
+        ):
             warnings.append(RiskWarning("laws.long_shift_active", RiskWarningLevel.A_INFO, {"consecutive_days": state.social_policy.consecutive_long_shift_days}))
         if state.social_policy.overtime_building_id:
             warnings.append(RiskWarning("laws.overtime_active", RiskWarningLevel.B_STRONG, {"building_id": state.social_policy.overtime_building_id}))
@@ -518,6 +535,7 @@ class LawSystem:
 
     def prepare_daily_modes(self, context: EndDayContext) -> None:
         state = context.state
+        self._sync_worktime_ratio(state)
         ration_mode = self._effective_ration_mode(state)
         if state.social_policy.current_ration_mode == "emergency":
             ration_day = 1 if ration_mode == "emergency" else 0
@@ -534,7 +552,11 @@ class LawSystem:
             state.social_policy.consecutive_ration_mode = ration_mode
         context.emit(
             "laws.daily_modes.prepared",
-            {"ration_mode": ration_mode, "ration_day": ration_day},
+            {
+                "ration_mode": ration_mode,
+                "ration_day": ration_day,
+                "long_shift_suspended": self._is_long_shift_suspended(state),
+            },
         )
 
     def resolve_medical_disease_and_death(self, context: EndDayContext) -> None:
@@ -568,6 +590,26 @@ class LawSystem:
         state.population.sick_population += worktime_sick
         state.daily_survival.worktime_sick_added = worktime_sick
         state.daily_survival.overtime_accident_risk_points = accident_risk_points
+        overtime_requested = (
+            worktime_details["overtime_sick_added"]
+            + worktime_details["overtime_cold_extra_sick"]
+        )
+        long_shift_requested = (
+            worktime_details["long_shift_sick_added"]
+            + worktime_details["long_shift_cold_extra_sick"]
+        )
+        # The medical conversion above caps the combined request by the
+        # remaining healthy population. Attribute that cap in the same stable
+        # order as _worktime_health_effects: overtime first, then long shift.
+        long_shift_sick_actual = min(
+            max(worktime_sick - overtime_requested, 0),
+            long_shift_requested,
+        )
+        if long_shift_sick_actual:
+            state.events.metrics["long_shift_risk_points"] = (
+                state.events.metrics.get("long_shift_risk_points", 0)
+                + long_shift_sick_actual
+            )
         accounted = state.social_policy.unhandled_bodies + state.social_policy.buried_bodies + state.social_policy.stored_bodies
         new_bodies = max(state.population.population_dead - accounted, 0)
         state.social_policy.unhandled_bodies += new_bodies
@@ -587,6 +629,7 @@ class LawSystem:
             "ration_mode_used": ration_mode,
             "ration_sick_added": ration_sick,
             "worktime_sick_added": worktime_sick,
+            "long_shift_sick_added_actual": long_shift_sick_actual,
             "overtime_accident_risk_points": accident_risk_points,
             "accident_resolution": "risk_points_only_result_not_sealed",
             "worktime_details": worktime_details,
@@ -611,7 +654,10 @@ class LawSystem:
             panic_change += 1
         if ration_mode == "coarse_soup" and ration_day >= 6:
             panic_change += 1
-        if state.social_policy.current_worktime_mode == "long_shift":
+        if (
+            state.social_policy.current_worktime_mode == "long_shift"
+            and not self._is_long_shift_suspended(state)
+        ):
             long_day = state.social_policy.consecutive_long_shift_days + 1
             trust_change += self.rules.worktime.long_shift_daily_trust_change
             panic_change += self.rules.worktime.long_shift_daily_panic_change
@@ -809,6 +855,28 @@ class LawSystem:
             return "normal"
         return state.social_policy.current_ration_mode
 
+    @staticmethod
+    def _is_long_shift_suspended(state: GameState) -> bool:
+        return (
+            state.events.metrics.get("long_shift_suspended_until_day")
+            == state.calendar.current_day
+        )
+
+    def _sync_worktime_ratio(self, state: GameState) -> None:
+        if (
+            state.social_policy.current_worktime_mode == "long_shift"
+            and not self._is_long_shift_suspended(state)
+        ):
+            state.social_policy.worktime_output_numerator = (
+                self.rules.worktime.long_shift_output_numerator
+            )
+            state.social_policy.worktime_output_denominator = (
+                self.rules.worktime.long_shift_output_denominator
+            )
+        else:
+            state.social_policy.worktime_output_numerator = 100
+            state.social_policy.worktime_output_denominator = 100
+
     def _worktime_health_effects(
         self, state: GameState
     ) -> tuple[int, int, dict[str, Any]]:
@@ -840,7 +908,10 @@ class LawSystem:
         long_shift_cold_sick = 0
         long_shift_staff = 0
         long_shift_cold_staff = 0
-        if state.social_policy.current_worktime_mode == "long_shift":
+        if (
+            state.social_policy.current_worktime_mode == "long_shift"
+            and not self._is_long_shift_suspended(state)
+        ):
             affected = [
                 building
                 for building in state.buildings.values()
