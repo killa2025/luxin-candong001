@@ -4,11 +4,19 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from furnace_winter.config import load_building_rules, load_survival_rules, validate_config_tree
+from furnace_winter.config import (
+    load_building_rules,
+    load_law_rules,
+    load_survival_rules,
+    load_technology_rules,
+    validate_config_tree,
+)
 from furnace_winter.gameplay import (
     BuildingSystem,
     EndDayEngine,
+    LawSystem,
     SurvivalSystem,
+    TechnologySystem,
     create_initial_survival_state,
 )
 from furnace_winter.interface import Observation
@@ -36,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     state_parser = subparsers.add_parser(
         "state",
-        help="输出 Patch 004 建筑与采集闭环的机器可读开局状态",
+        help="输出 Patch 006 炉律、科技研究与过载闭环的机器可读开局状态",
     )
     state_parser.add_argument(
         "--seed",
@@ -55,6 +63,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("data/survival.json"),
         help="Patch 003 生存规则配置，默认 data/survival.json",
+    )
+    state_parser.add_argument(
+        "--laws-config",
+        type=Path,
+        default=Path("data/laws.json"),
+        help="Patch 005 炉律规则配置，默认 data/laws.json",
+    )
+    state_parser.add_argument(
+        "--technologies-config",
+        type=Path,
+        default=Path("data/technologies.json"),
+        help="Patch 006 科技规则配置，默认 data/technologies.json",
     )
     return parser
 
@@ -77,15 +97,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "state":
         rules = load_survival_rules(args.config)
         building_rules = load_building_rules(args.buildings_config)
+        law_rules = load_law_rules(args.laws_config)
+        technology_rules = load_technology_rules(args.technologies_config)
         state = create_initial_survival_state(
             rules, building_rules, random_seed=args.seed
         )
-        survival = SurvivalSystem(rules, building_rules)
-        buildings = BuildingSystem(building_rules, rules)
+        survival = SurvivalSystem(rules, building_rules, technology_rules)
+        buildings = BuildingSystem(building_rules, rules, technology_rules)
+        laws = LawSystem(law_rules, building_rules, rules, technology_rules)
+        technologies = TechnologySystem(
+            technology_rules,
+            building_rules,
+            rules,
+            law_rules,
+        )
         command_specs = (
             EndDayEngine().command_specs()
             + survival.command_specs()
             + buildings.command_specs()
+            + laws.command_specs()
+            + technologies.command_specs()
         )
         print(dumps(Observation.from_state(state, command_specs)))
         return 0

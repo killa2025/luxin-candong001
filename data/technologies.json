@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "config_status": "TEST_NUMERIC",
+  "research": {
+    "max_queues": 1,
+    "progress_units_per_day": 4,
+    "second_center_speed_numerator": 150,
+    "second_center_speed_denominator": 100
+  },
+  "overload": {
+    "levels": {
+      "0": {"temperature_bonus": 0, "coal_cost": 0, "pressure_growth": 0, "stabilized_pressure_growth": 0, "required_tech_id": null},
+      "1": {"temperature_bonus": 8, "coal_cost": 25, "pressure_growth": 18, "stabilized_pressure_growth": 12, "required_tech_id": "tech_overload_tuning"},
+      "2": {"temperature_bonus": 14, "coal_cost": 55, "pressure_growth": 35, "stabilized_pressure_growth": 25, "required_tech_id": "tech_overload_stability"}
+    },
+    "active_cooling": 20,
+    "furnace_off_cooling": 25,
+    "high_pressure_threshold": 80,
+    "redline_threshold": 100
+  },
+  "technologies": {
+    "tech_drawing_board": {"display_name": "绘图板", "tier": 0, "wood_cost": 10, "steel_cost": 0, "research_days": 1, "prerequisite_tech_ids": [], "effect_kind": "unlock_tier", "effect_targets": ["T1"], "effect_status": "ACTIVE"},
+    "tech_drafting_instrument": {"display_name": "制图仪", "tier": 1, "wood_cost": 15, "steel_cost": 5, "research_days": 2, "prerequisite_tech_ids": [], "effect_kind": "unlock_tier", "effect_targets": ["T2"], "effect_status": "ACTIVE"},
+    "tech_mechanical_calculator": {"display_name": "机械计算器", "tier": 2, "wood_cost": 25, "steel_cost": 10, "research_days": 2, "prerequisite_tech_ids": [], "effect_kind": "unlock_tier", "effect_targets": ["T3"], "effect_status": "ACTIVE"},
+    "tech_difference_engine": {"display_name": "差分机", "tier": 3, "wood_cost": 35, "steel_cost": 15, "research_days": 3, "prerequisite_tech_ids": [], "effect_kind": "unlock_tier", "effect_targets": ["T4"], "effect_status": "ACTIVE"},
+    "tech_automatic_forming_machine": {"display_name": "自动成型机", "tier": 4, "wood_cost": 45, "steel_cost": 25, "research_days": 4, "prerequisite_tech_ids": [], "effect_kind": "unlock_tier", "effect_targets": ["T5"], "effect_status": "ACTIVE"},
+
+    "tech_furnace_coal_saving_1": {"display_name": "炉心节煤 I", "tier": 0, "wood_cost": 20, "steel_cost": 5, "research_days": 2, "prerequisite_tech_ids": [], "effect_kind": "passive", "effect_targets": ["furnace_coal_cost"], "effect_status": "ACTIVE"},
+    "tech_building_insulation_1": {"display_name": "建筑保温 I", "tier": 0, "wood_cost": 25, "steel_cost": 5, "research_days": 2, "prerequisite_tech_ids": [], "effect_kind": "passive", "effect_targets": ["building_temperature"], "effect_status": "ACTIVE"},
+    "tech_furnace_power_stability_1": {"display_name": "炉心功率稳定 I", "tier": 1, "wood_cost": 30, "steel_cost": 10, "research_days": 3, "prerequisite_tech_ids": [], "effect_kind": "deferred", "effect_targets": ["furnace_stability"], "effect_status": "DEFERRED"},
+    "tech_emergency_heating_device": {"display_name": "应急加热装置", "tier": 1, "wood_cost": 20, "steel_cost": 8, "research_days": 2, "prerequisite_tech_ids": [], "effect_kind": "upgrade_command", "effect_targets": ["game.heat"], "effect_status": "ACTIVE"},
+    "tech_furnace_coal_saving_2": {"display_name": "炉心节煤 II", "tier": 2, "wood_cost": 40, "steel_cost": 15, "research_days": 3, "prerequisite_tech_ids": ["tech_furnace_coal_saving_1"], "effect_kind": "passive", "effect_targets": ["furnace_coal_cost"], "effect_status": "ACTIVE"},
+    "tech_building_insulation_2": {"display_name": "建筑保温 II", "tier": 2, "wood_cost": 45, "steel_cost": 15, "research_days": 3, "prerequisite_tech_ids": ["tech_building_insulation_1"], "effect_kind": "passive", "effect_targets": ["building_temperature"], "effect_status": "ACTIVE"},
+    "tech_field_cold_weather_equipment": {"display_name": "外勤防寒装备", "tier": 2, "wood_cost": 25, "steel_cost": 10, "research_days": 2, "prerequisite_tech_ids": ["tech_building_insulation_1"], "effect_kind": "passive", "effect_targets": ["outdoor_exposure_risk"], "effect_status": "ACTIVE"},
+    "tech_overload_tuning": {"display_name": "过载调校", "tier": 3, "wood_cost": 35, "steel_cost": 20, "research_days": 3, "prerequisite_tech_ids": ["tech_furnace_power_stability_1"], "effect_kind": "unlock_command", "effect_targets": ["game.set_overload:1"], "effect_status": "ACTIVE"},
+    "tech_overload_stability": {"display_name": "过载稳定", "tier": 4, "wood_cost": 50, "steel_cost": 25, "research_days": 4, "prerequisite_tech_ids": ["tech_overload_tuning"], "effect_kind": "upgrade_command", "effect_targets": ["game.set_overload:2", "overload_pressure"], "effect_status": "ACTIVE"},
+    "tech_final_furnace_stability": {"display_name": "终局炉心稳定", "tier": 5, "wood_cost": 65, "steel_cost": 35, "research_days": 5, "prerequisite_tech_ids": ["tech_furnace_coal_saving_2", "tech_building_insulation_2", "tech_overload_stability"], "effect_kind": "passive", "effect_targets": ["final_frost_furnace"], "effect_status": "ACTIVE"},
+
+    "tech_scattered_gathering_tools": {"display_name": "散落采集工具", "tier": 0, "wood_cost": 10, "steel_cost": 0, "research_days": 1, "prerequisite_tech_ids": [], "effect_kind": "deferred", "effect_targets": ["surface_gathering"], "effect_status": "DEFERRED"},
+    "tech_wood_processing_1": {"display_name": "木材加工 I", "tier": 0, "wood_cost": 15, "steel_cost": 5, "research_days": 2, "prerequisite_tech_ids": [], "effect_kind": "unlock_building", "effect_targets": ["logging_camp"], "effect_status": "ACTIVE"},
+    "tech_sheltered_gathering_shed_improvement": {"display_name": "避寒采集棚改良", "tier": 1, "wood_cost": 15, "steel_cost": 5, "research_days": 1, "prerequisite_tech_ids": ["tech_scattered_gathering_tools"], "effect_kind": "deferred", "effect_targets": ["gathering_shelter_risk"], "effect_status": "DEFERRED"},
+    "tech_coal_seam_support": {"display_name": "煤层支架", "tier": 1, "wood_cost": 20, "steel_cost": 5, "research_days": 2, "prerequisite_tech_ids": [], "effect_kind": "unlock_building", "effect_targets": ["small_coal_miner"], "effect_status": "ACTIVE"},
+    "tech_steel_screening": {"display_name": "钢材筛选", "tier": 1, "wood_cost": 20, "steel_cost": 5, "research_days": 2, "prerequisite_tech_ids": [], "effect_kind": "unlock_building", "effect_targets": ["small_steel_miner"], "effect_status": "ACTIVE"},
+    "tech_wood_processing_2": {"display_name": "木材加工 II", "tier": 2, "wood_cost": 35, "steel_cost": 10, "research_days": 3, "prerequisite_tech_ids": ["tech_wood_processing_1"], "effect_kind": "passive", "effect_targets": ["logging_camp_output"], "effect_status": "ACTIVE"},
+    "tech_small_coal_mining_improvement": {"display_name": "小型采煤改良", "tier": 2, "wood_cost": 35, "steel_cost": 15, "research_days": 3, "prerequisite_tech_ids": ["tech_coal_seam_support"], "effect_kind": "passive", "effect_targets": ["small_coal_miner_output"], "effect_status": "ACTIVE"},
+    "tech_small_steel_mining_improvement": {"display_name": "小型采钢改良", "tier": 2, "wood_cost": 35, "steel_cost": 15, "research_days": 3, "prerequisite_tech_ids": ["tech_steel_screening"], "effect_kind": "passive", "effect_targets": ["small_steel_miner_output"], "effect_status": "ACTIVE"},
+    "tech_storage_expansion": {"display_name": "仓储扩容", "tier": 2, "wood_cost": 25, "steel_cost": 10, "research_days": 2, "prerequisite_tech_ids": [], "effect_kind": "passive", "effect_targets": ["small_warehouse_capacity"], "effect_status": "ACTIVE"},
+    "tech_deep_well_mine_frame": {"display_name": "深井矿架", "tier": 3, "wood_cost": 45, "steel_cost": 20, "research_days": 3, "prerequisite_tech_ids": [], "effect_kind": "deferred", "effect_targets": ["large_miner_prerequisite"], "effect_status": "DEFERRED"},
+    "tech_deep_coal_seam_extraction": {"display_name": "深层煤脉开采", "tier": 4, "wood_cost": 60, "steel_cost": 25, "research_days": 4, "prerequisite_tech_ids": ["tech_deep_well_mine_frame", "tech_small_coal_mining_improvement"], "effect_kind": "deferred", "effect_targets": ["large_coal_miner"], "effect_status": "DEFERRED"},
+    "tech_deep_steel_seam_extraction": {"display_name": "深层钢脉开采", "tier": 4, "wood_cost": 60, "steel_cost": 30, "research_days": 4, "prerequisite_tech_ids": ["tech_deep_well_mine_frame", "tech_small_steel_mining_improvement"], "effect_kind": "deferred", "effect_targets": ["large_steel_miner"], "effect_status": "DEFERRED"},
+
+    "tech_hunting_equipment": {"display_name": "狩猎装备", "tier": 0, "wood_cost": 10, "steel_cost": 3, "research_days": 1, "prerequisite_tech_ids": [], "effect_kind": "deferred", "effect_targets": ["hunting_output"], "effect_status": "DEFERRED"},
+    "tech_housing_insulation_1": {"display_name": "住房保温 I", "tier": 0, "wood_cost": 15, "steel_cost": 3, "research_days": 1, "prerequisite_tech_ids": [], "effect_kind": "passive", "effect_targets": ["residence_temperature"], "effect_status": "ACTIVE"},
+    "tech_canteen_process_improvement": {"display_name": "食堂流程改良", "tier": 1, "wood_cost": 15, "steel_cost": 5, "research_days": 2, "prerequisite_tech_ids": [], "effect_kind": "passive", "effect_targets": ["canteen_processing"], "effect_status": "ACTIVE"},
+    "tech_medical_tools_improvement": {"display_name": "医疗工具改良", "tier": 1, "wood_cost": 20, "steel_cost": 5, "research_days": 2, "prerequisite_tech_ids": [], "effect_kind": "passive", "effect_targets": ["medical_station_capacity"], "effect_status": "ACTIVE"},
+    "tech_greenhouse_cultivation": {"display_name": "温室栽培", "tier": 2, "wood_cost": 30, "steel_cost": 10, "research_days": 3, "prerequisite_tech_ids": [], "effect_kind": "unlock_building", "effect_targets": ["greenhouse"], "effect_status": "ACTIVE"},
+    "tech_medical_building_insulation": {"display_name": "医疗建筑保温", "tier": 2, "wood_cost": 30, "steel_cost": 10, "research_days": 2, "prerequisite_tech_ids": ["tech_medical_tools_improvement"], "effect_kind": "passive", "effect_targets": ["medical_building_temperature"], "effect_status": "ACTIVE"},
+    "tech_improved_housing_standard": {"display_name": "改良住宅标准", "tier": 2, "wood_cost": 35, "steel_cost": 10, "research_days": 3, "prerequisite_tech_ids": ["tech_housing_insulation_1"], "effect_kind": "unlock_upgrade", "effect_targets": ["basic_to_improved_residence"], "effect_status": "ACTIVE"},
+    "tech_hospital_standardization": {"display_name": "医院标准化", "tier": 3, "wood_cost": 45, "steel_cost": 18, "research_days": 3, "prerequisite_tech_ids": ["tech_medical_tools_improvement"], "effect_kind": "unlock_building", "effect_targets": ["hospital"], "effect_status": "ACTIVE"},
+    "tech_greenhouse_improvement": {"display_name": "温室改良", "tier": 4, "wood_cost": 55, "steel_cost": 22, "research_days": 4, "prerequisite_tech_ids": ["tech_greenhouse_cultivation"], "effect_kind": "unlock_upgrade", "effect_targets": ["greenhouse_to_improved"], "effect_status": "ACTIVE"},
+    "tech_advanced_housing_standard": {"display_name": "高级住宅标准", "tier": 4, "wood_cost": 45, "steel_cost": 15, "research_days": 3, "prerequisite_tech_ids": ["tech_improved_housing_standard"], "effect_kind": "unlock_upgrade", "effect_targets": ["improved_to_advanced_residence"], "effect_status": "ACTIVE"}
+  }
+}

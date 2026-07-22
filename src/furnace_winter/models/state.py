@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 6
+CURRENT_SAVE_DATA_VERSION = 7
 FINAL_DAY = 55
 OVERTIME_BUILDING_TYPES = frozenset({
     "medical_station",
@@ -100,6 +100,10 @@ class DailySurvivalState:
     coal_paid: int = 0
     woodfuel_wood_burned: int = 0
     woodfuel_contribution: int = 0
+    target_overload_level: int = 0
+    effective_overload_level: int = 0
+    overload_coal_paid: int = 0
+    overload_temperature_bonus: int = 0
     heating_shortfall: bool = False
     zone_temperatures: dict[str, int] = field(default_factory=dict)
     ration_mode_used: str = "normal"
@@ -136,6 +140,8 @@ class FurnaceState:
     is_active: bool = False
     mode_id: str = "off"
     pressure: int = 0
+    overload_level: int = 0
+    pressure_redline_warned: bool = False
 
 
 @dataclass(slots=True)
@@ -253,7 +259,8 @@ class MedicalState:
 class TechState:
     researched_tech_ids: list[str] = field(default_factory=list)
     active_research_id: str | None = None
-    research_progress_days: int = 0
+    research_progress_units: int = 0
+    research_required_units: int = 0
 
 
 @dataclass(slots=True)

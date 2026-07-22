@@ -36,6 +36,7 @@ from furnace_winter.models import (
     encode_game_state,
     validate_game_state,
 )
+from tests import downgrade_to_pre_patch006_schema
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -386,6 +387,7 @@ class BuildingPatchTests(unittest.TestCase):
     def test_v2_save_migration_adds_patch_004_fields(self) -> None:
         state = self.make_state()
         legacy = encode_game_state(state)
+        downgrade_to_pre_patch006_schema(legacy)
         legacy["save_data_version"] = 2
         del legacy["building_management"]
         del legacy["surface_resource_points"]
@@ -921,6 +923,7 @@ class BuildingPatchTests(unittest.TestCase):
             with self.subTest(existing_id=existing_id):
                 state = self.make_state()
                 legacy = encode_game_state(state)
+                downgrade_to_pre_patch006_schema(legacy)
                 legacy["save_data_version"] = 2
                 del legacy["building_management"]
                 del legacy["surface_resource_points"]

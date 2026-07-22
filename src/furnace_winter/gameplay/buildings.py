@@ -5,9 +5,15 @@ from dataclasses import fields
 from math import gcd, lcm
 from typing import Any
 
-from furnace_winter.config import BuildingRule, BuildingRules, SurvivalRules
+from furnace_winter.config import (
+    BuildingRule,
+    BuildingRules,
+    SurvivalRules,
+    TechnologyRules,
+)
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage
 from furnace_winter.gameplay.survival import (
+    furnace_coal_cost,
     furnace_level,
     is_over_capacity,
     projected_building_insulation_bonus,
@@ -151,9 +157,15 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
 class BuildingSystem:
     """Patch 004 manual building actions and deterministic daily operation."""
 
-    def __init__(self, rules: BuildingRules, survival_rules: SurvivalRules) -> None:
+    def __init__(
+        self,
+        rules: BuildingRules,
+        survival_rules: SurvivalRules,
+        technology_rules: TechnologyRules | None = None,
+    ) -> None:
         self.rules = rules
         self.survival_rules = survival_rules
+        self.technology_rules = technology_rules
         self._catalog = build_building_catalog(rules)
         self._validator = CommandValidator(self._catalog)
 
@@ -173,7 +185,12 @@ class BuildingSystem:
         if not validation.is_valid:
             return self._rejected(command_id, state_sequence, validation)
         try:
-            validate_game_state(state, self.rules, self.survival_rules)
+            validate_game_state(
+                state,
+                self.rules,
+                self.survival_rules,
+                self.technology_rules,
+            )
         except (SaveDataError, TypeError, ValueError) as exc:
             return self._error(command_id, state_sequence, "input_state_validation", exc)
         validation = self._validator.validate(request, state, self._legality)
@@ -202,7 +219,12 @@ class BuildingSystem:
                     CommandValidation(False, ErrorCode.ILLEGAL_COMMAND),
                 )
             working.command_sequence += 1
-            validate_game_state(working, self.rules, self.survival_rules)
+            validate_game_state(
+                working,
+                self.rules,
+                self.survival_rules,
+                self.technology_rules,
+            )
         except (SaveDataError, TypeError, ValueError) as exc:
             return self._error(command_id, state_sequence, "result_state_validation", exc)
 
@@ -514,7 +536,14 @@ class BuildingSystem:
         state.housing.capacity += rule.housing_capacity
         if building_type == "basic_residence":
             state.housing.basic_residences += 1
-        state.resources.storage_capacity += rule.storage_capacity_add
+        storage_add = rule.storage_capacity_add
+        if (
+            building_type == "small_warehouse"
+            and "tech_storage_expansion"
+            in state.technologies.researched_tech_ids
+        ):
+            storage_add = 600
+        state.resources.storage_capacity += storage_add
         self._sync_housing_population(state)
         second_hunting_area_unlocked = False
         if building_type == "hunting_lodge" and state.building_management.available_hunting_areas == 1:
@@ -612,7 +641,12 @@ class BuildingSystem:
         engine.register_stage_handler(EndDayStage.CLOSE_DAILY_EFFECTS, self.close_daily_effects)
 
     def validate_state(self, state: GameState) -> None:
-        validate_game_state(state, self.rules, self.survival_rules)
+        validate_game_state(
+            state,
+            self.rules,
+            self.survival_rules,
+            self.technology_rules,
+        )
 
     def calculate_building_temperatures(self, context: EndDayContext) -> None:
         state = context.state
@@ -775,7 +809,12 @@ class BuildingSystem:
         return projected_heat_bonus(state, self.rules)
 
     def _projected_furnace_level(self, state: GameState) -> int:
-        return projected_furnace_level(state, self.survival_rules, self.rules)
+        return projected_furnace_level(
+            state,
+            self.survival_rules,
+            self.rules,
+            self.technology_rules,
+        )
 
     @staticmethod
     def _production_multiplier(state: GameState, building_id: str) -> tuple[int, int]:
@@ -793,8 +832,18 @@ class BuildingSystem:
         return projected_woodfuel_available(state, self.rules)
 
     def _coal_reserved_for_level(self, state: GameState, level: int) -> int:
-        required_fuel = self.survival_rules.furnace_levels[level].coal_cost
-        return max(required_fuel - self._woodfuel_available(state), 0)
+        base_fuel = furnace_coal_cost(
+            state,
+            self.survival_rules,
+            level,
+        )
+        base_reserve = max(base_fuel - self._woodfuel_available(state), 0)
+        overload_reserve = 0
+        if self.technology_rules is not None:
+            overload_reserve = self.technology_rules.overload.levels[
+                state.furnace.overload_level
+            ].coal_cost
+        return base_reserve + overload_reserve
 
     def _building_insulation_bonus(
         self, state: GameState, building: BuildingState
@@ -815,6 +864,7 @@ class BuildingSystem:
             self.rules,
             self.survival_rules,
             effective_furnace_level,
+            self.technology_rules,
             include_heat=include_heat,
         )
 

@@ -213,12 +213,24 @@ def validate_config_tree(root: Path) -> ValidationReport:
                 issues.append(
                     ValidationIssue(path, "$", f"炉律规则结构校验失败：{exc}")
                 )
+        elif not file_issues and path.name == "technologies.json":
+            try:
+                from furnace_winter.config.technologies import load_technology_rules
+
+                load_technology_rules(path)
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(path, "$", f"科技规则结构校验失败：{exc}")
+                )
 
     manifest_path = root / "manifest.json"
-    if manifest_path in config_files and not validate_config_file(manifest_path):
+    manifest_present = manifest_path in config_files
+    manifest_config_paths: list[Path] | None = None
+    if manifest_present and not validate_config_file(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
         configs = manifest.get("configs")
         if not isinstance(configs, list):
+            manifest_config_paths = []
             issues.append(
                 ValidationIssue(
                     manifest_path,
@@ -227,6 +239,7 @@ def validate_config_tree(root: Path) -> ValidationReport:
                 )
             )
         else:
+            manifest_config_paths = []
             root_resolved = root.resolve()
             seen: set[str] = set()
             for index, item in enumerate(configs):
@@ -270,6 +283,63 @@ def validate_config_tree(root: Path) -> ValidationReport:
                             f"配置文件不存在：{item}",
                         )
                     )
+                    continue
+                manifest_config_paths.append(target)
+
+    if not manifest_present:
+        buildings_path = root / "buildings.json"
+        technologies_path = root / "technologies.json"
+    elif manifest_config_paths is None:
+        buildings_path = None
+        technologies_path = None
+    else:
+        building_matches = [
+            path for path in manifest_config_paths if path.name == "buildings.json"
+        ]
+        technology_matches = [
+            path
+            for path in manifest_config_paths
+            if path.name == "technologies.json"
+        ]
+        if len(building_matches) > 1 or len(technology_matches) > 1:
+            issues.append(
+                ValidationIssue(
+                    manifest_path,
+                    "$.configs",
+                    "manifest 中建筑与科技配置路径各自最多登记一项",
+                )
+            )
+        buildings_path = building_matches[0] if len(building_matches) == 1 else None
+        technologies_path = (
+            technology_matches[0] if len(technology_matches) == 1 else None
+        )
+
+    if buildings_path is not None and technologies_path is not None:
+        linked_paths = {buildings_path.resolve(), technologies_path.resolve()}
+        available_paths = {path.resolve() for path in config_files}
+        linked_paths_are_valid = not any(
+            issue.path.resolve() in linked_paths for issue in issues
+        )
+        if linked_paths.issubset(available_paths) and linked_paths_are_valid:
+            try:
+                from furnace_winter.config.buildings import load_building_rules
+                from furnace_winter.config.technologies import (
+                    load_technology_rules,
+                    validate_technology_building_links,
+                )
+
+                validate_technology_building_links(
+                    load_technology_rules(technologies_path),
+                    load_building_rules(buildings_path),
+                )
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(
+                        technologies_path,
+                        "$",
+                        f"建筑与科技跨配置校验失败：{exc}",
+                    )
+                )
     return ValidationReport(
         files_checked=len(config_files),
         issues=tuple(issues),

@@ -273,6 +273,46 @@ class ConfigValidatorTests(unittest.TestCase):
 
             self.assertFalse(report.is_valid)
 
+    def test_manifest_nested_paths_drive_cross_file_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            nested = root / "nested"
+            nested.mkdir()
+            config_names = (
+                "buildings.json",
+                "laws.json",
+                "survival.json",
+                "technologies.json",
+            )
+            for name in config_names:
+                document = json.loads(
+                    (self.PROJECT_ROOT / "data" / name).read_text("utf-8")
+                )
+                if name == "buildings.json":
+                    document["buildings"]["hospital"]["required_tech_ids"] = [
+                        "tech_unknown"
+                    ]
+                (nested / name).write_text(
+                    json.dumps(document, ensure_ascii=False), encoding="utf-8"
+                )
+            (root / "manifest.json").write_text(
+                json.dumps(
+                    runtime_document(
+                        schema_version=1,
+                        configs=[f"nested/{name}" for name in config_names],
+                    ),
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            report = validate_config_tree(root)
+
+        self.assertFalse(report.is_valid)
+        self.assertTrue(
+            any("建筑与科技跨配置校验失败" in issue.message for issue in report.issues)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import fields
 from typing import Any
 
-from furnace_winter.config import BuildingRules, LawRules, SurvivalRules
+from furnace_winter.config import BuildingRules, LawRules, SurvivalRules, TechnologyRules
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage, RiskWarning, RiskWarningLevel
 from furnace_winter.gameplay.survival import is_building_expected_operational
 from furnace_winter.interface import (
@@ -82,10 +82,17 @@ def build_law_catalog(rules: LawRules | None = None) -> CommandCatalog:
 class LawSystem:
     """Patch 005 006A signing, modes, actions, and deterministic daily hooks."""
 
-    def __init__(self, rules: LawRules, building_rules: BuildingRules, survival_rules: SurvivalRules) -> None:
+    def __init__(
+        self,
+        rules: LawRules,
+        building_rules: BuildingRules,
+        survival_rules: SurvivalRules,
+        technology_rules: TechnologyRules | None = None,
+    ) -> None:
         self.rules = rules
         self.building_rules = building_rules
         self.survival_rules = survival_rules
+        self.technology_rules = technology_rules
         self._catalog = build_law_catalog(rules)
         self._validator = CommandValidator(self._catalog)
 
@@ -413,7 +420,12 @@ class LawSystem:
         engine.register_stage_handler(EndDayStage.CLOSE_DAILY_EFFECTS, self.close_daily_effects)
 
     def validate_state(self, state: GameState) -> None:
-        validate_game_state(state, self.building_rules, self.survival_rules)
+        validate_game_state(
+            state,
+            self.building_rules,
+            self.survival_rules,
+            self.technology_rules,
+        )
         signed_list = state.laws.signed_law_ids
         signed = set(signed_list)
         if len(signed) != len(signed_list):
@@ -757,7 +769,13 @@ class LawSystem:
                 continue
             staff = self._assigned_total(building)
             if building.building_type == "medical_station":
-                capacity += (10 * staff) // 5
+                full_capacity = (
+                    12
+                    if "tech_medical_tools_improvement"
+                    in state.technologies.researched_tech_ids
+                    else 10
+                )
+                capacity += (full_capacity * staff) // 5
             elif building.building_type == "hospital":
                 capacity += (30 * staff) // 10
         return capacity
@@ -775,6 +793,7 @@ class LawSystem:
             building,
             self.building_rules,
             self.survival_rules,
+            self.technology_rules,
         )
 
     def _effective_ration_mode(self, state: GameState) -> str:

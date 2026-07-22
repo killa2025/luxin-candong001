@@ -223,6 +223,16 @@ class MachineStartupTests(unittest.TestCase):
                 "game.unassign_resource",
                 "game.upgrade",
                 "game.woodfuel",
+                "game.medical_ration",
+                "game.memorial",
+                "game.overtime",
+                "game.set_ration",
+                "game.set_worktime",
+                "game.sign_law",
+                "game.triage",
+                "game.cancel_research",
+                "game.research",
+                "game.set_overload",
             ],
         )
         self.assertEqual(len(document["state"]["surface_resource_points"]), 12)
