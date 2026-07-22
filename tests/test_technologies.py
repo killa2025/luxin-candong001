@@ -700,6 +700,68 @@ class TechnologyPatchTests(unittest.TestCase):
                 with self.assertRaises(SaveDataError):
                     decode_game_state(no_base)
 
+    def test_settled_overload_cannot_fall_back_to_a_lower_active_level(self) -> None:
+        state = self.make_state()
+        self.unlock_overload(state, 2)
+        state.resources.coal = 300
+        result = self.settle(self.engine(), state)
+        self.assertEqual(result.result.code, ErrorCode.OK)
+
+        forged = encode_game_state(state)
+        forged["daily_survival"].update(
+            {
+                "effective_overload_level": 1,
+                "overload_coal_paid": 25,
+                "overload_temperature_bonus": 8,
+                "heating_shortfall": True,
+            }
+        )
+
+        with self.assertRaises(SaveDataError):
+            decode_game_state(forged)
+
+    def test_daily_target_overload_must_be_unlocked(self) -> None:
+        state = self.make_state()
+        state.resources.coal = 300
+        result = self.settle(self.engine(), state)
+        self.assertEqual(result.result.code, ErrorCode.OK)
+
+        forged = encode_game_state(state)
+        forged["daily_survival"].update(
+            {
+                "target_overload_level": 2,
+                "heating_shortfall": True,
+            }
+        )
+        decoded = decode_game_state(forged)
+
+        with self.assertRaises(SaveDataError):
+            validate_game_state(
+                decoded,
+                self.building_rules,
+                self.survival_rules,
+                self.technology_rules,
+            )
+
+    def test_unlocked_target_overload_can_fail_as_a_whole(self) -> None:
+        state = self.make_state()
+        self.unlock_overload(state, 2)
+        state.resources.coal = self.survival_rules.furnace_levels[1].coal_cost
+
+        result = self.settle(self.engine(), state)
+
+        self.assertEqual(result.result.code, ErrorCode.OK)
+        self.assertEqual(state.daily_survival.target_overload_level, 2)
+        self.assertEqual(state.daily_survival.effective_overload_level, 0)
+        self.assertEqual(state.daily_survival.overload_coal_paid, 0)
+        self.assertEqual(state.daily_survival.overload_temperature_bonus, 0)
+        validate_game_state(
+            state,
+            self.building_rules,
+            self.survival_rules,
+            self.technology_rules,
+        )
+
     def test_responsible_owner_technology_conflict_decisions_are_applied(self) -> None:
         greenhouse = self.technology_rules.technologies[
             "tech_greenhouse_cultivation"

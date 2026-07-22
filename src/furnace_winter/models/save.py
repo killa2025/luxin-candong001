@@ -1493,6 +1493,16 @@ def _validate_state_invariants(state: GameState) -> None:
         )
     if daily.effective_overload_level > daily.target_overload_level:
         raise SaveDataError("effective overload level cannot exceed its target")
+    if (
+        daily.settled_day is not None
+        and daily.effective_overload_level not in {
+            0,
+            daily.target_overload_level,
+        }
+    ):
+        raise SaveDataError(
+            "settled effective overload must be zero or match its target"
+        )
     if daily.effective_overload_level == 0 and (
         daily.overload_coal_paid != 0
         or daily.overload_temperature_bonus != 0
@@ -1821,6 +1831,16 @@ def _validate_technology_rule_invariants(
     ):
         raise SaveDataError("redline warning must match configured pressure threshold")
     daily = state.daily_survival
+    daily_target_overload_rule = technology_rules.overload.levels.get(
+        daily.target_overload_level
+    )
+    if daily_target_overload_rule is None:
+        raise SaveDataError("daily survival contains an unknown target overload level")
+    if (
+        daily_target_overload_rule.required_tech_id is not None
+        and daily_target_overload_rule.required_tech_id not in completed
+    ):
+        raise SaveDataError("daily target overload level is not unlocked")
     daily_overload_rule = technology_rules.overload.levels.get(
         daily.effective_overload_level
     )
