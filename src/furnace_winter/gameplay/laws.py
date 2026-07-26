@@ -385,12 +385,16 @@ class LawSystem:
             state.population.sick_population + state.population.critical_population - state.medical.effective_capacity, 0
         )
         state.laws.cooldowns[_MEDICAL_COOLDOWN] = state.calendar.current_day + rule.medical_ration_cooldown_days
+        event_followup = self._consume_event_followup(
+            state, MEDICAL_RATION_COMMAND
+        )
         return {
             "affected_patients": affected, "sick_cured": sick_cured,
             "critical_treatment_progressed": critical_progressed,
             "cooked_food_paid": food_paid,
             "next_available_day": state.laws.cooldowns[_MEDICAL_COOLDOWN],
             "balance_status": "TEST_NUMERIC",
+            "event_followup": event_followup,
         }
 
     def _triage(self, state: GameState, request: CommandRequest) -> dict[str, Any]:
@@ -403,16 +407,44 @@ class LawSystem:
         return {"building_id": building_id, "active_duration": "current_day_only"}
 
     def _memorial(self, state: GameState, _request: CommandRequest) -> dict[str, Any]:
-        self._change_emotion(
-            state, trust=self.rules.actions.memorial_trust_change,
-            panic=self.rules.actions.memorial_panic_change,
-        )
+        event_followup = self._consume_event_followup(state, MEMORIAL_COMMAND)
+        if event_followup is None:
+            trust_change = self.rules.actions.memorial_trust_change
+            panic_change = self.rules.actions.memorial_panic_change
+            self._change_emotion(
+                state, trust=trust_change, panic=panic_change
+            )
+        else:
+            trust_change = event_followup["trust_change"]
+            panic_change = event_followup["panic_change"]
         state.laws.cooldowns[_MEMORIAL_COOLDOWN] = state.calendar.current_day + self.rules.actions.memorial_cooldown_days
         return {
-            "trust_change": self.rules.actions.memorial_trust_change,
-            "panic_change": self.rules.actions.memorial_panic_change,
+            "trust_change": trust_change,
+            "panic_change": panic_change,
             "next_available_day": state.laws.cooldowns[_MEMORIAL_COOLDOWN],
             "bodies_processed": 0,
+            "event_followup": event_followup,
+        }
+
+    def _consume_event_followup(
+        self, state: GameState, command_name: str
+    ) -> dict[str, Any] | None:
+        followup = state.events.pending_followups.pop(command_name, None)
+        if followup is None:
+            return None
+        trust_change = 1
+        panic_change = -2
+        self._change_emotion(
+            state, trust=trust_change, panic=panic_change
+        )
+        return {
+            "event_id": followup.event_id,
+            "option_id": followup.option_id,
+            "created_day": followup.created_day,
+            "occurrence_index": followup.occurrence_index,
+            "trust_change": trust_change,
+            "panic_change": panic_change,
+            "consumed": True,
         }
 
     def install(self, engine: EndDayEngine) -> None:

@@ -15,8 +15,12 @@ from furnace_winter.config import (
     load_technology_rules,
 )
 from furnace_winter.gameplay import (
+    ASSIGN_COMMAND,
+    BUILD_COMMAND,
     CONFIRM_END_DAY_COMMAND,
     END_DAY_COMMAND,
+    MEDICAL_RATION_COMMAND,
+    MEMORIAL_COMMAND,
     RESOLVE_EVENT_COMMAND,
     BuildingSystem,
     EndDayEngine,
@@ -29,7 +33,7 @@ from furnace_winter.gameplay import (
     create_initial_survival_state,
     storage_used,
 )
-from furnace_winter.interface import CommandRequest, ErrorCode
+from furnace_winter.interface import CommandRequest, ErrorCode, Observation
 from furnace_winter.models import (
     CURRENT_SAVE_DATA_VERSION,
     EventResolutionRecord,
@@ -38,6 +42,7 @@ from furnace_winter.models import (
     SaveDataError,
     decode_game_state,
     encode_game_state,
+    to_primitive,
 )
 
 
@@ -106,6 +111,13 @@ class EventPatchTests(unittest.TestCase):
             self.technology_rules,
         )
 
+    def building_system(self) -> BuildingSystem:
+        return BuildingSystem(
+            self.building_rules,
+            self.survival_rules,
+            self.technology_rules,
+        )
+
     def full_engine(self, autosave_sink=None) -> EndDayEngine:
         engine = EndDayEngine(autosave_sink=autosave_sink)
         SurvivalSystem(
@@ -158,6 +170,18 @@ class EventPatchTests(unittest.TestCase):
                 f"event-{state.command_sequence}",
                 RESOLVE_EVENT_COMMAND,
                 {"event_id": event_id, "option_id": option_id},
+                expected_state_sequence=state.command_sequence,
+            ),
+        )
+
+    @staticmethod
+    def execute_command(system, state, name: str, arguments: dict | None = None):
+        return system.execute(
+            state,
+            CommandRequest(
+                f"command-{state.command_sequence}",
+                name,
+                arguments or {},
                 expected_state_sequence=state.command_sequence,
             ),
         )
@@ -307,6 +331,26 @@ class EventPatchTests(unittest.TestCase):
             severity="serious",
             target={"trust_at_creation": 20, "panic_at_creation": 20},
         )
+        state.events.resolved_event_ids.append("trust_crack")
+        state.events.occurrence_counts["trust_crack"] = 1
+        state.events.resolution_history.append(
+            EventResolutionRecord(
+                event_id="trust_crack",
+                option_id="promise_trust",
+                event_type="major",
+                resolved_day=1,
+                promise_id="promise-0001",
+                trust_change=0,
+                panic_change=0,
+                resource_changes={
+                    "coal": 0,
+                    "wood": 0,
+                    "steel": 0,
+                    "raw_food": 0,
+                    "cooked_food": 0,
+                },
+            )
+        )
         state.promises.next_sequence = 2
         state.calendar.current_day = 2
 
@@ -434,16 +478,62 @@ class EventPatchTests(unittest.TestCase):
         self.assertEqual(accept_all["preview"]["resource_changes"]["coal"], 0)
         self.assertEqual(state.population.population_alive, 80)
 
+    def test_observation_exposes_formal_event_and_promise_views(self) -> None:
+        state = self.make_empty_pot_state()
+        system = self.event_system()
+        system.initialize_day(state)
+        self.assertEqual(
+            self.execute(system, state, "empty_pot", "promise_food").code,
+            ErrorCode.OK,
+        )
+
+        document = to_primitive(
+            Observation.from_state(
+                state,
+                system.command_specs(),
+                event_views=system.active_event_views(state),
+                promise_views=system.active_promise_views(state),
+            )
+        )
+
+        self.assertEqual(document["event_views"], [])
+        self.assertEqual(len(document["promise_views"]), 1)
+        promise = document["promise_views"][0]
+        self.assertEqual(promise["source_event_id"], "empty_pot")
+        self.assertEqual(promise["deadline_day"], 4)
+        self.assertIn("success_effect", promise)
+        self.assertIn("failure_effect", promise)
+
     def test_event_view_and_rejection_explain_unavailable_option(self) -> None:
         state = self.make_empty_pot_state()
         state.promises.active_promises["promise-0001"] = PromiseRecord(
             promise_id="promise-0001",
             promise_type="food",
-            source_event_id="empty_pot",
+            source_event_id="raw_food_dispute",
             created_day=1,
             deadline_day=4,
-            severity="serious",
+            severity="ordinary",
             target={"trust_at_creation": 50, "panic_at_creation": 20},
+        )
+        state.events.resolved_event_ids.append("raw_food_dispute")
+        state.events.occurrence_counts["raw_food_dispute"] = 1
+        state.events.resolution_history.append(
+            EventResolutionRecord(
+                event_id="raw_food_dispute",
+                option_id="promise_food",
+                event_type="normal",
+                resolved_day=1,
+                promise_id="promise-0001",
+                trust_change=0,
+                panic_change=0,
+                resource_changes={
+                    "coal": 0,
+                    "wood": 0,
+                    "steel": 0,
+                    "raw_food": 0,
+                    "cooked_food": 0,
+                },
+            )
         )
         state.promises.next_sequence = 2
         system = self.event_system()
@@ -629,11 +719,289 @@ class EventPatchTests(unittest.TestCase):
             if item["event_id"] != "arrival_day6"
         ]
         mutations.append(without_history)
+        fully_erased = deepcopy(base)
+        fully_erased["events"]["fixed_arrival_choices"] = {}
+        fully_erased["events"]["resolved_event_ids"] = [
+            item
+            for item in fully_erased["events"]["resolved_event_ids"]
+            if item != "arrival_day6"
+        ]
+        fully_erased["events"]["resolution_history"] = [
+            item
+            for item in fully_erased["events"]["resolution_history"]
+            if item["event_id"] != "arrival_day6"
+        ]
+        fully_erased["events"]["occurrence_counts"].pop("arrival_day6")
+        fully_erased["events"]["generated_for_day"] = None
+        mutations.append(fully_erased)
 
         for document in mutations:
             with self.subTest(document=document):
                 with self.assertRaises(SaveDataError):
                     decode_game_state(document)
+
+    def test_promises_are_bound_to_their_exact_source_event(self) -> None:
+        state = self.make_empty_pot_state()
+        system = self.event_system()
+        system.initialize_day(state)
+        result = self.execute(system, state, "empty_pot", "promise_food")
+        self.assertEqual(result.code, ErrorCode.OK)
+        promise_id = result.data["promise_id"]
+        base = encode_game_state(state)
+
+        mutations = []
+        wrong_type = deepcopy(base)
+        wrong_type["promises"]["active_promises"][promise_id][
+            "promise_type"
+        ] = "medical"
+        mutations.append(wrong_type)
+        wrong_source = deepcopy(base)
+        wrong_source["promises"]["active_promises"][promise_id][
+            "source_event_id"
+        ] = "severe_case_backlog"
+        mutations.append(wrong_source)
+        wrong_severity = deepcopy(base)
+        wrong_severity["promises"]["active_promises"][promise_id][
+            "severity"
+        ] = "critical"
+        mutations.append(wrong_severity)
+        missing_source = deepcopy(base)
+        missing_source["events"]["resolution_history"] = [
+            item
+            for item in missing_source["events"]["resolution_history"]
+            if item["promise_id"] != promise_id
+        ]
+        mutations.append(missing_source)
+        missing_settlement = encode_game_state(self.make_state(day=5))
+        missing_settlement["promises"]["completed_promise_ids"] = [
+            "promise-0001"
+        ]
+        missing_settlement["promises"]["next_sequence"] = 2
+        mutations.append(missing_settlement)
+
+        for document in mutations:
+            with self.subTest(document=document):
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(document)
+
+    def test_one_overtime_harm_signal_only_triggers_once(self) -> None:
+        state = self.make_state(day=10)
+        state.events.metrics["overtime_harm_today"] = 1
+        system = self.event_system()
+        system.initialize_day(state)
+        self.assertIn("overtime_empty_post", state.events.active_events)
+        self.assertNotIn("overtime_harm_today", state.events.metrics)
+        self.assertEqual(
+            self.execute(
+                system, state, "overtime_empty_post", "continue"
+            ).code,
+            ErrorCode.OK,
+        )
+
+        state.calendar.current_day = 11
+        system.begin_new_day(state)
+
+        self.assertNotIn("overtime_empty_post", state.events.active_events)
+
+        child = self.make_state(day=10)
+        child.laws.signed_law_ids.append("child_labor_low_risk_law")
+        child.events.metrics["child_harm_from_work_today"] = 1
+        system.initialize_day(child)
+        self.assertIn("red_frozen_hands", child.events.active_events)
+        self.assertNotIn("child_harm_from_work_today", child.events.metrics)
+        self.assertEqual(
+            self.execute(
+                system, child, "red_frozen_hands", "continue"
+            ).code,
+            ErrorCode.OK,
+        )
+        child.calendar.current_day = 11
+        system.begin_new_day(child)
+        self.assertNotIn("red_frozen_hands", child.events.active_events)
+
+    def test_overtime_history_trimming_uses_configured_window(self) -> None:
+        document = json.loads(
+            (ROOT / "data" / "events.json").read_text("utf-8")
+        )
+        document["thresholds"]["overtime_window_days"] = 6
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "events.json"
+            path.write_text(
+                json.dumps(document, ensure_ascii=False), encoding="utf-8"
+            )
+            rules = load_event_rules(path)
+
+        state = self.make_state(day=7)
+        state.events.recent_overtime_days = [1]
+        context = EndDayContext(
+            state=state,
+            random=DeterministicRandom.from_state(state.random),
+            settled_day=6,
+            stage=EndDayStage.UPDATE_PROMISE_TARGETS,
+            _emit=lambda _code, _data: None,
+        )
+        EventSystem(
+            rules,
+            self.building_rules,
+            self.survival_rules,
+            self.technology_rules,
+        ).capture_daily_metrics(context)
+
+        self.assertEqual(state.events.recent_overtime_days, [1])
+
+    def test_event_followups_settle_once_only_after_successful_commands(self) -> None:
+        medical = self.make_state(day=10)
+        medical.laws.signed_law_ids = [
+            "basic_medical_law",
+            "medical_ration_law",
+        ]
+        built_station = self.execute_command(
+            self.building_system(),
+            medical,
+            BUILD_COMMAND,
+            {"building_type": "medical_station", "zone": "inner_ring"},
+        )
+        self.assertEqual(built_station.code, ErrorCode.OK)
+        self.assertEqual(
+            self.execute_command(
+                self.building_system(),
+                medical,
+                ASSIGN_COMMAND,
+                {
+                    "building_id": built_station.data["building_id"],
+                    "population_type": "engineers",
+                    "count": 5,
+                },
+            ).code,
+            ErrorCode.OK,
+        )
+        medical.population.healthy_population -= 5
+        medical.population.critical_population = 5
+        events = self.event_system()
+        events.initialize_day(medical)
+        self.assertIn("severe_case_backlog", medical.events.active_events)
+        before_trust = medical.trust_panic.trust
+        before_panic = medical.trust_panic.panic
+        self.assertEqual(
+            self.execute(
+                events,
+                medical,
+                "severe_case_backlog",
+                "medical_ration_prompt",
+            ).code,
+            ErrorCode.OK,
+        )
+        self.assertEqual(medical.trust_panic.trust, before_trust)
+        self.assertEqual(medical.trust_panic.panic, before_panic)
+        self.assertIn(MEDICAL_RATION_COMMAND, medical.events.pending_followups)
+
+        medical.resources.cooked_food = 0
+        medical.daily_survival.storage_used = storage_used(medical.resources)
+        failed = self.execute_command(
+            self.law_system(),
+            medical,
+            MEDICAL_RATION_COMMAND,
+            {"confirm": True},
+        )
+        self.assertEqual(failed.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertIn(MEDICAL_RATION_COMMAND, medical.events.pending_followups)
+        self.assertEqual(medical.trust_panic.trust, before_trust)
+        self.assertEqual(medical.trust_panic.panic, before_panic)
+
+        medical.resources.cooked_food = 100
+        medical.daily_survival.storage_used = storage_used(medical.resources)
+        succeeded = self.execute_command(
+            self.law_system(),
+            medical,
+            MEDICAL_RATION_COMMAND,
+            {"confirm": True},
+        )
+        self.assertEqual(succeeded.code, ErrorCode.OK)
+        self.assertEqual(medical.trust_panic.trust, before_trust + 1)
+        self.assertEqual(medical.trust_panic.panic, before_panic - 2)
+        self.assertNotIn(
+            MEDICAL_RATION_COMMAND, medical.events.pending_followups
+        )
+        repeated = self.execute_command(
+            self.law_system(),
+            medical,
+            MEDICAL_RATION_COMMAND,
+            {"confirm": True},
+        )
+        self.assertEqual(repeated.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(medical.trust_panic.trust, before_trust + 1)
+        self.assertEqual(medical.trust_panic.panic, before_panic - 2)
+
+        memorial = self.make_state(day=10)
+        memorial.laws.signed_law_ids = ["cemetery_law", "memorial_law"]
+        memorial.social_policy.death_path = "cemetery"
+        built_cemetery = self.execute_command(
+            self.building_system(),
+            memorial,
+            BUILD_COMMAND,
+            {"building_type": "cemetery", "zone": "outer_ring"},
+        )
+        self.assertEqual(built_cemetery.code, ErrorCode.OK)
+        memorial.population.population_alive = 70
+        memorial.population.population_dead = 10
+        memorial.population.workers = 40
+        memorial.population.healthy_population = 70
+        memorial.population.housed_population = 40
+        memorial.population.homeless_population = 30
+        memorial.social_policy.unhandled_bodies = 10
+        memorial.events.resolved_event_ids.append("first_body")
+        memorial.events.occurrence_counts["first_body"] = 1
+        memorial.events.resolution_history.append(
+            EventResolutionRecord(
+                event_id="first_body",
+                option_id="quiet_handling",
+                event_type="major",
+                resolved_day=9,
+                trust_change=0,
+                panic_change=1,
+                resource_changes={
+                    "coal": 0,
+                    "wood": 0,
+                    "steel": 0,
+                    "raw_food": 0,
+                    "cooked_food": 0,
+                },
+            )
+        )
+        events.initialize_day(memorial)
+        self.assertIn("bodies_under_snow", memorial.events.active_events)
+        before_trust = memorial.trust_panic.trust
+        before_panic = memorial.trust_panic.panic
+        self.assertEqual(
+            self.execute(
+                events,
+                memorial,
+                "bodies_under_snow",
+                "memorial_prompt",
+            ).code,
+            ErrorCode.OK,
+        )
+        result = self.execute_command(
+            self.law_system(), memorial, MEMORIAL_COMMAND
+        )
+        self.assertEqual(result.code, ErrorCode.OK)
+        self.assertEqual(memorial.trust_panic.trust, before_trust + 1)
+        self.assertEqual(memorial.trust_panic.panic, before_panic - 2)
+        self.assertNotIn(MEMORIAL_COMMAND, memorial.events.pending_followups)
+
+        ordinary = deepcopy(memorial)
+        ordinary.calendar.current_day = memorial.laws.cooldowns["memorial"]
+        ordinary.events.active_events.clear()
+        ordinary.events.generated_for_day = ordinary.calendar.current_day
+        ordinary.laws.cooldowns.pop("memorial")
+        ordinary.trust_panic.trust = 50
+        ordinary.trust_panic.panic = 20
+        ordinary_result = self.execute_command(
+            self.law_system(), ordinary, MEMORIAL_COMMAND
+        )
+        self.assertEqual(ordinary_result.code, ErrorCode.OK)
+        self.assertEqual(ordinary.trust_panic.trust, 52)
+        self.assertEqual(ordinary.trust_panic.panic, 18)
 
     def test_v7_migration_rejects_days_after_first_mandatory_arrival(self) -> None:
         for day, accepted in ((5, True), (6, True), (7, False), (19, False), (37, False)):

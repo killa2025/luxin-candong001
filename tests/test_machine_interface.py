@@ -237,6 +237,8 @@ class MachineStartupTests(unittest.TestCase):
             ],
         )
         self.assertEqual(document["state"]["events"]["generated_for_day"], 1)
+        self.assertIsInstance(document["event_views"], list)
+        self.assertEqual(document["promise_views"], [])
         self.assertEqual(len(document["state"]["surface_resource_points"]), 12)
 
 

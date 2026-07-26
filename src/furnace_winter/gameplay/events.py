@@ -26,6 +26,7 @@ from furnace_winter.interface import (
     FeedbackLevel,
 )
 from furnace_winter.models import (
+    EventFollowupRecord,
     EventRecord,
     EventResolutionRecord,
     GameState,
@@ -68,6 +69,10 @@ _FOLLOWUP_COMMANDS = {
     "adjust_furnace_prompt": "game.set_furnace",
     "overload_off_prompt": "game.set_overload",
     "increase_furnace_prompt": "game.set_furnace",
+}
+_EVENT_FOLLOWUP_OPTIONS = {
+    ("severe_case_backlog", "medical_ration_prompt"): "game.medical_ration",
+    ("bodies_under_snow", "memorial_prompt"): "game.memorial",
 }
 _EVENT_OPTIONS: dict[str, tuple[str, ...]] = {
     "empty_pot": ("promise_food", "maintain_ration", "adjust_ration_prompt"),
@@ -354,6 +359,7 @@ class EventSystem:
             if promise_type is not None:
                 promise_id = self._create_promise(state, event_id, promise_type)
             self._apply_event_effect(state, event_id, option_id)
+            self._queue_event_followup(state, event_id, option_id)
 
         del state.events.active_events[event_id]
         if event_id not in state.events.resolved_event_ids:
@@ -380,6 +386,7 @@ class EventSystem:
                 option_id=option_id,
                 event_type=event.event_type,
                 resolved_day=state.calendar.current_day,
+                promise_id=promise_id,
                 trust_change=data["trust_change"],
                 panic_change=data["panic_change"],
                 population_added=data["population_added"],
@@ -607,6 +614,8 @@ class EventSystem:
             self._activate(state, event_id, "major")
         for event_id in selected_normal:
             self._activate(state, event_id, "normal")
+        state.events.metrics.pop("child_harm_from_work_today", None)
+        state.events.metrics.pop("overtime_harm_today", None)
 
     def _condition_candidates(self, state: GameState) -> list[tuple[str, str]]:
         if state.calendar.current_day >= 49:
@@ -742,6 +751,12 @@ class EventSystem:
             return tuple(self.rules.fixed_arrivals[event_id].options)
         available: list[str] = []
         for option_id in _EVENT_OPTIONS[event_id]:
+            followup_command = _EVENT_FOLLOWUP_OPTIONS.get((event_id, option_id))
+            if (
+                followup_command is not None
+                and followup_command in state.events.pending_followups
+            ):
+                continue
             promise_type = self._promise_type_for_option(event_id, option_id)
             if promise_type is not None and not self._can_create_promise(state, promise_type):
                 continue
@@ -854,6 +869,12 @@ class EventSystem:
         )
         if option_id not in canonical:
             return "unknown_option"
+        followup_command = _EVENT_FOLLOWUP_OPTIONS.get((event_id, option_id))
+        if (
+            followup_command is not None
+            and followup_command in state.events.pending_followups
+        ):
+            return "event_followup_already_pending"
         promise_type = self._promise_type_for_option(event_id, option_id)
         if promise_type is not None:
             if state.calendar.current_day >= self.rules.promise.disabled_from_day:
@@ -1000,6 +1021,22 @@ class EventSystem:
             assert cost is not None
             state.resources.cooked_food -= cost
 
+    def _queue_event_followup(
+        self, state: GameState, event_id: str, option_id: str
+    ) -> None:
+        command_name = _EVENT_FOLLOWUP_OPTIONS.get((event_id, option_id))
+        if command_name is None:
+            return
+        if command_name in state.events.pending_followups:
+            raise SaveDataError("an event followup for this command is already pending")
+        state.events.pending_followups[command_name] = EventFollowupRecord(
+            event_id=event_id,
+            option_id=option_id,
+            command_name=command_name,
+            created_day=state.calendar.current_day,
+            occurrence_index=state.events.occurrence_counts[event_id],
+        )
+
     def _apply_arrival(self, state: GameState, event_id: str, option_id: str) -> None:
         effect = self.rules.fixed_arrivals[event_id].options[option_id]
         population = state.population
@@ -1103,7 +1140,12 @@ class EventSystem:
             for item in state.events.recent_canteen_outage_days
             if item >= day - canteen_window + 1
         ]
-        state.events.recent_overtime_days = [item for item in state.events.recent_overtime_days if item >= day - 4]
+        overtime_window = self.rules.thresholds["overtime_window_days"]
+        state.events.recent_overtime_days = [
+            item
+            for item in state.events.recent_overtime_days
+            if item >= day - overtime_window + 1
+        ]
         if self._food_days_x10(state) < self.rules.thresholds["food_warning_days_x10"]:
             state.events.metrics["food_warning_streak"] = state.events.metrics.get("food_warning_streak", 0) + 1
         else:
@@ -1224,8 +1266,36 @@ class EventSystem:
                 raise SaveDataError("state contains an unknown promise type")
             if promise.source_event_id not in self.rules.events:
                 raise SaveDataError("promise source event is unknown")
-            if promise.severity not in self.rules.promise.effects:
-                raise SaveDataError("promise severity is unknown")
+            source_rule = self.rules.events[promise.source_event_id]
+            if source_rule.promise_type != promise.promise_type:
+                raise SaveDataError("promise type disagrees with its source event")
+            source_history = [
+                item
+                for item in state.events.resolution_history
+                if item.promise_id == promise.promise_id
+            ]
+            if (
+                len(source_history) != 1
+                or source_history[0].event_id != promise.source_event_id
+                or source_history[0].option_id
+                != f"promise_{promise.promise_type}"
+                or source_history[0].resolved_day != promise.created_day
+            ):
+                raise SaveDataError("promise lacks its exact source event resolution")
+            allowed_severities = {source_rule.promise_severity}
+            if (
+                promise.source_event_id == "furnace_redline"
+                and promise.promise_type == "furnace"
+            ):
+                allowed_severities.add("critical")
+            if (
+                promise.source_event_id == "cold_house_night"
+                and promise.promise_type == "housing"
+                and source_history[0].event_type == "major"
+            ):
+                allowed_severities.add("serious")
+            if promise.severity not in allowed_severities:
+                raise SaveDataError("promise severity disagrees with its source event")
             if set(promise.target) != {"trust_at_creation", "panic_at_creation"}:
                 raise SaveDataError("promise target snapshot is incomplete")
             expected_deadline = promise.created_day + self.rules.promise.deadlines[promise.promise_type]
@@ -1236,6 +1306,32 @@ class EventSystem:
         for settlement in state.promises.settlement_history:
             if settlement.promise_type not in known_promise_types:
                 raise SaveDataError("promise history contains an unknown type")
+            source_history = [
+                item
+                for item in state.events.resolution_history
+                if item.promise_id == settlement.promise_id
+            ]
+            if len(source_history) != 1:
+                raise SaveDataError("promise settlement lacks its source event")
+            source_rule = self.rules.events[source_history[0].event_id]
+            if (
+                source_rule.promise_type != settlement.promise_type
+                or source_history[0].option_id
+                != f"promise_{settlement.promise_type}"
+            ):
+                raise SaveDataError("promise settlement disagrees with its source event")
+            allowed_severities = {source_rule.promise_severity}
+            if source_history[0].event_id == "furnace_redline":
+                allowed_severities.add("critical")
+            if (
+                source_history[0].event_id == "cold_house_night"
+                and source_history[0].event_type == "major"
+            ):
+                allowed_severities.add("serious")
+            if settlement.severity not in allowed_severities:
+                raise SaveDataError(
+                    "promise settlement severity disagrees with its source event"
+                )
             effect = self.rules.promise.effects.get(settlement.severity)
             if effect is None:
                 raise SaveDataError("promise history contains an unknown severity")

@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     state_parser = subparsers.add_parser(
         "state",
-        help="输出 Patch 006 炉律、科技研究与过载闭环的机器可读开局状态",
+        help="输出 Patch 007 事件、承诺与固定增员接口的机器可读开局状态",
     )
     state_parser.add_argument(
         "--seed",
@@ -135,7 +135,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             + technologies.command_specs()
             + events.command_specs()
         )
-        print(dumps(Observation.from_state(state, command_specs)))
+        print(
+            dumps(
+                Observation.from_state(
+                    state,
+                    command_specs,
+                    event_views=events.active_event_views(state),
+                    promise_views=events.active_promise_views(state),
+                )
+            )
+        )
         return 0
 
     parser.print_help()

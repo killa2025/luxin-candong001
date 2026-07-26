@@ -17,6 +17,7 @@ from furnace_winter.models.state import (
     CalendarState,
     DailySurvivalState,
     EventRecord,
+    EventFollowupRecord,
     EventResolutionRecord,
     EventState,
     FinalResultState,
@@ -50,6 +51,24 @@ _FIXED_ARRIVAL_DAYS = {
     "arrival_day37": 37,
 }
 _PROMISE_ID_PATTERN = re.compile(r"^promise-([0-9]{4,})$")
+_EVENT_FOLLOWUPS = {
+    "game.medical_ration": ("severe_case_backlog", "medical_ration_prompt"),
+    "game.memorial": ("bodies_under_snow", "memorial_prompt"),
+}
+_EVENT_PROMISES = {
+    "empty_pot": ("food", "ordinary"),
+    "raw_food_dispute": ("food", "ordinary"),
+    "medical_beds_emergency": ("medical", "ordinary"),
+    "severe_case_backlog": ("medical", "serious"),
+    "bodies_under_snow": ("body", "ordinary"),
+    "children_request": ("children", "ordinary"),
+    "overtime_empty_post": ("labor", "serious"),
+    "coal_bottom": ("coal", "ordinary"),
+    "furnace_redline": ("furnace", "serious"),
+    "cold_house_night": ("housing", "ordinary"),
+    "trust_crack": ("trust", "serious"),
+    "city_unrest": ("panic", "serious"),
+}
 
 
 def _promise_sequence(promise_id: str) -> int:
@@ -813,6 +832,9 @@ def _decode_events(value: Any) -> EventState:
                 resolved_day=_integer(
                     item["resolved_day"], f"{path}.resolved_day", minimum=1, maximum=FINAL_DAY
                 ),
+                promise_id=_string(
+                    item["promise_id"], f"{path}.promise_id", optional=True
+                ),
                 trust_change=(
                     None
                     if item["trust_change"] is None
@@ -830,6 +852,26 @@ def _decode_events(value: Any) -> EventState:
                     item["resource_changes"], f"{path}.resource_changes"
                 ),
             )
+        )
+    raw_followups = data["pending_followups"]
+    if not isinstance(raw_followups, Mapping):
+        raise SaveDataError("events.pending_followups must be an object")
+    pending_followups: dict[str, EventFollowupRecord] = {}
+    for raw_command, raw_followup in raw_followups.items():
+        command_name = _string(raw_command, "events.pending_followups key")
+        assert isinstance(command_name, str)
+        path = f"events.pending_followups.{command_name}"
+        item = _object(raw_followup, path, _field_names(EventFollowupRecord))
+        pending_followups[command_name] = EventFollowupRecord(
+            event_id=_string(item["event_id"], f"{path}.event_id"),
+            option_id=_string(item["option_id"], f"{path}.option_id"),
+            command_name=_string(item["command_name"], f"{path}.command_name"),
+            created_day=_integer(
+                item["created_day"], f"{path}.created_day", minimum=1, maximum=FINAL_DAY
+            ),
+            occurrence_index=_integer(
+                item["occurrence_index"], f"{path}.occurrence_index", minimum=1
+            ),
         )
     return EventState(
         active_events=active_events,
@@ -874,6 +916,7 @@ def _decode_events(value: Any) -> EventState:
         fixed_arrival_choices=_string_map(
             data["fixed_arrival_choices"], "events.fixed_arrival_choices"
         ),
+        pending_followups=pending_followups,
         frostfall_warning_stage=_string(
             data["frostfall_warning_stage"], "events.frostfall_warning_stage"
         ),
@@ -1011,6 +1054,17 @@ def decode_game_state(
     document: Mapping[str, Any],
     migrations: SaveMigrationRegistry | None = None,
 ) -> GameState:
+    return _decode_game_state(
+        document, migrations, strict_event_timeline=True
+    )
+
+
+def _decode_game_state(
+    document: Mapping[str, Any],
+    migrations: SaveMigrationRegistry | None,
+    *,
+    strict_event_timeline: bool,
+) -> GameState:
     if migrations is None:
         migrations = SaveMigrationRegistry()
         migrations.register(1, _migrate_v1_to_v2)
@@ -1064,7 +1118,9 @@ def decode_game_state(
             old_city=_decode_old_city(data["old_city"]),
             final_result=_decode_final_result(data["final_result"]),
         )
-        _validate_state_invariants(state)
+        _validate_state_invariants(
+            state, strict_event_timeline=strict_event_timeline
+        )
         return state
     except SaveDataError:
         raise
@@ -1581,6 +1637,7 @@ def _migrate_v7_to_v8(document: dict[str, Any]) -> dict[str, Any]:
             "recent_canteen_outage_days": [],
             "recent_overtime_days": [],
             "fixed_arrival_choices": {},
+            "pending_followups": {},
             "frostfall_warning_stage": "none",
             "frostfall_eve_status_shown": False,
             "seventh_frostfall_active": False,
@@ -1619,16 +1676,16 @@ def _migrate_v7_to_v8(document: dict[str, Any]) -> dict[str, Any]:
         failed_ids = _string_list(
             promises["failed_promise_ids"], "promises.failed_promise_ids"
         )
-        settled_sequences = [
-            _promise_sequence(promise_id)
-            for promise_id in completed_ids + failed_ids
-        ]
+        if completed_ids or failed_ids:
+            raise SaveDataError(
+                "v7 settled promises cannot be migrated without source and settlement history"
+            )
         migrated["promises"] = {
             "active_promises": {},
             "completed_promise_ids": completed_ids,
             "failed_promise_ids": failed_ids,
             "settlement_history": [],
-            "next_sequence": max(settled_sequences, default=0) + 1,
+            "next_sequence": 1,
         }
     else:
         migrated["promises"] = _object(
@@ -1657,7 +1714,9 @@ def _migrate_v7_to_v8(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
-def _validate_state_invariants(state: GameState) -> None:
+def _validate_state_invariants(
+    state: GameState, *, strict_event_timeline: bool = True
+) -> None:
     population = state.population
     technologies = state.technologies
     events = state.events
@@ -1685,6 +1744,7 @@ def _validate_state_invariants(state: GameState) -> None:
             raise SaveDataError(f"events.{name} must be sorted and unique")
         if any(day > legal_settled_day for day in days):
             raise SaveDataError(f"events.{name} cannot contain an unsettled day")
+    resolution_promise_ids: set[str] = set()
     for resolution in events.resolution_history:
         if resolution.event_id not in events.resolved_event_ids:
             raise SaveDataError("event history must reference a resolved event")
@@ -1696,6 +1756,11 @@ def _validate_state_invariants(state: GameState) -> None:
             "coal", "wood", "steel", "raw_food", "cooked_food"
         }:
             raise SaveDataError("event history resource changes are incomplete")
+        if resolution.promise_id is not None:
+            _promise_sequence(resolution.promise_id)
+            if resolution.promise_id in resolution_promise_ids:
+                raise SaveDataError("a promise may only have one source event history")
+            resolution_promise_ids.add(resolution.promise_id)
     major_count = 0
     normal_count = 0
     for event_id, event in events.active_events.items():
@@ -1740,50 +1805,71 @@ def _validate_state_invariants(state: GameState) -> None:
         raise SaveDataError("unknown fixed arrival choice key")
     if any(choice not in {"accept_all", "accept_partial", "reject"} for choice in events.fixed_arrival_choices.values()):
         raise SaveDataError("unsupported fixed arrival choice")
-    if events.generated_for_day is not None:
-        for event_id, arrival_day in _FIXED_ARRIVAL_DAYS.items():
-            choice = events.fixed_arrival_choices.get(event_id)
-            histories = [
-                item
-                for item in events.resolution_history
-                if item.event_id == event_id
-            ]
-            resolved = event_id in events.resolved_event_ids
-            active = event_id in events.active_events
-            count = events.occurrence_counts.get(event_id, 0)
-            if active:
-                if (
-                    state.calendar.current_day != arrival_day
-                    or choice is not None
-                    or resolved
-                    or histories
-                    or count != 1
-                ):
-                    raise SaveDataError("active fixed arrival state is inconsistent")
-                continue
-            if choice is not None:
-                if (
-                    not resolved
-                    or count != 1
-                    or len(histories) != 1
-                    or histories[0].option_id != choice
-                    or histories[0].event_type != "major"
-                    or histories[0].resolved_day != arrival_day
-                ):
-                    raise SaveDataError(
-                        "fixed arrival choice, history, and resolution disagree"
-                    )
-            elif (
-                resolved
+    for event_id, arrival_day in (
+        _FIXED_ARRIVAL_DAYS.items() if strict_event_timeline else ()
+    ):
+        choice = events.fixed_arrival_choices.get(event_id)
+        histories = [
+            item for item in events.resolution_history if item.event_id == event_id
+        ]
+        resolved = event_id in events.resolved_event_ids
+        active = event_id in events.active_events
+        count = events.occurrence_counts.get(event_id, 0)
+        if active:
+            if (
+                events.generated_for_day != arrival_day
+                or state.calendar.current_day != arrival_day
+                or choice is not None
+                or resolved
                 or histories
-                or count
-                or state.calendar.current_day > arrival_day
-                or (
-                    state.calendar.current_day == arrival_day
-                    and events.generated_for_day == arrival_day
-                )
+                or count != 1
             ):
-                raise SaveDataError("a generated save cannot skip a fixed arrival")
+                raise SaveDataError("active fixed arrival state is inconsistent")
+            continue
+        if choice is not None:
+            if (
+                not resolved
+                or count != 1
+                or len(histories) != 1
+                or histories[0].option_id != choice
+                or histories[0].event_type != "major"
+                or histories[0].resolved_day != arrival_day
+            ):
+                raise SaveDataError(
+                    "fixed arrival choice, history, and resolution disagree"
+                )
+            continue
+        if resolved or histories or count or state.calendar.current_day > arrival_day:
+            raise SaveDataError("a past fixed arrival cannot be skipped")
+        if (
+            state.calendar.current_day == arrival_day
+            and events.generated_for_day == arrival_day
+        ):
+            raise SaveDataError(
+                "today's generated fixed arrival must remain active or resolved"
+            )
+    if set(events.pending_followups) - set(_EVENT_FOLLOWUPS):
+        raise SaveDataError("state contains an unsupported event followup command")
+    for command_name, followup in events.pending_followups.items():
+        expected_event, expected_option = _EVENT_FOLLOWUPS[command_name]
+        if (
+            followup.command_name != command_name
+            or followup.event_id != expected_event
+            or followup.option_id != expected_option
+            or followup.created_day > state.calendar.current_day
+            or followup.occurrence_index
+            > events.occurrence_counts.get(followup.event_id, 0)
+        ):
+            raise SaveDataError("event followup state disagrees with its command")
+        matching_history = [
+            item
+            for item in events.resolution_history
+            if item.event_id == followup.event_id
+            and item.option_id == followup.option_id
+            and item.resolved_day == followup.created_day
+        ]
+        if len(matching_history) != 1:
+            raise SaveDataError("event followup lacks its source event instance")
     if len(promises.active_promises) > 2:
         raise SaveDataError("at most two promises may be active")
     active_types: set[str] = set()
@@ -1794,6 +1880,9 @@ def _validate_state_invariants(state: GameState) -> None:
         raise SaveDataError("settled promise ids must be unique")
     if set(promises.active_promises) & settled_promises:
         raise SaveDataError("active and settled promises must be disjoint")
+    promise_ids = set(promises.active_promises) | settled_promises
+    if resolution_promise_ids != promise_ids:
+        raise SaveDataError("every promise must have exactly one source event history")
     all_promise_ids = (
         list(promises.active_promises)
         + promises.completed_promise_ids
@@ -1818,6 +1907,35 @@ def _validate_state_invariants(state: GameState) -> None:
             raise SaveDataError("promise history disagrees with settled promise ids")
         if settlement.settled_day > state.calendar.current_day:
             raise SaveDataError("promise history cannot come from a future day")
+        source_history = [
+            item
+            for item in events.resolution_history
+            if item.promise_id == settlement.promise_id
+        ]
+        if len(source_history) != 1:
+            raise SaveDataError("promise settlement lacks its source event history")
+        source_contract = _EVENT_PROMISES.get(source_history[0].event_id)
+        if (
+            source_contract is None
+            or source_contract[0] != settlement.promise_type
+            or source_history[0].option_id
+            != f"promise_{settlement.promise_type}"
+        ):
+            raise SaveDataError("promise settlement disagrees with its source event")
+        allowed_severities = {source_contract[1]}
+        if source_history[0].event_id == "furnace_redline":
+            allowed_severities.add("critical")
+        if (
+            source_history[0].event_id == "cold_house_night"
+            and source_history[0].event_type == "major"
+        ):
+            allowed_severities.add("serious")
+        if settlement.severity not in allowed_severities:
+            raise SaveDataError(
+                "promise settlement severity disagrees with its source event"
+            )
+    if settlement_ids != settled_promises:
+        raise SaveDataError("settled promise ids and history must match exactly")
     for promise_id, promise in promises.active_promises.items():
         if promise.promise_id != promise_id:
             raise SaveDataError("active promise id must match its map key")
@@ -1826,6 +1944,34 @@ def _validate_state_invariants(state: GameState) -> None:
         active_types.add(promise.promise_type)
         if promise.severity not in {"ordinary", "serious", "critical"}:
             raise SaveDataError("unsupported promise severity")
+        source_contract = _EVENT_PROMISES.get(promise.source_event_id)
+        if (
+            source_contract is None
+            or source_contract[0] != promise.promise_type
+        ):
+            raise SaveDataError("promise type disagrees with its source event")
+        source_history = [
+            item
+            for item in events.resolution_history
+            if item.promise_id == promise_id
+        ]
+        if (
+            len(source_history) != 1
+            or source_history[0].event_id != promise.source_event_id
+            or source_history[0].option_id != f"promise_{promise.promise_type}"
+            or source_history[0].resolved_day != promise.created_day
+        ):
+            raise SaveDataError("promise lacks its exact source event history")
+        allowed_severities = {source_contract[1]}
+        if promise.source_event_id == "furnace_redline":
+            allowed_severities.add("critical")
+        if (
+            promise.source_event_id == "cold_house_night"
+            and source_history[0].event_type == "major"
+        ):
+            allowed_severities.add("serious")
+        if promise.severity not in allowed_severities:
+            raise SaveDataError("promise severity disagrees with its source event")
         if promise.deadline_day < promise.created_day:
             raise SaveDataError("promise deadline cannot precede its creation day")
         if promise.created_day >= 49:
@@ -2300,7 +2446,11 @@ def validate_game_state(
     if hard_fail_type is not None and not isinstance(hard_fail_type, HardFailType):
         raise SaveDataError("final_result.hard_fail_type must use HardFailType")
     try:
-        restored = decode_game_state(encode_game_state(state))
+        restored = _decode_game_state(
+            encode_game_state(state),
+            None,
+            strict_event_timeline=False,
+        )
     except SaveDataError:
         raise
     except (TypeError, ValueError) as exc:

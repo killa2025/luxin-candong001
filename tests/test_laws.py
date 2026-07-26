@@ -34,6 +34,7 @@ from furnace_winter.gameplay import (
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
     CURRENT_SAVE_DATA_VERSION,
+    EventResolutionRecord,
     SaveDataError,
     decode_game_state,
     encode_game_state,
@@ -738,6 +739,26 @@ class LawPatchTests(unittest.TestCase):
         self.assertEqual(outputs, [3, 5, 5])
         self.assertEqual(building.production_multiplier_remainder_numerator, 3)
         self.assertEqual(building.production_multiplier_remainder_denominator, 4)
+        state.events.fixed_arrival_choices["arrival_day6"] = "reject"
+        state.events.resolved_event_ids.append("arrival_day6")
+        state.events.occurrence_counts["arrival_day6"] = 1
+        state.events.resolution_history.append(
+            EventResolutionRecord(
+                event_id="arrival_day6",
+                option_id="reject",
+                event_type="major",
+                resolved_day=6,
+                trust_change=0,
+                panic_change=0,
+                resource_changes={
+                    "coal": 0,
+                    "wood": 0,
+                    "steel": 0,
+                    "raw_food": 0,
+                    "cooked_food": 0,
+                },
+            )
+        )
         restored = decode_game_state(encode_game_state(state))
         self.assertEqual(restored, state)
 

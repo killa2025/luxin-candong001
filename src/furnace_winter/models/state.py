@@ -280,10 +280,20 @@ class EventResolutionRecord:
     option_id: str
     event_type: str
     resolved_day: int
+    promise_id: str | None = None
     trust_change: int | None = None
     panic_change: int | None = None
     population_added: int = 0
     resource_changes: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class EventFollowupRecord:
+    event_id: str
+    option_id: str
+    command_name: str
+    created_day: int
+    occurrence_index: int
 
 
 @dataclass(slots=True)
@@ -301,6 +311,7 @@ class EventState:
     recent_canteen_outage_days: list[int] = field(default_factory=list)
     recent_overtime_days: list[int] = field(default_factory=list)
     fixed_arrival_choices: dict[str, str] = field(default_factory=dict)
+    pending_followups: dict[str, EventFollowupRecord] = field(default_factory=dict)
     frostfall_warning_stage: str = "none"
     frostfall_eve_status_shown: bool = False
     seventh_frostfall_active: bool = False
