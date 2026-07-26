@@ -5,6 +5,7 @@
     "buildings.json",
     "laws.json",
     "events.json",
+    "oath_order.json",
     "survival.json",
     "technologies.json"
   ]

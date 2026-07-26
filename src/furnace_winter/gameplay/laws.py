@@ -6,7 +6,10 @@ from typing import Any
 
 from furnace_winter.config import BuildingRules, LawRules, SurvivalRules, TechnologyRules
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage, RiskWarning, RiskWarningLevel
-from furnace_winter.gameplay.survival import is_building_expected_operational
+from furnace_winter.gameplay.survival import (
+    is_building_expected_operational,
+    medical_building_capacity,
+)
 from furnace_winter.interface import (
     ArgumentKind, CommandCatalog, CommandRequest, CommandResult, CommandSpec,
     CommandValidation, CommandValidator, ErrorCode, FeedbackItem, FeedbackLevel,
@@ -722,10 +725,37 @@ class LawSystem:
             panic_change += self.rules.actions.firepit_daily_panic_change
         units = state.social_policy.unhandled_bodies // self.rules.actions.unhandled_body_unit
         trust_change += units * self.rules.actions.unhandled_body_trust_change
-        panic_change += units * self.rules.actions.unhandled_body_panic_change
+        body_panic_change = units * self.rules.actions.unhandled_body_panic_change
         if state.social_policy.unhandled_bodies >= self.rules.actions.unhandled_body_crisis_threshold:
-            panic_change += self.rules.actions.unhandled_body_crisis_extra_panic
+            body_panic_change += self.rules.actions.unhandled_body_crisis_extra_panic
             self._add_tag(state, "unhandled_bodies_crisis")
+        if (
+            state.oath_order.death_panic_aftershock_halved_day
+            == state.calendar.current_day
+        ):
+            deaths_today = sum(state.events.deaths_today_by_cause.values())
+            previous_bodies = max(
+                state.social_policy.unhandled_bodies - deaths_today, 0
+            )
+            previous_units = (
+                previous_bodies // self.rules.actions.unhandled_body_unit
+            )
+            previous_panic = (
+                previous_units
+                * self.rules.actions.unhandled_body_panic_change
+            )
+            if (
+                previous_bodies
+                >= self.rules.actions.unhandled_body_crisis_threshold
+            ):
+                previous_panic += (
+                    self.rules.actions.unhandled_body_crisis_extra_panic
+                )
+            current_day_component = max(
+                body_panic_change - previous_panic, 0
+            )
+            body_panic_change -= (current_day_component + 1) // 2
+        panic_change += body_panic_change
         self._change_emotion(state, trust=trust_change, panic=panic_change)
         context.emit("laws.trust_and_panic.resolved", {
             "trust_change": trust_change, "panic_change": panic_change,
@@ -759,6 +789,7 @@ class LawSystem:
         state.social_policy.overtime_output_denominator = 100
         state.medical.medical_ration_sick_cured_today = 0
         state.medical.medical_ration_critical_progress_today = 0
+        state.oath_order.death_panic_aftershock_halved_day = None
         context.emit("laws.daily_effects.closed", {"overtime_reset": True, "medical_action_summary_reset": True})
 
     def observe(self, state: GameState) -> dict[str, Any]:
@@ -854,27 +885,13 @@ class LawSystem:
     def _building_medical_capacity(
         self, state: GameState, *, expected: bool
     ) -> int:
-        capacity = 0
-        for building in state.buildings.values():
-            operational = (
-                self._is_expected_operational(state, building)
-                if expected
-                else building.is_operational
-            )
-            if not operational:
-                continue
-            staff = self._assigned_total(building)
-            if building.building_type == "medical_station":
-                full_capacity = (
-                    12
-                    if "tech_medical_tools_improvement"
-                    in state.technologies.researched_tech_ids
-                    else 10
-                )
-                capacity += (full_capacity * staff) // 5
-            elif building.building_type == "hospital":
-                capacity += (30 * staff) // 10
-        return capacity
+        return medical_building_capacity(
+            state,
+            expected=expected,
+            building_rules=self.building_rules,
+            survival_rules=self.survival_rules,
+            technology_rules=self.technology_rules,
+        )
 
     def _has_operational_canteen(self, state: GameState) -> bool:
         return any(

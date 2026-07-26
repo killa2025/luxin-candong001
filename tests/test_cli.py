@@ -113,6 +113,21 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
 
+    def test_validate_config_rejects_oath_order_contract_mutation(self) -> None:
+        rules = json.loads(
+            (ROOT / "data" / "oath_order.json").read_text("utf-8")
+        )
+        rules["unlock"]["guaranteed_day"] = 34
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, "oath_order.json").write_text(
+                json.dumps(rules, ensure_ascii=False), encoding="utf-8"
+            )
+            with redirect_stdout(StringIO()):
+                exit_code = main(["validate-config", temp_dir])
+
+        self.assertEqual(exit_code, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

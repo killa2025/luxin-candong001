@@ -186,6 +186,7 @@ StageHandler = Callable[[EndDayContext], None]
 AutosaveSink = Callable[[AutosaveRecord], None]
 StateValidator = Callable[[GameState], None]
 NewDayHandler = Callable[[GameState], None]
+NewDayContextHandler = Callable[[EndDayContext], bool | None]
 
 
 def _snapshot_object(value: Any, name: str) -> dict[str, Any]:
@@ -271,6 +272,7 @@ class EndDayEngine:
         }
         self._state_validators: list[StateValidator] = []
         self._new_day_handlers: list[NewDayHandler] = []
+        self._new_day_context_handlers: list[NewDayContextHandler] = []
         self._autosave_sink = autosave_sink
         self._last_autosave: AutosaveRecord | None = None
         self._pending_confirmation: EndDayConfirmation | None = None
@@ -309,6 +311,22 @@ class EndDayEngine:
         if not callable(handler):
             raise TypeError("new day handler must be callable")
         self._new_day_handlers.append(handler)
+
+    def register_new_day_context_handler(
+        self, handler: NewDayContextHandler
+    ) -> None:
+        """Run logged transactional work immediately after the day advances.
+
+        These handlers run before the ordinary Patch 007 new-day handlers so a
+        deadline transition can consume the just-settled day's final state
+        before new events are generated. A handler must return ``True`` when it
+        changes state so the registered hard-fail handlers run again before
+        ordinary new-day processing.
+        """
+
+        if not callable(handler):
+            raise TypeError("new day context handler must be callable")
+        self._new_day_context_handlers.append(handler)
 
     def last_autosave(self) -> AutosaveRecord | None:
         return deepcopy(self._last_autosave)
@@ -618,8 +636,47 @@ class EndDayEngine:
                 elif current_stage is EndDayStage.ADVANCE_DAY:
                     self._advance_after_settlement(working)
                     if working.calendar.current_day != settled_day:
-                        for handler in self._new_day_handlers:
-                            handler(working)
+                        new_day_context = EndDayContext(
+                            state=working,
+                            random=random,
+                            settled_day=settled_day,
+                            stage=current_stage,
+                            _emit=append_log,
+                        )
+                        boundary_state_changed = False
+                        for handler in self._new_day_context_handlers:
+                            if handler(new_day_context) is True:
+                                boundary_state_changed = True
+                        if boundary_state_changed:
+                            hard_fail_context = EndDayContext(
+                                state=working,
+                                random=random,
+                                settled_day=settled_day,
+                                stage=EndDayStage.CHECK_HARD_FAILS,
+                                _emit=append_log,
+                            )
+                            for handler in self._stage_handlers[
+                                EndDayStage.CHECK_HARD_FAILS
+                            ]:
+                                handler(hard_fail_context)
+                            append_log(
+                                "end_day.new_day_hard_fail_rechecked",
+                                {
+                                    "hard_fail_type": (
+                                        working.final_result.hard_fail_type.value
+                                        if working.final_result.hard_fail_type
+                                        is not None
+                                        else None
+                                    ),
+                                    "new_day_handlers_skipped": (
+                                        working.final_result.hard_fail_type
+                                        is not None
+                                    ),
+                                },
+                            )
+                        if working.final_result.hard_fail_type is None:
+                            for handler in self._new_day_handlers:
+                                handler(working)
                 else:
                     context = EndDayContext(
                         state=working,

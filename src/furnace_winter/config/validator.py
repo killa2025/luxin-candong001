@@ -232,6 +232,18 @@ def validate_config_tree(root: Path) -> ValidationReport:
                     ValidationIssue(path, "$", f"事件规则结构校验失败：{exc}")
                 )
 
+        if not file_issues and path.name == "oath_order.json":
+            try:
+                from furnace_winter.config.oath_order import load_oath_order_rules
+
+                load_oath_order_rules(path)
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(
+                        path, "$", f"Patch 008 oath/order rules invalid: {exc}"
+                    )
+                )
+
     manifest_path = root / "manifest.json"
     manifest_present = manifest_path in config_files
     manifest_config_paths: list[Path] | None = None
