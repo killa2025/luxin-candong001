@@ -243,6 +243,19 @@ def validate_config_tree(root: Path) -> ValidationReport:
                         path, "$", f"Patch 008 oath/order rules invalid: {exc}"
                     )
                 )
+        elif not file_issues and path.name == "final_frost.json":
+            try:
+                from furnace_winter.config.final_frost import (
+                    load_final_frost_rules,
+                )
+
+                load_final_frost_rules(path)
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(
+                        path, "$", f"Patch 009 final-frost rules invalid: {exc}"
+                    )
+                )
 
     manifest_path = root / "manifest.json"
     manifest_present = manifest_path in config_files

@@ -21,7 +21,9 @@ from furnace_winter.models.state import (
     EventFollowupSettlementRecord,
     EventResolutionRecord,
     EventState,
+    FinalFrostState,
     FinalResultState,
+    FrostDayRecord,
     FurnaceState,
     GameState,
     HardFailType,
@@ -72,6 +74,22 @@ _EVENT_PROMISES = {
     "trust_crack": ("trust", "serious"),
     "city_unrest": ("panic", "serious"),
 }
+_FINAL_SYSTEM_IDS = {
+    "coal_and_core",
+    "food",
+    "housing_and_temperature",
+    "medical_and_disease",
+    "trust_and_panic",
+    "population_and_death",
+}
+_FINAL_ENDING_IDS = {
+    "high_victory",
+    "standard_victory",
+    "bitter_victory",
+    "collapse_survival",
+    "ember_survival",
+    "hard_fail",
+}
 
 
 def _promise_sequence(promise_id: str) -> int:
@@ -112,6 +130,37 @@ class SaveMigrationRegistry:
             raise SaveDataError("save_data_version must be an integer")
         if version > self.current_version:
             raise SaveDataError(f"save version {version} is newer than supported version")
+        if version < 11 and "final_frost" in migrated:
+            if migrated["final_frost"] != to_primitive(FinalFrostState()):
+                raise SaveDataError(
+                    "pre-v11 save cannot contain non-default final-frost state"
+                )
+            migrated.pop("final_frost")
+        if version < 11 and isinstance(migrated.get("final_result"), Mapping):
+            raw_final_result = dict(migrated["final_result"])
+            if set(raw_final_result) == set(_field_names(FinalResultState)):
+                defaults = to_primitive(FinalResultState())
+                for name in set(raw_final_result) - set(
+                    _V10_FINAL_RESULT_FIELDS
+                ):
+                    if raw_final_result[name] != defaults[name]:
+                        raise SaveDataError(
+                            "pre-v11 save cannot contain Patch 009 final values"
+                        )
+                migrated["final_result"] = {
+                    name: raw_final_result[name]
+                    for name in _V10_FINAL_RESULT_FIELDS
+                }
+        if version < 11 and isinstance(migrated.get("medical"), Mapping):
+            raw_medical = dict(migrated["medical"])
+            if set(raw_medical) == set(_field_names(MedicalState)):
+                if raw_medical["sick_treatment_progress"] != 0:
+                    raise SaveDataError(
+                        "pre-v11 save cannot contain sick treatment progress"
+                    )
+                migrated["medical"] = {
+                    name: raw_medical[name] for name in _V10_MEDICAL_FIELDS
+                }
         if version < 10 and "oath_order" in migrated:
             if migrated["oath_order"] != to_primitive(OathOrderState()):
                 raise SaveDataError(
@@ -156,8 +205,24 @@ def _field_names(model: type[Any]) -> tuple[str, ...]:
     return tuple(item.name for item in fields(model))
 
 
+_V10_GAME_STATE_FIELDS = tuple(
+    name for name in _field_names(GameState) if name != "final_frost"
+)
 _V9_GAME_STATE_FIELDS = tuple(
-    name for name in _field_names(GameState) if name != "oath_order"
+    name
+    for name in _field_names(GameState)
+    if name not in {"oath_order", "final_frost"}
+)
+_V10_FINAL_RESULT_FIELDS = (
+    "is_finalized",
+    "ending_id",
+    "hard_fail_type",
+    "ending_tags",
+)
+_V10_MEDICAL_FIELDS = tuple(
+    name
+    for name in _field_names(MedicalState)
+    if name != "sick_treatment_progress"
 )
 _V9_OLD_CITY_FIELDS = (
     "is_unlocked",
@@ -1354,6 +1419,122 @@ def _decode_final_result(value: Any) -> FinalResultState:
         ending_id=_string(data["ending_id"], "final_result.ending_id", optional=True),
         hard_fail_type=hard_fail_type,
         ending_tags=_string_list(data["ending_tags"], "final_result.ending_tags"),
+        system_scores=_nonnegative_int_object(
+            data["system_scores"], "final_result.system_scores"
+        ),
+        total_score=_optional_integer(
+            data["total_score"], "final_result.total_score", minimum=0
+        ),
+        major_tags=_string_list(data["major_tags"], "final_result.major_tags"),
+        defining_tags=_string_list(
+            data["defining_tags"], "final_result.defining_tags"
+        ),
+    )
+
+
+def _decode_frost_day_record(value: Any, path: str) -> FrostDayRecord:
+    data = _object(value, path, _field_names(FrostDayRecord))
+    boolean_fields = {
+        "furnace_off",
+        "heating_shortfall",
+        "coal_shortage",
+        "furnace_underheated",
+        "overload_used",
+        "overload_redline",
+        "core_near_collapse",
+        "critical_building_frozen",
+        "food_shortage",
+        "starvation",
+        "medical_overflow",
+        "medical_collapse",
+        "hospital_shutdown",
+        "disease_spike",
+        "mass_death",
+        "trust_crisis",
+        "panic_crisis",
+    }
+    integer_fields = set(_field_names(FrostDayRecord)) - boolean_fields - {
+        "display_label"
+    }
+    values: dict[str, Any] = {
+        name: _boolean(data[name], f"{path}.{name}") for name in boolean_fields
+    }
+    for name in integer_fields:
+        minimum = None if name == "real_temperature" else 0
+        values[name] = _integer(data[name], f"{path}.{name}", minimum=minimum)
+    values["display_label"] = _string(
+        data["display_label"], f"{path}.display_label"
+    )
+    return FrostDayRecord(**values)
+
+
+def _decode_final_frost(value: Any) -> FinalFrostState:
+    data = _object(value, "final_frost", _field_names(FinalFrostState))
+    if not isinstance(data["daily_records"], Mapping):
+        raise SaveDataError("final_frost.daily_records must be an object")
+    records_raw = dict(data["daily_records"])
+    records: dict[str, FrostDayRecord] = {}
+    for key, item in records_raw.items():
+        if not isinstance(key, str) or not key.isdigit() or str(int(key)) != key:
+            raise SaveDataError("final_frost.daily_records keys must be canonical days")
+        records[key] = _decode_frost_day_record(
+            item, f"final_frost.daily_records.{key}"
+        )
+    return FinalFrostState(
+        entered=_boolean(data["entered"], "final_frost.entered"),
+        baseline_day=_optional_integer(
+            data["baseline_day"], "final_frost.baseline_day", minimum=1
+        ),
+        baseline_alive_population=_integer(
+            data["baseline_alive_population"],
+            "final_frost.baseline_alive_population",
+            minimum=0,
+        ),
+        baseline_healthy_population=_integer(
+            data["baseline_healthy_population"],
+            "final_frost.baseline_healthy_population",
+            minimum=0,
+        ),
+        baseline_sick_population=_integer(
+            data["baseline_sick_population"],
+            "final_frost.baseline_sick_population",
+            minimum=0,
+        ),
+        baseline_critical_population=_integer(
+            data["baseline_critical_population"],
+            "final_frost.baseline_critical_population",
+            minimum=0,
+        ),
+        baseline_disabled_population=_integer(
+            data["baseline_disabled_population"],
+            "final_frost.baseline_disabled_population",
+            minimum=0,
+        ),
+        baseline_workable_population=_integer(
+            data["baseline_workable_population"],
+            "final_frost.baseline_workable_population",
+            minimum=0,
+        ),
+        prepared_item_count=_integer(
+            data["prepared_item_count"],
+            "final_frost.prepared_item_count",
+            minimum=0,
+        ),
+        unprepared_item_count=_integer(
+            data["unprepared_item_count"],
+            "final_frost.unprepared_item_count",
+            minimum=0,
+        ),
+        preparation_tags=_string_list(
+            data["preparation_tags"], "final_frost.preparation_tags"
+        ),
+        daily_records=records,
+        frost_deaths=_integer(
+            data["frost_deaths"], "final_frost.frost_deaths", minimum=0
+        ),
+        final_score_day=_optional_integer(
+            data["final_score_day"], "final_frost.final_score_day", minimum=1
+        ),
     )
 
 
@@ -1383,6 +1564,7 @@ def _decode_game_state(
         migrations.register(7, _migrate_v7_to_v8)
         migrations.register(8, _migrate_v8_to_v9)
         migrations.register(9, _migrate_v9_to_v10)
+        migrations.register(10, _migrate_v10_to_v11)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -1426,6 +1608,7 @@ def _decode_game_state(
             promises=_decode_promises(data["promises"]),
             old_city=_decode_old_city(data["old_city"]),
             oath_order=_decode_oath_order(data["oath_order"]),
+            final_frost=_decode_final_frost(data["final_frost"]),
             final_result=_decode_final_result(data["final_result"]),
         )
         _validate_state_invariants(
@@ -2260,6 +2443,51 @@ def _migrate_v9_to_v10(document: dict[str, Any]) -> dict[str, Any]:
         "ending_tag_candidates": [],
     }
     migrated["save_data_version"] = 10
+    return migrated
+
+
+def _migrate_v10_to_v11(document: dict[str, Any]) -> dict[str, Any]:
+    legacy = _object(document, "$", _V10_GAME_STATE_FIELDS)
+    migrated = deepcopy(legacy)
+    calendar = _object(
+        migrated["calendar"], "calendar", _field_names(CalendarState)
+    )
+    current_day = _integer(
+        calendar["current_day"],
+        "calendar.current_day",
+        minimum=1,
+        maximum=FINAL_DAY,
+    )
+    daily = _object(
+        migrated["daily_survival"],
+        "daily_survival",
+        _field_names(DailySurvivalState),
+    )
+    settled_day = _optional_integer(
+        daily["settled_day"], "daily_survival.settled_day", minimum=1
+    )
+    if current_day >= 49 or (settled_day is not None and settled_day >= 49):
+        raise SaveDataError(
+            "v10 save at or after day 49 cannot reconstruct Patch 009 frost history"
+        )
+    medical = _object(
+        migrated["medical"], "medical", _V10_MEDICAL_FIELDS
+    )
+    migrated["medical"] = {**medical, "sick_treatment_progress": 0}
+    final_result = _object(
+        migrated["final_result"],
+        "final_result",
+        _V10_FINAL_RESULT_FIELDS,
+    )
+    migrated["final_result"] = {
+        **final_result,
+        "system_scores": {},
+        "total_score": None,
+        "major_tags": [],
+        "defining_tags": [],
+    }
+    migrated["final_frost"] = to_primitive(FinalFrostState())
+    migrated["save_data_version"] = 11
     return migrated
 
 
@@ -3133,6 +3361,10 @@ def _validate_state_invariants(
         raise SaveDataError("medical ration cured count exceeds total population")
     if medical.medical_ration_critical_progress_today > population.population_total:
         raise SaveDataError("medical ration progress count exceeds total population")
+    if medical.sick_treatment_progress > 2:
+        raise SaveDataError(
+            "sick treatment progress must remain below one recovery unit"
+        )
 
     daily = state.daily_survival
     if daily.ration_mode_used not in {
@@ -3245,6 +3477,120 @@ def _validate_state_invariants(
             raise SaveDataError("surface resource point depletion must match remaining amount")
         if point.is_depleted and assigned:
             raise SaveDataError("depleted surface resource points cannot retain staff")
+
+    frost = state.final_frost
+    if frost.entered != (frost.baseline_day is not None):
+        raise SaveDataError("final frost entry and baseline day must agree")
+    if frost.entered and frost.baseline_day != 49:
+        raise SaveDataError("final frost baseline must be captured on day 49")
+    baseline_health = (
+        frost.baseline_healthy_population
+        + frost.baseline_sick_population
+        + frost.baseline_critical_population
+        + frost.baseline_disabled_population
+    )
+    if frost.entered and baseline_health != frost.baseline_alive_population:
+        raise SaveDataError("final frost baseline health pools must match alive population")
+    if frost.baseline_disabled_population > frost.baseline_alive_population:
+        raise SaveDataError("final frost disabled baseline exceeds alive population")
+    if frost.baseline_workable_population > frost.baseline_alive_population:
+        raise SaveDataError("final frost workable baseline exceeds alive population")
+    if frost.prepared_item_count > 6 or frost.unprepared_item_count > 6:
+        raise SaveDataError("final frost preparation count exceeds its six checks")
+    if len(set(frost.preparation_tags)) != len(frost.preparation_tags):
+        raise SaveDataError("final frost preparation tags must be unique")
+    if set(frost.preparation_tags) - {
+        "prepared_for_frost",
+        "unprepared_frost",
+    }:
+        raise SaveDataError("unsupported final frost preparation tag")
+    if not frost.entered and (
+        frost.daily_records
+        or frost.frost_deaths
+        or frost.final_score_day is not None
+        or frost.preparation_tags
+    ):
+        raise SaveDataError("inactive final frost cannot retain settlement facts")
+    previous_population: int | None = None
+    total_recorded_deaths = 0
+    for key in sorted(frost.daily_records, key=int):
+        record = frost.daily_records[key]
+        if record.day != int(key) or not 49 <= record.day <= 55:
+            raise SaveDataError("final frost record key must match a D49-D55 day")
+        if previous_population is not None and record.population_start != previous_population:
+            raise SaveDataError("final frost daily population chain is discontinuous")
+        if record.population_end > record.population_start:
+            raise SaveDataError("final frost daily population cannot increase during settlement")
+        if (
+            record.food_deaths
+            + record.disease_deaths
+            + record.cold_deaths
+        ) > (
+            record.population_start - record.population_end
+        ):
+            raise SaveDataError("final frost deaths exceed the daily population loss")
+        total_recorded_deaths += (
+            record.population_start - record.population_end
+        )
+        previous_population = record.population_end
+    if frost.frost_deaths != total_recorded_deaths:
+        raise SaveDataError("final frost death total must match daily records")
+    if frost.final_score_day is not None and frost.final_score_day != 55:
+        raise SaveDataError("final frost score may only be finalized on day 55")
+
+    final = state.final_result
+    for name, values in (
+        ("ending_tags", final.ending_tags),
+        ("major_tags", final.major_tags),
+        ("defining_tags", final.defining_tags),
+    ):
+        if len(set(values)) != len(values):
+            raise SaveDataError(f"final result {name} must be unique")
+    if set(final.major_tags) & set(final.defining_tags):
+        raise SaveDataError("major and defining ending tags must be disjoint")
+    if final.is_finalized:
+        if final.hard_fail_type is not None:
+            if final.ending_id not in {None, "hard_fail"}:
+                raise SaveDataError("hard fail has an unsupported ending id")
+            if final.system_scores or final.total_score is not None:
+                raise SaveDataError("hard fail cannot retain survival scores")
+            if final.major_tags or final.defining_tags:
+                raise SaveDataError("hard fail cannot retain survival tag groups")
+            expected_hard_fail_tags = (
+                []
+                if final.ending_id is None
+                else ["hard_fail", final.hard_fail_type.value]
+            )
+            if final.ending_tags != expected_hard_fail_tags:
+                raise SaveDataError("hard fail ending tags are not canonical")
+        else:
+            if final.ending_id not in _FINAL_ENDING_IDS - {"hard_fail"}:
+                raise SaveDataError("finalized state has an unsupported ending id")
+            if set(final.system_scores) != _FINAL_SYSTEM_IDS:
+                raise SaveDataError("survival result must contain all six system scores")
+            if any(score > 4 for score in final.system_scores.values()):
+                raise SaveDataError("final system scores must be between zero and four")
+            if final.total_score != sum(final.system_scores.values()):
+                raise SaveDataError("final total score must equal the six system scores")
+            if frost.final_score_day != 55:
+                raise SaveDataError("survival result requires a D55 frost score")
+            if final.ending_tags != [
+                final.ending_id,
+                *final.major_tags,
+                *final.defining_tags,
+            ]:
+                raise SaveDataError(
+                    "survival ending tags must match the structured result"
+                )
+    elif (
+        final.ending_id is not None
+        or final.ending_tags
+        or final.system_scores
+        or final.total_score is not None
+        or final.major_tags
+        or final.defining_tags
+    ):
+        raise SaveDataError("unfinished result cannot retain final scoring fields")
 
 
 def _validate_building_rule_invariants(

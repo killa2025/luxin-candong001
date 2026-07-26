@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 10
+CURRENT_SAVE_DATA_VERSION = 11
 FINAL_DAY = 55
 OVERTIME_BUILDING_TYPES = frozenset({
     "medical_station",
@@ -250,6 +250,7 @@ class MedicalState:
     building_capacity: int = 0
     effective_capacity: int = 5
     medical_pressure: int = 0
+    sick_treatment_progress: int = 0
     critical_treatment_progress: int = 0
     medical_ration_sick_cured_today: int = 0
     medical_ration_critical_progress_today: int = 0
@@ -447,11 +448,72 @@ class OathOrderState:
 
 
 @dataclass(slots=True)
+class FrostDayRecord:
+    day: int
+    real_temperature: int
+    display_label: str
+    population_start: int
+    population_end: int
+    furnace_off: bool = False
+    heating_shortfall: bool = False
+    coal_shortage: bool = False
+    furnace_underheated: bool = False
+    overload_used: bool = False
+    overload_redline: bool = False
+    core_near_collapse: bool = False
+    heat_uses: int = 0
+    critical_building_frozen: bool = False
+    cold_houses_population: int = 0
+    homeless_exposure_population: int = 0
+    mass_cold_exposure_population: int = 0
+    food_shortage: bool = False
+    starvation: bool = False
+    medical_gap: int = 0
+    medical_overflow: bool = False
+    medical_collapse: bool = False
+    hospital_shutdown: bool = False
+    disease_spike: bool = False
+    new_sick: int = 0
+    new_critical: int = 0
+    new_disabled: int = 0
+    food_deaths: int = 0
+    disease_deaths: int = 0
+    cold_deaths: int = 0
+    mass_death: bool = False
+    trust_crisis: bool = False
+    panic_crisis: bool = False
+
+
+@dataclass(slots=True)
+class FinalFrostState:
+    """D49-D55 facts used for deterministic scoring and later reports."""
+
+    entered: bool = False
+    baseline_day: int | None = None
+    baseline_alive_population: int = 0
+    baseline_healthy_population: int = 0
+    baseline_sick_population: int = 0
+    baseline_critical_population: int = 0
+    baseline_disabled_population: int = 0
+    baseline_workable_population: int = 0
+    prepared_item_count: int = 0
+    unprepared_item_count: int = 0
+    preparation_tags: list[str] = field(default_factory=list)
+    daily_records: dict[str, FrostDayRecord] = field(default_factory=dict)
+    frost_deaths: int = 0
+    final_score_day: int | None = None
+
+
+@dataclass(slots=True)
 class FinalResultState:
     is_finalized: bool = False
     ending_id: str | None = None
     hard_fail_type: HardFailType | None = None
     ending_tags: list[str] = field(default_factory=list)
+    system_scores: dict[str, int] = field(default_factory=dict)
+    total_score: int | None = None
+    major_tags: list[str] = field(default_factory=list)
+    defining_tags: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.hard_fail_type is not None and not isinstance(
@@ -488,6 +550,7 @@ class GameState:
     promises: PromiseState = field(default_factory=PromiseState)
     old_city: OldCityState = field(default_factory=OldCityState)
     oath_order: OathOrderState = field(default_factory=OathOrderState)
+    final_frost: FinalFrostState = field(default_factory=FinalFrostState)
     final_result: FinalResultState = field(default_factory=FinalResultState)
 
     @classmethod
