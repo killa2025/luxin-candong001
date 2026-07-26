@@ -19,6 +19,8 @@ class Observation:
     available_commands: tuple[CommandSpec, ...] = ()
     event_views: tuple[dict[str, Any], ...] = ()
     promise_views: tuple[dict[str, Any], ...] = ()
+    old_city_view: dict[str, Any] | None = None
+    oath_order_view: dict[str, Any] | None = None
 
     @classmethod
     def from_state(
@@ -28,6 +30,8 @@ class Observation:
         *,
         event_views: tuple[dict[str, Any], ...] = (),
         promise_views: tuple[dict[str, Any], ...] = (),
+        old_city_view: dict[str, Any] | None = None,
+        oath_order_view: dict[str, Any] | None = None,
     ) -> Observation:
         return cls(
             protocol_version=PROTOCOL_VERSION,
@@ -35,4 +39,6 @@ class Observation:
             available_commands=available_commands,
             event_views=event_views,
             promise_views=promise_views,
+            old_city_view=old_city_view,
+            oath_order_view=oath_order_view,
         )

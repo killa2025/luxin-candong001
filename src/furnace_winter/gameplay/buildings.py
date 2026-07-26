@@ -927,6 +927,13 @@ class BuildingSystem:
                 getattr(point, point_field)
                 for point in state.surface_resource_points.values()
             )
+            total += sum(
+                getattr(facility, point_field)
+                for facility in (
+                    state.oath_order.oath_hall,
+                    state.oath_order.patrol_office,
+                )
+            )
         return total
 
     @staticmethod

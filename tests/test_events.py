@@ -286,6 +286,13 @@ class EventPatchTests(unittest.TestCase):
     def test_day37_negative_old_city_delta_is_valid_save_data(self) -> None:
         state = self.make_state(day=37)
         state.old_city.is_unlocked = True
+        state.old_city.reference_population = state.population.population_alive
+        state.old_city.member_count = 8
+        state.old_city.low_threshold = 10
+        state.old_city.middle_threshold = 18
+        state.old_city.high_threshold = 28
+        state.old_city.active_stage_id = "southern_letter"
+        state.old_city.stage_events_seen = ["southern_letter"]
         system = self.event_system()
         system.initialize_day(state)
 

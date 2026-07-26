@@ -8,6 +8,7 @@ from furnace_winter.config import (
     load_building_rules,
     load_event_rules,
     load_law_rules,
+    load_oath_order_rules,
     load_survival_rules,
     load_technology_rules,
     validate_config_tree,
@@ -17,6 +18,7 @@ from furnace_winter.gameplay import (
     EndDayEngine,
     EventSystem,
     LawSystem,
+    OathOrderSystem,
     SurvivalSystem,
     TechnologySystem,
     create_initial_survival_state,
@@ -79,6 +81,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Patch 007 事件、承诺与固定增员规则配置，默认 data/events.json",
     )
     state_parser.add_argument(
+        "--oath-order-config",
+        type=Path,
+        default=Path("data/oath_order.json"),
+        help="Patch 008 旧城派与誓言/铁腕规则配置",
+    )
+    state_parser.add_argument(
         "--technologies-config",
         type=Path,
         default=Path("data/technologies.json"),
@@ -108,6 +116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         law_rules = load_law_rules(args.laws_config)
         technology_rules = load_technology_rules(args.technologies_config)
         event_rules = load_event_rules(args.events_config)
+        oath_order_rules = load_oath_order_rules(args.oath_order_config)
         state = create_initial_survival_state(
             rules, building_rules, random_seed=args.seed
         )
@@ -126,6 +135,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             rules,
             technology_rules,
         )
+        oath_order = OathOrderSystem(
+            oath_order_rules,
+            building_rules,
+            rules,
+            technology_rules,
+        )
         events.initialize_day(state)
         command_specs = (
             EndDayEngine().command_specs()
@@ -134,6 +149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             + laws.command_specs()
             + technologies.command_specs()
             + events.command_specs()
+            + oath_order.command_specs()
         )
         print(
             dumps(
@@ -142,6 +158,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     command_specs,
                     event_views=events.active_event_views(state),
                     promise_views=events.active_promise_views(state),
+                    old_city_view=oath_order.old_city_view(state),
+                    oath_order_view=oath_order.route_view(state),
                 )
             )
         )

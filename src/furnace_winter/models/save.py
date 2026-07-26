@@ -29,12 +29,14 @@ from furnace_winter.models.state import (
     HungerState,
     LawState,
     MedicalState,
+    OathOrderState,
     OldCityState,
     PopulationState,
     PromiseRecord,
     PromiseSettlementRecord,
     PromiseState,
     ResourceState,
+    RouteFacilityState,
     SocialPolicyState,
     SurfaceResourcePointState,
     TechState,
@@ -110,6 +112,24 @@ class SaveMigrationRegistry:
             raise SaveDataError("save_data_version must be an integer")
         if version > self.current_version:
             raise SaveDataError(f"save version {version} is newer than supported version")
+        if version < 10 and "oath_order" in migrated:
+            if migrated["oath_order"] != to_primitive(OathOrderState()):
+                raise SaveDataError(
+                    "pre-v10 save cannot contain non-default oath/order state"
+                )
+            migrated.pop("oath_order")
+        if version < 10 and isinstance(migrated.get("old_city"), Mapping):
+            raw_old_city = dict(migrated["old_city"])
+            if set(raw_old_city) == set(_field_names(OldCityState)):
+                defaults = to_primitive(OldCityState())
+                for name in set(raw_old_city) - set(_V9_OLD_CITY_FIELDS):
+                    if raw_old_city[name] != defaults[name]:
+                        raise SaveDataError(
+                            "pre-v10 save cannot contain Patch 008 old-city values"
+                        )
+                migrated["old_city"] = {
+                    name: raw_old_city[name] for name in _V9_OLD_CITY_FIELDS
+                }
 
         while version < self.current_version:
             migration = self._migrations.get(version)
@@ -134,6 +154,17 @@ def encode_game_state(state: GameState) -> dict[str, Any]:
 
 def _field_names(model: type[Any]) -> tuple[str, ...]:
     return tuple(item.name for item in fields(model))
+
+
+_V9_GAME_STATE_FIELDS = tuple(
+    name for name in _field_names(GameState) if name != "oath_order"
+)
+_V9_OLD_CITY_FIELDS = (
+    "is_unlocked",
+    "active_stage_id",
+    "trigger_day",
+    "activation_pending",
+)
 
 
 _PATCH_006_DAILY_FIELDS = frozenset(
@@ -198,6 +229,18 @@ def _integer(
     return value
 
 
+def _optional_integer(
+    value: Any,
+    path: str,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int | None:
+    if value is None:
+        return None
+    return _integer(value, path, minimum=minimum, maximum=maximum)
+
+
 def _boolean(value: Any, path: str) -> bool:
     if not isinstance(value, bool):
         raise SaveDataError(f"{path} must be a boolean")
@@ -222,6 +265,26 @@ def _string_list(value: Any, path: str) -> list[str]:
         assert isinstance(checked, str)
         result.append(checked)
     return result
+
+
+def _integer_list(
+    value: Any,
+    path: str,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> list[int]:
+    if not isinstance(value, list):
+        raise SaveDataError(f"{path} must be an array")
+    return [
+        _integer(
+            item,
+            f"{path}[{index}]",
+            minimum=minimum,
+            maximum=maximum,
+        )
+        for index, item in enumerate(value)
+    ]
 
 
 def _nonnegative_int_object(value: Any, path: str) -> dict[str, int]:
@@ -1111,6 +1174,150 @@ def _decode_old_city(value: Any) -> OldCityState:
         activation_pending=_boolean(
             data["activation_pending"], "old_city.activation_pending"
         ),
+        reference_population=_integer(
+            data["reference_population"], "old_city.reference_population", minimum=0
+        ),
+        member_count=_integer(
+            data["member_count"], "old_city.member_count", minimum=0
+        ),
+        low_threshold=_integer(
+            data["low_threshold"], "old_city.low_threshold", minimum=0
+        ),
+        middle_threshold=_integer(
+            data["middle_threshold"], "old_city.middle_threshold", minimum=0
+        ),
+        high_threshold=_integer(
+            data["high_threshold"], "old_city.high_threshold", minimum=0
+        ),
+        countdown_day=_optional_integer(
+            data["countdown_day"], "old_city.countdown_day", minimum=1
+        ),
+        resolved=_boolean(data["resolved"], "old_city.resolved"),
+        result_id=_string(data["result_id"], "old_city.result_id", optional=True),
+        last_daily_trend=_integer(
+            data["last_daily_trend"], "old_city.last_daily_trend"
+        ),
+        recent_major_death_days=_integer_list(
+            data["recent_major_death_days"],
+            "old_city.recent_major_death_days",
+            minimum=1,
+            maximum=FINAL_DAY,
+        ),
+        stage_events_seen=_string_list(
+            data["stage_events_seen"], "old_city.stage_events_seen"
+        ),
+        pending_event_id=_string(
+            data["pending_event_id"], "old_city.pending_event_id", optional=True
+        ),
+        hidden_growth_days_remaining=_integer(
+            data["hidden_growth_days_remaining"],
+            "old_city.hidden_growth_days_remaining",
+            minimum=0,
+        ),
+        promise_active=_boolean(
+            data["promise_active"], "old_city.promise_active"
+        ),
+        promise_created_day=_optional_integer(
+            data["promise_created_day"], "old_city.promise_created_day", minimum=1
+        ),
+        promise_deadline_day=_optional_integer(
+            data["promise_deadline_day"], "old_city.promise_deadline_day", minimum=1
+        ),
+        promise_target_count=_optional_integer(
+            data["promise_target_count"], "old_city.promise_target_count", minimum=0
+        ),
+        promise_settled=_boolean(
+            data["promise_settled"], "old_city.promise_settled"
+        ),
+        promise_outcome=_string(
+            data["promise_outcome"], "old_city.promise_outcome", optional=True
+        ),
+        promise_settled_day=_optional_integer(
+            data["promise_settled_day"],
+            "old_city.promise_settled_day",
+            minimum=1,
+        ),
+        settlement_day=_optional_integer(
+            data["settlement_day"], "old_city.settlement_day", minimum=1
+        ),
+        settlement_member_count=_integer(
+            data["settlement_member_count"],
+            "old_city.settlement_member_count",
+            minimum=0,
+        ),
+        planned_departure=_integer(
+            data["planned_departure"],
+            "old_city.planned_departure",
+            minimum=0,
+        ),
+        people_departed=_integer(
+            data["people_departed"], "old_city.people_departed", minimum=0
+        ),
+        settlement_resource_losses=_nonnegative_int_object(
+            data["settlement_resource_losses"],
+            "old_city.settlement_resource_losses",
+        ),
+    )
+
+
+def _decode_route_facility(value: Any, path: str) -> RouteFacilityState:
+    data = _object(value, path, _field_names(RouteFacilityState))
+    return RouteFacilityState(
+        enabled=_boolean(data["enabled"], f"{path}.enabled"),
+        visible=_boolean(data["visible"], f"{path}.visible"),
+        assigned_workers=_integer(
+            data["assigned_workers"], f"{path}.assigned_workers", minimum=0
+        ),
+        assigned_engineers=_integer(
+            data["assigned_engineers"], f"{path}.assigned_engineers", minimum=0
+        ),
+        is_running=_boolean(data["is_running"], f"{path}.is_running"),
+    )
+
+
+def _decode_oath_order(value: Any) -> OathOrderState:
+    data = _object(value, "oath_order", _field_names(OathOrderState))
+    return OathOrderState(
+        page_unlocked=_boolean(data["page_unlocked"], "oath_order.page_unlocked"),
+        selected_route=_string(
+            data["selected_route"], "oath_order.selected_route", optional=True
+        ),
+        signed_law_ids=_string_list(
+            data["signed_law_ids"], "oath_order.signed_law_ids"
+        ),
+        law_signed_days=_nonnegative_int_object(
+            data["law_signed_days"], "oath_order.law_signed_days"
+        ),
+        next_law_day=_integer(
+            data["next_law_day"], "oath_order.next_law_day", minimum=1
+        ),
+        oath_hall=_decode_route_facility(
+            data["oath_hall"], "oath_order.oath_hall"
+        ),
+        patrol_office=_decode_route_facility(
+            data["patrol_office"], "oath_order.patrol_office"
+        ),
+        action_next_available_day=_nonnegative_int_object(
+            data["action_next_available_day"],
+            "oath_order.action_next_available_day",
+        ),
+        action_last_used_day=_nonnegative_int_object(
+            data["action_last_used_day"], "oath_order.action_last_used_day"
+        ),
+        final_oath_active=_boolean(
+            data["final_oath_active"], "oath_order.final_oath_active"
+        ),
+        highest_order_active=_boolean(
+            data["highest_order_active"], "oath_order.highest_order_active"
+        ),
+        death_panic_aftershock_halved_day=_optional_integer(
+            data["death_panic_aftershock_halved_day"],
+            "oath_order.death_panic_aftershock_halved_day",
+            minimum=1,
+        ),
+        ending_tag_candidates=_string_list(
+            data["ending_tag_candidates"], "oath_order.ending_tag_candidates"
+        ),
     )
 
 
@@ -1160,6 +1367,7 @@ def _decode_game_state(
         migrations.register(6, _migrate_v6_to_v7)
         migrations.register(7, _migrate_v7_to_v8)
         migrations.register(8, _migrate_v8_to_v9)
+        migrations.register(9, _migrate_v9_to_v10)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -1202,6 +1410,7 @@ def _decode_game_state(
             events=_decode_events(data["events"]),
             promises=_decode_promises(data["promises"]),
             old_city=_decode_old_city(data["old_city"]),
+            oath_order=_decode_oath_order(data["oath_order"]),
             final_result=_decode_final_result(data["final_result"]),
         )
         _validate_state_invariants(
@@ -1227,7 +1436,7 @@ def _migrate_v1_to_v2(document: dict[str, Any]) -> dict[str, Any]:
         "social_policy",
         "medical",
     }
-    legacy = _object(source, "$", set(_field_names(GameState)) - v2_only_fields)
+    legacy = _object(source, "$", set(_V9_GAME_STATE_FIELDS) - v2_only_fields)
     legacy_furnace = _object(
         legacy["furnace"],
         "furnace",
@@ -1281,7 +1490,7 @@ def _migrate_v2_to_v3(document: dict[str, Any]) -> dict[str, Any]:
     legacy = _object(
         source,
         "$",
-        set(_field_names(GameState))
+        set(_V9_GAME_STATE_FIELDS)
         - {"building_management", "surface_resource_points", "social_policy", "medical"},
     )
     migrated = deepcopy(legacy)
@@ -1405,7 +1614,7 @@ def _migrate_v3_to_v4(document: dict[str, Any]) -> dict[str, Any]:
     legacy = _object(
         source,
         "$",
-        set(_field_names(GameState)) - {"surface_resource_points", "social_policy", "medical"},
+        set(_V9_GAME_STATE_FIELDS) - {"surface_resource_points", "social_policy", "medical"},
     )
     migrated = deepcopy(legacy)
 
@@ -1471,7 +1680,7 @@ def _migrate_v4_to_v5(document: dict[str, Any]) -> dict[str, Any]:
     legacy = _object(
         document,
         "$",
-        set(_field_names(GameState)) - {"social_policy", "medical"},
+        set(_V9_GAME_STATE_FIELDS) - {"social_policy", "medical"},
     )
     migrated = deepcopy(legacy)
     raw_buildings = migrated["buildings"]
@@ -1682,7 +1891,7 @@ def _migrate_v6_to_v7(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def _migrate_v7_to_v8(document: dict[str, Any]) -> dict[str, Any]:
-    legacy = _object(document, "$", _field_names(GameState))
+    legacy = _object(document, "$", _V9_GAME_STATE_FIELDS)
     migrated = deepcopy(legacy)
     calendar = _object(
         migrated["calendar"], "calendar", _field_names(CalendarState)
@@ -1799,14 +2008,14 @@ def _migrate_v7_to_v8(document: dict[str, Any]) -> dict[str, Any]:
         }
     else:
         migrated["old_city"] = _object(
-            raw_old_city, "old_city", _field_names(OldCityState)
+            raw_old_city, "old_city", _V9_OLD_CITY_FIELDS
         )
     migrated["save_data_version"] = 8
     return migrated
 
 
 def _migrate_v8_to_v9(document: dict[str, Any]) -> dict[str, Any]:
-    legacy = _object(document, "$", _field_names(GameState))
+    legacy = _object(document, "$", _V9_GAME_STATE_FIELDS)
     migrated = deepcopy(legacy)
     raw_events = migrated["events"]
     if not isinstance(raw_events, Mapping):
@@ -1956,6 +2165,70 @@ def _migrate_v8_to_v9(document: dict[str, Any]) -> dict[str, Any]:
         "consumed_followups": [],
     }
     migrated["save_data_version"] = 9
+    return migrated
+
+
+def _migrate_v9_to_v10(document: dict[str, Any]) -> dict[str, Any]:
+    legacy = _object(document, "$", _V9_GAME_STATE_FIELDS)
+    migrated = deepcopy(legacy)
+    old_city = _object(
+        migrated["old_city"], "old_city", _V9_OLD_CITY_FIELDS
+    )
+    if old_city["is_unlocked"]:
+        raise SaveDataError(
+            "v9 unlocked old city cannot reconstruct the Patch 008 lifecycle"
+        )
+    migrated["old_city"] = {
+        **old_city,
+        "reference_population": 0,
+        "member_count": 0,
+        "low_threshold": 0,
+        "middle_threshold": 0,
+        "high_threshold": 0,
+        "countdown_day": None,
+        "resolved": False,
+        "result_id": None,
+        "last_daily_trend": 0,
+        "recent_major_death_days": [],
+        "stage_events_seen": [],
+        "pending_event_id": None,
+        "hidden_growth_days_remaining": 0,
+        "promise_active": False,
+        "promise_created_day": None,
+        "promise_deadline_day": None,
+        "promise_target_count": None,
+        "promise_settled": False,
+        "promise_outcome": None,
+        "promise_settled_day": None,
+        "settlement_day": None,
+        "settlement_member_count": 0,
+        "planned_departure": 0,
+        "people_departed": 0,
+        "settlement_resource_losses": {},
+    }
+    empty_facility = {
+        "enabled": False,
+        "visible": False,
+        "assigned_workers": 0,
+        "assigned_engineers": 0,
+        "is_running": False,
+    }
+    migrated["oath_order"] = {
+        "page_unlocked": False,
+        "selected_route": None,
+        "signed_law_ids": [],
+        "law_signed_days": {},
+        "next_law_day": 1,
+        "oath_hall": deepcopy(empty_facility),
+        "patrol_office": deepcopy(empty_facility),
+        "action_next_available_day": {},
+        "action_last_used_day": {},
+        "final_oath_active": False,
+        "highest_order_active": False,
+        "death_panic_aftershock_halved_day": None,
+        "ending_tag_candidates": [],
+    }
+    migrated["save_data_version"] = 10
     return migrated
 
 
@@ -2319,6 +2592,285 @@ def _validate_state_invariants(
         raise SaveDataError("unlocked old city state cannot remain activation-pending")
     if not state.old_city.is_unlocked and state.old_city.active_stage_id is not None:
         raise SaveDataError("locked old city state cannot have an active stage")
+    old_city = state.old_city
+    old_city_stages = {"southern_letter", "rumors", "public_gathering", "countdown"}
+    old_city_events = {
+        "southern_letter", "rumors", "public_gathering", "countdown"
+    }
+    if old_city.active_stage_id is not None and old_city.active_stage_id not in old_city_stages:
+        raise SaveDataError("old city active stage is unknown")
+    if old_city.pending_event_id is not None and old_city.pending_event_id not in old_city_events:
+        raise SaveDataError("old city pending event is unknown")
+    if len(set(old_city.stage_events_seen)) != len(old_city.stage_events_seen):
+        raise SaveDataError("old city stage event history must be unique")
+    if (
+        old_city.recent_major_death_days
+        != sorted(set(old_city.recent_major_death_days))
+        or any(
+            day > state.calendar.current_day
+            for day in old_city.recent_major_death_days
+        )
+    ):
+        raise SaveDataError("old city recent major death days are invalid")
+    if set(old_city.stage_events_seen) - old_city_events:
+        raise SaveDataError("old city stage event history is unknown")
+    stage_order = ["southern_letter", "rumors", "public_gathering", "countdown"]
+    if old_city.stage_events_seen != stage_order[: len(old_city.stage_events_seen)]:
+        raise SaveDataError("old city stage history must follow canonical order")
+    if old_city.pending_event_id is not None and (
+        old_city.pending_event_id != old_city.active_stage_id
+        or old_city.pending_event_id not in old_city.stage_events_seen
+    ):
+        raise SaveDataError("old city pending event must match its active stage")
+    if old_city.member_count > population.population_alive:
+        raise SaveDataError("old city members cannot exceed living population")
+    if (
+        old_city.hidden_growth_days_remaining > 3
+        or old_city.last_daily_trend < -8
+        or old_city.last_daily_trend > 16
+    ):
+        raise SaveDataError("old city daily trend state is out of range")
+    if old_city.is_unlocked:
+        if old_city.reference_population <= 0:
+            raise SaveDataError("unlocked old city requires a reference population")
+        if not (
+            0 < old_city.low_threshold
+            <= old_city.middle_threshold
+            <= old_city.high_threshold
+        ):
+            raise SaveDataError("old city thresholds must be ordered")
+    elif any(
+        (
+            old_city.reference_population,
+            old_city.member_count,
+            old_city.low_threshold,
+            old_city.middle_threshold,
+            old_city.high_threshold,
+            old_city.hidden_growth_days_remaining,
+            old_city.people_departed,
+            old_city.planned_departure,
+            old_city.settlement_member_count,
+            len(old_city.settlement_resource_losses),
+            len(old_city.recent_major_death_days),
+        )
+    ):
+        raise SaveDataError("locked old city cannot retain Patch 008 values")
+    if old_city.resolved:
+        alive_before_departure = (
+            population.population_alive + old_city.people_departed
+        )
+        if (
+            old_city.result_id not in {"scattered", "partial_departure", "large_departure"}
+            or old_city.settlement_day is None
+            or old_city.settlement_day > state.calendar.current_day
+            or old_city.settlement_day > 48
+            or old_city.active_stage_id is not None
+            or old_city.pending_event_id is not None
+            or old_city.member_count != 0
+            or old_city.settlement_member_count > alive_before_departure
+            or set(old_city.settlement_resource_losses)
+            != {"cooked_food", "coal", "wood", "steel"}
+        ):
+            raise SaveDataError("resolved old city state is incomplete")
+        if old_city.settlement_member_count < old_city.low_threshold:
+            expected_result = "scattered"
+            expected_planned = 0
+        elif old_city.settlement_member_count < old_city.high_threshold:
+            expected_result = "partial_departure"
+            expected_planned = min(
+                old_city.settlement_member_count * 40 // 100,
+                alive_before_departure * 12 // 100,
+            )
+        else:
+            expected_result = "large_departure"
+            expected_planned = min(
+                old_city.settlement_member_count * 55 // 100,
+                alive_before_departure * 22 // 100,
+            )
+        if (
+            old_city.result_id != expected_result
+            or old_city.planned_departure != expected_planned
+            or old_city.people_departed > old_city.planned_departure
+        ):
+            raise SaveDataError("old city departure summary disagrees with its tier")
+        departed = old_city.people_departed
+        expected_losses = (
+            {
+                "cooked_food": departed,
+                "coal": departed * 2,
+                "wood": departed,
+                "steel": departed // 2,
+            }
+            if old_city.result_id == "partial_departure"
+            else {
+                "cooked_food": departed * 2,
+                "coal": departed * 3,
+                "wood": departed * 2,
+                "steel": departed,
+            }
+            if old_city.result_id == "large_departure"
+            else {"cooked_food": 0, "coal": 0, "wood": 0, "steel": 0}
+        )
+        if old_city.settlement_resource_losses != expected_losses:
+            raise SaveDataError("old city resource loss summary is inconsistent")
+    elif (
+        old_city.result_id is not None
+        or old_city.settlement_day is not None
+        or old_city.settlement_member_count
+        or old_city.planned_departure
+        or old_city.people_departed
+        or old_city.settlement_resource_losses
+    ):
+        raise SaveDataError("unresolved old city cannot have a settlement result")
+    if old_city.is_unlocked and old_city.reference_population > 0:
+        if not old_city.stage_events_seen:
+            raise SaveDataError("unlocked old city requires a stage history")
+        if not old_city.resolved and old_city.active_stage_id != old_city.stage_events_seen[-1]:
+            raise SaveDataError("old city active stage must match stage history")
+        if ("countdown" in old_city.stage_events_seen) != (
+            old_city.countdown_day is not None
+        ):
+            raise SaveDataError("old city countdown must match stage history")
+        if old_city.countdown_day is not None and not (
+            24 <= old_city.countdown_day <= 48
+        ):
+            raise SaveDataError("old city countdown must end by day 48")
+    promise_fields = (
+        old_city.promise_created_day,
+        old_city.promise_deadline_day,
+        old_city.promise_target_count,
+    )
+    if old_city.promise_active:
+        if (
+            any(value is None for value in promise_fields)
+            or old_city.promise_settled
+            or old_city.promise_outcome is not None
+            or old_city.promise_settled_day is not None
+        ):
+            raise SaveDataError("active old city promise is incomplete")
+    elif not old_city.promise_settled and any(value is not None for value in promise_fields):
+        raise SaveDataError("inactive old city promise cannot retain an open contract")
+    if old_city.promise_settled:
+        if (
+            old_city.promise_outcome not in {"success", "failure"}
+            or any(value is None for value in promise_fields)
+            or old_city.promise_settled_day is None
+            or old_city.promise_settled_day < old_city.promise_created_day
+            or old_city.promise_settled_day > state.calendar.current_day
+        ):
+            raise SaveDataError("settled old city promise is incomplete")
+        if (
+            old_city.promise_outcome == "success"
+            and old_city.promise_settled_day > old_city.promise_deadline_day
+        ) or (
+            old_city.promise_outcome == "failure"
+            and old_city.promise_settled_day < old_city.promise_deadline_day
+        ):
+            raise SaveDataError("old city promise outcome disagrees with its deadline")
+    elif (
+        old_city.promise_outcome is not None
+        or old_city.promise_settled_day is not None
+    ):
+        raise SaveDataError("unsettled old city promise cannot have an outcome")
+    if (
+        (old_city.promise_active or old_city.promise_settled)
+        and "countdown" not in old_city.stage_events_seen
+    ):
+        raise SaveDataError("old city promise requires the countdown stage")
+
+    oath_order = state.oath_order
+    if oath_order.selected_route not in {None, "oath", "iron"}:
+        raise SaveDataError("unsupported oath/order route")
+    if len(set(oath_order.signed_law_ids)) != len(oath_order.signed_law_ids):
+        raise SaveDataError("oath/order signed laws must be unique")
+    if set(oath_order.law_signed_days) != set(oath_order.signed_law_ids):
+        raise SaveDataError("oath/order signing history must match signed laws")
+    if any(
+        day < 1 or day > state.calendar.current_day
+        for day in oath_order.law_signed_days.values()
+    ):
+        raise SaveDataError("oath/order signing history cannot be in the future")
+    if len(set(oath_order.law_signed_days.values())) != len(
+        oath_order.law_signed_days
+    ):
+        raise SaveDataError("only one oath/order law may be signed per day")
+    expected_next_law_day = (
+        max(oath_order.law_signed_days.values()) + 2
+        if oath_order.law_signed_days
+        else 1
+    )
+    if oath_order.next_law_day != expected_next_law_day:
+        raise SaveDataError("oath/order signing cooldown is inconsistent")
+    if len(set(oath_order.ending_tag_candidates)) != len(
+        oath_order.ending_tag_candidates
+    ):
+        raise SaveDataError("oath/order ending tags must be unique")
+    if oath_order.selected_route is None:
+        if oath_order.signed_law_ids or oath_order.final_oath_active or oath_order.highest_order_active:
+            raise SaveDataError("unselected oath/order route cannot have signed laws")
+    elif not oath_order.signed_law_ids:
+        raise SaveDataError("selected oath/order route requires its entry law")
+    elif not oath_order.page_unlocked:
+        raise SaveDataError("selected oath/order route requires an unlocked page")
+    oath_enabled = oath_order.selected_route == "oath"
+    iron_enabled = oath_order.selected_route == "iron"
+    for facility, expected in (
+        (oath_order.oath_hall, oath_enabled),
+        (oath_order.patrol_office, iron_enabled),
+    ):
+        if facility.enabled != expected or facility.visible != expected:
+            raise SaveDataError("route facility visibility must match selected route")
+        if not expected and (
+            facility.assigned_workers
+            or facility.assigned_engineers
+            or facility.is_running
+        ):
+            raise SaveDataError("disabled route facility cannot retain staffing")
+        if facility.is_running != (
+            expected and facility.assigned_workers + facility.assigned_engineers >= 1
+        ):
+            raise SaveDataError("route facility running state must match staffing")
+    if oath_order.final_oath_active and "final_oath" not in oath_order.signed_law_ids:
+        raise SaveDataError("final oath state requires its signed law")
+    if oath_order.highest_order_active and "highest_order" not in oath_order.signed_law_ids:
+        raise SaveDataError("highest order state requires its signed law")
+    if oath_order.final_oath_active and oath_order.highest_order_active:
+        raise SaveDataError("final oath and highest order are mutually exclusive")
+    known_oath_order_tags = {
+        "oath_carried_zero_trust",
+        "decree_carried_panic",
+    }
+    if set(oath_order.ending_tag_candidates) - known_oath_order_tags:
+        raise SaveDataError("unknown oath/order ending tag")
+    if (
+        "oath_carried_zero_trust" in oath_order.ending_tag_candidates
+        and not oath_order.final_oath_active
+    ) or (
+        "decree_carried_panic" in oath_order.ending_tag_candidates
+        and not oath_order.highest_order_active
+    ):
+        raise SaveDataError("oath/order ending tag lacks its terminal law")
+    if set(oath_order.action_next_available_day) != set(
+        oath_order.action_last_used_day
+    ):
+        raise SaveDataError("route action history and cooldown keys must match")
+    if any(
+        day < 1 or day > state.calendar.current_day
+        for day in oath_order.action_last_used_day.values()
+    ):
+        raise SaveDataError("route action history cannot be in the future")
+    if (
+        oath_order.death_panic_aftershock_halved_day is not None
+        and oath_order.death_panic_aftershock_halved_day
+        != state.calendar.current_day
+    ):
+        raise SaveDataError("mourning-bell modifier must belong to the current day")
+    if (
+        oath_order.death_panic_aftershock_halved_day is not None
+        and oath_order.action_last_used_day.get("mourning_bell")
+        != oath_order.death_panic_aftershock_halved_day
+    ):
+        raise SaveDataError("mourning-bell modifier lacks its action history")
     if len(set(technologies.researched_tech_ids)) != len(
         technologies.researched_tech_ids
     ):
@@ -2747,6 +3299,13 @@ def _validate_building_rule_invariants(
             raise SaveDataError("surface resource point exceeds its configured reserve")
         assigned["workers"] += point.assigned_workers
         assigned["engineers"] += point.assigned_engineers
+
+    for facility in (
+        state.oath_order.oath_hall,
+        state.oath_order.patrol_office,
+    ):
+        assigned["workers"] += facility.assigned_workers
+        assigned["engineers"] += facility.assigned_engineers
 
     if assigned["workers"] > state.population.workers:
         raise SaveDataError("assigned workers exceed the population pool")

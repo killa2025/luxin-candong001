@@ -234,11 +234,17 @@ class MachineStartupTests(unittest.TestCase):
                 "game.research",
                 "game.set_overload",
                 "game.resolve_event",
+                "game.resolve_old_city_event",
+                "game.sign_oath_order_law",
+                "game.staff_oath_order_facility",
+                "game.use_oath_order_action",
             ],
         )
         self.assertEqual(document["state"]["events"]["generated_for_day"], 1)
         self.assertIsInstance(document["event_views"], list)
         self.assertEqual(document["promise_views"], [])
+        self.assertFalse(document["old_city_view"]["is_unlocked"])
+        self.assertFalse(document["oath_order_view"]["page_unlocked"])
         self.assertEqual(len(document["state"]["surface_resource_points"]), 12)
 
 

@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 9
+CURRENT_SAVE_DATA_VERSION = 10
 FINAL_DAY = 55
 OVERTIME_BUILDING_TYPES = frozenset({
     "medical_station",
@@ -390,6 +390,57 @@ class OldCityState:
     active_stage_id: str | None = None
     trigger_day: int = 24
     activation_pending: bool = False
+    reference_population: int = 0
+    member_count: int = 0
+    low_threshold: int = 0
+    middle_threshold: int = 0
+    high_threshold: int = 0
+    countdown_day: int | None = None
+    resolved: bool = False
+    result_id: str | None = None
+    last_daily_trend: int = 0
+    recent_major_death_days: list[int] = field(default_factory=list)
+    stage_events_seen: list[str] = field(default_factory=list)
+    pending_event_id: str | None = None
+    hidden_growth_days_remaining: int = 0
+    promise_active: bool = False
+    promise_created_day: int | None = None
+    promise_deadline_day: int | None = None
+    promise_target_count: int | None = None
+    promise_settled: bool = False
+    promise_outcome: str | None = None
+    promise_settled_day: int | None = None
+    settlement_day: int | None = None
+    settlement_member_count: int = 0
+    planned_departure: int = 0
+    people_departed: int = 0
+    settlement_resource_losses: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RouteFacilityState:
+    enabled: bool = False
+    visible: bool = False
+    assigned_workers: int = 0
+    assigned_engineers: int = 0
+    is_running: bool = False
+
+
+@dataclass(slots=True)
+class OathOrderState:
+    page_unlocked: bool = False
+    selected_route: str | None = None
+    signed_law_ids: list[str] = field(default_factory=list)
+    law_signed_days: dict[str, int] = field(default_factory=dict)
+    next_law_day: int = 1
+    oath_hall: RouteFacilityState = field(default_factory=RouteFacilityState)
+    patrol_office: RouteFacilityState = field(default_factory=RouteFacilityState)
+    action_next_available_day: dict[str, int] = field(default_factory=dict)
+    action_last_used_day: dict[str, int] = field(default_factory=dict)
+    final_oath_active: bool = False
+    highest_order_active: bool = False
+    death_panic_aftershock_halved_day: int | None = None
+    ending_tag_candidates: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -433,6 +484,7 @@ class GameState:
     events: EventState = field(default_factory=EventState)
     promises: PromiseState = field(default_factory=PromiseState)
     old_city: OldCityState = field(default_factory=OldCityState)
+    oath_order: OathOrderState = field(default_factory=OathOrderState)
     final_result: FinalResultState = field(default_factory=FinalResultState)
 
     @classmethod
