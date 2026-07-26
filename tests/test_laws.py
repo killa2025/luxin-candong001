@@ -748,6 +748,8 @@ class LawPatchTests(unittest.TestCase):
                 option_id="reject",
                 event_type="major",
                 resolved_day=6,
+                instance_id="arrival_day6#0001",
+                occurrence_index=1,
                 trust_change=0,
                 panic_change=0,
                 resource_changes={

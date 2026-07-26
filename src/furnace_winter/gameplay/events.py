@@ -97,6 +97,10 @@ _EVENT_OPTIONS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _event_instance_id(event_id: str, occurrence_index: int) -> str:
+    return f"{event_id}#{occurrence_index:04d}"
+
+
 def build_event_catalog() -> CommandCatalog:
     catalog = CommandCatalog()
     catalog.register(
@@ -184,6 +188,8 @@ class EventSystem:
             title_id, body_id = self._event_text_ids(event.event_id)
             views.append(
                 {
+                    "instance_id": event.instance_id,
+                    "occurrence_index": event.occurrence_index,
                     "event_id": event.event_id,
                     "event_type": event.event_type,
                     "is_blocking": event.is_blocking,
@@ -365,6 +371,8 @@ class EventSystem:
         if event_id not in state.events.resolved_event_ids:
             state.events.resolved_event_ids.append(event_id)
         data = {
+            "instance_id": event.instance_id,
+            "occurrence_index": event.occurrence_index,
             "event_id": event_id,
             "option_id": option_id,
             "event_type": event.event_type,
@@ -386,6 +394,8 @@ class EventSystem:
                 option_id=option_id,
                 event_type=event.event_type,
                 resolved_day=state.calendar.current_day,
+                instance_id=event.instance_id,
+                occurrence_index=event.occurrence_index,
                 promise_id=promise_id,
                 trust_change=data["trust_change"],
                 panic_change=data["panic_change"],
@@ -722,18 +732,19 @@ class EventSystem:
             if event_id in self.rules.fixed_arrivals
             else self.rules.events[event_id].priority
         )
+        occurrence_index = state.events.occurrence_counts.get(event_id, 0) + 1
         state.events.active_events[event_id] = EventRecord(
             event_id=event_id,
             event_type=event_type,
             trigger_day=state.calendar.current_day,
             priority=priority,
+            instance_id=_event_instance_id(event_id, occurrence_index),
+            occurrence_index=occurrence_index,
             trigger_reason_ids=list(self._trigger_reason_ids(state, event_id)),
             option_ids=list(options),
             is_blocking=event_type == "major",
         )
-        state.events.occurrence_counts[event_id] = (
-            state.events.occurrence_counts.get(event_id, 0) + 1
-        )
+        state.events.occurrence_counts[event_id] = occurrence_index
         cooldown = self.rules.events.get(event_id)
         if cooldown is not None and cooldown.cooldown_days:
             state.events.cooldown_until_day[event_id] = (
@@ -1029,12 +1040,14 @@ class EventSystem:
             return
         if command_name in state.events.pending_followups:
             raise SaveDataError("an event followup for this command is already pending")
+        event = state.events.active_events[event_id]
         state.events.pending_followups[command_name] = EventFollowupRecord(
+            instance_id=event.instance_id,
             event_id=event_id,
             option_id=option_id,
             command_name=command_name,
             created_day=state.calendar.current_day,
-            occurrence_index=state.events.occurrence_counts[event_id],
+            occurrence_index=event.occurrence_index,
         )
 
     def _apply_arrival(self, state: GameState, event_id: str, option_id: str) -> None:

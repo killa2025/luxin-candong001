@@ -18,6 +18,7 @@ from furnace_winter.models.state import (
     DailySurvivalState,
     EventRecord,
     EventFollowupRecord,
+    EventFollowupSettlementRecord,
     EventResolutionRecord,
     EventState,
     FinalResultState,
@@ -79,6 +80,10 @@ def _promise_sequence(promise_id: str) -> int:
     if sequence < 1 or f"promise-{sequence:04d}" != promise_id:
         raise SaveDataError("promise ids must use the canonical promise-0001 format")
     return sequence
+
+
+def _event_instance_id(event_id: str, occurrence_index: int) -> str:
+    return f"{event_id}#{occurrence_index:04d}"
 
 
 Migration = Callable[[dict[str, Any]], dict[str, Any]]
@@ -143,6 +148,24 @@ _V6_DAILY_SURVIVAL_FIELDS = tuple(
     name
     for name in _field_names(DailySurvivalState)
     if name not in _PATCH_006_DAILY_FIELDS
+)
+_V8_EVENT_RECORD_FIELDS = tuple(
+    name
+    for name in _field_names(EventRecord)
+    if name not in {"instance_id", "occurrence_index"}
+)
+_V8_EVENT_RESOLUTION_FIELDS = tuple(
+    name
+    for name in _field_names(EventResolutionRecord)
+    if name not in {"instance_id", "occurrence_index"}
+)
+_V8_EVENT_FOLLOWUP_FIELDS = tuple(
+    name
+    for name in _field_names(EventFollowupRecord)
+    if name != "instance_id"
+)
+_V8_EVENT_STATE_FIELDS = tuple(
+    name for name in _field_names(EventState) if name != "consumed_followups"
 )
 
 
@@ -804,6 +827,15 @@ def _decode_events(value: Any) -> EventState:
                 f"events.active_events.{event_id}.priority",
                 minimum=1,
             ),
+            instance_id=_string(
+                item["instance_id"],
+                f"events.active_events.{event_id}.instance_id",
+            ),
+            occurrence_index=_integer(
+                item["occurrence_index"],
+                f"events.active_events.{event_id}.occurrence_index",
+                minimum=1,
+            ),
             trigger_reason_ids=_string_list(
                 item["trigger_reason_ids"],
                 f"events.active_events.{event_id}.trigger_reason_ids",
@@ -831,6 +863,14 @@ def _decode_events(value: Any) -> EventState:
                 event_type=_string(item["event_type"], f"{path}.event_type"),
                 resolved_day=_integer(
                     item["resolved_day"], f"{path}.resolved_day", minimum=1, maximum=FINAL_DAY
+                ),
+                instance_id=_string(
+                    item["instance_id"], f"{path}.instance_id"
+                ),
+                occurrence_index=_integer(
+                    item["occurrence_index"],
+                    f"{path}.occurrence_index",
+                    minimum=1,
                 ),
                 promise_id=_string(
                     item["promise_id"], f"{path}.promise_id", optional=True
@@ -863,6 +903,7 @@ def _decode_events(value: Any) -> EventState:
         path = f"events.pending_followups.{command_name}"
         item = _object(raw_followup, path, _field_names(EventFollowupRecord))
         pending_followups[command_name] = EventFollowupRecord(
+            instance_id=_string(item["instance_id"], f"{path}.instance_id"),
             event_id=_string(item["event_id"], f"{path}.event_id"),
             option_id=_string(item["option_id"], f"{path}.option_id"),
             command_name=_string(item["command_name"], f"{path}.command_name"),
@@ -872,6 +913,49 @@ def _decode_events(value: Any) -> EventState:
             occurrence_index=_integer(
                 item["occurrence_index"], f"{path}.occurrence_index", minimum=1
             ),
+        )
+    raw_consumed_followups = data["consumed_followups"]
+    if not isinstance(raw_consumed_followups, list):
+        raise SaveDataError("events.consumed_followups must be an array")
+    consumed_followups: list[EventFollowupSettlementRecord] = []
+    for index, raw_followup in enumerate(raw_consumed_followups):
+        path = f"events.consumed_followups[{index}]"
+        item = _object(
+            raw_followup,
+            path,
+            _field_names(EventFollowupSettlementRecord),
+        )
+        consumed_followups.append(
+            EventFollowupSettlementRecord(
+                instance_id=_string(item["instance_id"], f"{path}.instance_id"),
+                event_id=_string(item["event_id"], f"{path}.event_id"),
+                option_id=_string(item["option_id"], f"{path}.option_id"),
+                command_name=_string(
+                    item["command_name"], f"{path}.command_name"
+                ),
+                created_day=_integer(
+                    item["created_day"],
+                    f"{path}.created_day",
+                    minimum=1,
+                    maximum=FINAL_DAY,
+                ),
+                occurrence_index=_integer(
+                    item["occurrence_index"],
+                    f"{path}.occurrence_index",
+                    minimum=1,
+                ),
+                settled_day=_integer(
+                    item["settled_day"],
+                    f"{path}.settled_day",
+                    minimum=1,
+                    maximum=FINAL_DAY,
+                ),
+                settled_command_sequence=_integer(
+                    item["settled_command_sequence"],
+                    f"{path}.settled_command_sequence",
+                    minimum=1,
+                ),
+            )
         )
     return EventState(
         active_events=active_events,
@@ -917,6 +1001,7 @@ def _decode_events(value: Any) -> EventState:
             data["fixed_arrival_choices"], "events.fixed_arrival_choices"
         ),
         pending_followups=pending_followups,
+        consumed_followups=consumed_followups,
         frostfall_warning_stage=_string(
             data["frostfall_warning_stage"], "events.frostfall_warning_stage"
         ),
@@ -1074,6 +1159,7 @@ def _decode_game_state(
         migrations.register(5, _migrate_v5_to_v6)
         migrations.register(6, _migrate_v6_to_v7)
         migrations.register(7, _migrate_v7_to_v8)
+        migrations.register(8, _migrate_v8_to_v9)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -1650,7 +1736,12 @@ def _migrate_v7_to_v8(document: dict[str, Any]) -> dict[str, Any]:
         # Some tests and importers build an older-version envelope around a
         # current empty state. Accept that already-expanded representation;
         # strict decoding after the migration still validates every field.
-        migrated["events"] = _object(raw_events, "events", _field_names(EventState))
+        event_fields = (
+            _field_names(EventState)
+            if set(raw_events) == set(_field_names(EventState))
+            else _V8_EVENT_STATE_FIELDS
+        )
+        migrated["events"] = _object(raw_events, "events", event_fields)
 
     if not isinstance(migrated["promises"], Mapping):
         raise SaveDataError("promises must be an object")
@@ -1714,6 +1805,160 @@ def _migrate_v7_to_v8(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v8_to_v9(document: dict[str, Any]) -> dict[str, Any]:
+    legacy = _object(document, "$", _field_names(GameState))
+    migrated = deepcopy(legacy)
+    raw_events = migrated["events"]
+    if not isinstance(raw_events, Mapping):
+        raise SaveDataError("events must be an object")
+    raw_events = dict(raw_events)
+    if set(raw_events) == set(_field_names(EventState)):
+        migrated["events"] = _object(
+            raw_events, "events", _field_names(EventState)
+        )
+        migrated["save_data_version"] = 9
+        return migrated
+
+    events = _object(raw_events, "events", _V8_EVENT_STATE_FIELDS)
+    occurrence_counts = _nonnegative_int_object(
+        events["occurrence_counts"], "events.occurrence_counts"
+    )
+
+    raw_active = events["active_events"]
+    if not isinstance(raw_active, Mapping):
+        raise SaveDataError("events.active_events must be an object")
+    active_events: dict[str, Any] = {}
+    used_indices: dict[str, set[int]] = {}
+    for raw_event_id, raw_event in raw_active.items():
+        event_id = _string(raw_event_id, "events.active_events key")
+        assert isinstance(event_id, str)
+        item = _object(
+            raw_event,
+            f"events.active_events.{event_id}",
+            _V8_EVENT_RECORD_FIELDS,
+        )
+        occurrence_index = occurrence_counts.get(event_id, 0)
+        if occurrence_index < 1:
+            raise SaveDataError(
+                "v8 active event lacks a reconstructable occurrence index"
+            )
+        used_indices.setdefault(event_id, set()).add(occurrence_index)
+        active_events[event_id] = {
+            **item,
+            "instance_id": _event_instance_id(event_id, occurrence_index),
+            "occurrence_index": occurrence_index,
+        }
+
+    raw_history = events["resolution_history"]
+    if not isinstance(raw_history, list):
+        raise SaveDataError("events.resolution_history must be an array")
+    resolution_history = [
+        _object(
+            raw_record,
+            f"events.resolution_history[{index}]",
+            _V8_EVENT_RESOLUTION_FIELDS,
+        )
+        for index, raw_record in enumerate(raw_history)
+    ]
+
+    raw_pending = events["pending_followups"]
+    if not isinstance(raw_pending, Mapping):
+        raise SaveDataError("events.pending_followups must be an object")
+    pending_followups: dict[str, Any] = {}
+    history_indices: dict[int, int] = {}
+    for raw_command, raw_followup in raw_pending.items():
+        command_name = _string(raw_command, "events.pending_followups key")
+        assert isinstance(command_name, str)
+        path = f"events.pending_followups.{command_name}"
+        item = _object(raw_followup, path, _V8_EVENT_FOLLOWUP_FIELDS)
+        event_id = _string(item["event_id"], f"{path}.event_id")
+        option_id = _string(item["option_id"], f"{path}.option_id")
+        created_day = _integer(
+            item["created_day"],
+            f"{path}.created_day",
+            minimum=1,
+            maximum=FINAL_DAY,
+        )
+        occurrence_index = _integer(
+            item["occurrence_index"],
+            f"{path}.occurrence_index",
+            minimum=1,
+        )
+        assert isinstance(event_id, str) and isinstance(option_id, str)
+        if occurrence_index > occurrence_counts.get(event_id, 0):
+            raise SaveDataError(
+                "v8 event followup occurrence cannot be reconstructed"
+            )
+        matches = [
+            index
+            for index, history in enumerate(resolution_history)
+            if history["event_id"] == event_id
+            and history["option_id"] == option_id
+            and history["resolved_day"] == created_day
+        ]
+        if len(matches) != 1 or matches[0] in history_indices:
+            raise SaveDataError(
+                "v8 event followup lacks one reconstructable source instance"
+            )
+        if occurrence_index in used_indices.setdefault(event_id, set()):
+            raise SaveDataError("v8 event occurrence identity is ambiguous")
+        history_indices[matches[0]] = occurrence_index
+        used_indices[event_id].add(occurrence_index)
+        pending_followups[command_name] = {
+            **item,
+            "instance_id": _event_instance_id(event_id, occurrence_index),
+        }
+
+    for index, history in enumerate(resolution_history):
+        source = (history["event_id"], history["option_id"])
+        if source in set(_EVENT_FOLLOWUPS.values()) and index not in history_indices:
+            raise SaveDataError(
+                "v8 consumed event followup cannot be distinguished from a deleted marker"
+            )
+
+    next_indices: dict[str, list[int]] = {}
+    for event_id, count in occurrence_counts.items():
+        next_indices[event_id] = [
+            index
+            for index in range(1, count + 1)
+            if index not in used_indices.get(event_id, set())
+        ]
+    migrated_history: list[dict[str, Any]] = []
+    for index, history in enumerate(resolution_history):
+        event_id = _string(
+            history["event_id"],
+            f"events.resolution_history[{index}].event_id",
+        )
+        assert isinstance(event_id, str)
+        occurrence_index = history_indices.get(index)
+        if occurrence_index is None:
+            available = next_indices.get(event_id, [])
+            if not available:
+                raise SaveDataError(
+                    "v8 event history occurrence cannot be reconstructed"
+                )
+            occurrence_index = available.pop(0)
+        migrated_history.append(
+            {
+                **history,
+                "instance_id": _event_instance_id(
+                    event_id, occurrence_index
+                ),
+                "occurrence_index": occurrence_index,
+            }
+        )
+
+    migrated["events"] = {
+        **events,
+        "active_events": active_events,
+        "resolution_history": migrated_history,
+        "pending_followups": pending_followups,
+        "consumed_followups": [],
+    }
+    migrated["save_data_version"] = 9
+    return migrated
+
+
 def _validate_state_invariants(
     state: GameState, *, strict_event_timeline: bool = True
 ) -> None:
@@ -1745,6 +1990,8 @@ def _validate_state_invariants(
         if any(day > legal_settled_day for day in days):
             raise SaveDataError(f"events.{name} cannot contain an unsettled day")
     resolution_promise_ids: set[str] = set()
+    resolution_instances: dict[str, EventResolutionRecord] = {}
+    resolution_occurrences: set[tuple[str, int]] = set()
     for resolution in events.resolution_history:
         if resolution.event_id not in events.resolved_event_ids:
             raise SaveDataError("event history must reference a resolved event")
@@ -1752,6 +1999,30 @@ def _validate_state_invariants(
             raise SaveDataError("event history contains an unsupported event type")
         if resolution.resolved_day > state.calendar.current_day:
             raise SaveDataError("event history cannot come from a future day")
+        if (
+            resolution.occurrence_index
+            > events.occurrence_counts.get(resolution.event_id, 0)
+            or resolution.instance_id
+            != _event_instance_id(
+                resolution.event_id, resolution.occurrence_index
+            )
+        ):
+            raise SaveDataError(
+                "event history contains an invalid instance identity"
+            )
+        occurrence_key = (
+            resolution.event_id,
+            resolution.occurrence_index,
+        )
+        if (
+            resolution.instance_id in resolution_instances
+            or occurrence_key in resolution_occurrences
+        ):
+            raise SaveDataError(
+                "event history instance identities must be unique"
+            )
+        resolution_instances[resolution.instance_id] = resolution
+        resolution_occurrences.add(occurrence_key)
         if set(resolution.resource_changes) != {
             "coal", "wood", "steel", "raw_food", "cooked_food"
         }:
@@ -1766,7 +2037,14 @@ def _validate_state_invariants(
     for event_id, event in events.active_events.items():
         if event.event_id != event_id:
             raise SaveDataError("active event id must match its map key")
-        if events.occurrence_counts.get(event_id, 0) < 1:
+        if (
+            events.occurrence_counts.get(event_id, 0) < 1
+            or event.occurrence_index
+            != events.occurrence_counts.get(event_id, 0)
+            or event.instance_id
+            != _event_instance_id(event_id, event.occurrence_index)
+            or event.instance_id in resolution_instances
+        ):
             raise SaveDataError("active events must be counted when displayed")
         if event.event_type not in {"major", "normal"}:
             raise SaveDataError("unsupported active event type")
@@ -1850,8 +2128,16 @@ def _validate_state_invariants(
             )
     if set(events.pending_followups) - set(_EVENT_FOLLOWUPS):
         raise SaveDataError("state contains an unsupported event followup command")
+    expected_followup_instances = {
+        resolution.instance_id: command_name
+        for command_name, source in _EVENT_FOLLOWUPS.items()
+        for resolution in events.resolution_history
+        if (resolution.event_id, resolution.option_id) == source
+    }
+    lifecycle_instances: set[str] = set()
     for command_name, followup in events.pending_followups.items():
         expected_event, expected_option = _EVENT_FOLLOWUPS[command_name]
+        source = resolution_instances.get(followup.instance_id)
         if (
             followup.command_name != command_name
             or followup.event_id != expected_event
@@ -1859,17 +2145,64 @@ def _validate_state_invariants(
             or followup.created_day > state.calendar.current_day
             or followup.occurrence_index
             > events.occurrence_counts.get(followup.event_id, 0)
+            or followup.instance_id
+            != _event_instance_id(
+                followup.event_id, followup.occurrence_index
+            )
+            or source is None
+            or source.event_id != followup.event_id
+            or source.option_id != followup.option_id
+            or source.resolved_day != followup.created_day
+            or source.occurrence_index != followup.occurrence_index
+            or expected_followup_instances.get(followup.instance_id)
+            != command_name
         ):
-            raise SaveDataError("event followup state disagrees with its command")
-        matching_history = [
-            item
-            for item in events.resolution_history
-            if item.event_id == followup.event_id
-            and item.option_id == followup.option_id
-            and item.resolved_day == followup.created_day
-        ]
-        if len(matching_history) != 1:
-            raise SaveDataError("event followup lacks its source event instance")
+            raise SaveDataError("event followup state disagrees with its source")
+        if followup.instance_id in lifecycle_instances:
+            raise SaveDataError(
+                "an event followup instance may only have one lifecycle record"
+            )
+        lifecycle_instances.add(followup.instance_id)
+
+    consumed_sequences: list[int] = []
+    for followup in events.consumed_followups:
+        expected_source = _EVENT_FOLLOWUPS.get(followup.command_name)
+        source = resolution_instances.get(followup.instance_id)
+        if (
+            expected_source is None
+            or expected_source != (followup.event_id, followup.option_id)
+            or followup.created_day > followup.settled_day
+            or followup.settled_day > state.calendar.current_day
+            or followup.settled_command_sequence > state.command_sequence
+            or followup.instance_id
+            != _event_instance_id(
+                followup.event_id, followup.occurrence_index
+            )
+            or source is None
+            or source.event_id != followup.event_id
+            or source.option_id != followup.option_id
+            or source.resolved_day != followup.created_day
+            or source.occurrence_index != followup.occurrence_index
+            or expected_followup_instances.get(followup.instance_id)
+            != followup.command_name
+        ):
+            raise SaveDataError(
+                "consumed event followup disagrees with its source"
+            )
+        if followup.instance_id in lifecycle_instances:
+            raise SaveDataError(
+                "an event followup instance may only have one lifecycle record"
+            )
+        lifecycle_instances.add(followup.instance_id)
+        consumed_sequences.append(followup.settled_command_sequence)
+    if consumed_sequences != sorted(set(consumed_sequences)):
+        raise SaveDataError(
+            "consumed event followups must use unique command sequence order"
+        )
+    if lifecycle_instances != set(expected_followup_instances):
+        raise SaveDataError(
+            "every event followup source must retain one lifecycle record"
+        )
     if len(promises.active_promises) > 2:
         raise SaveDataError("at most two promises may be active")
     active_types: set[str] = set()

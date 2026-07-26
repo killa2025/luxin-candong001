@@ -13,6 +13,7 @@ from furnace_winter.interface import (
 )
 from furnace_winter.models import (
     OVERTIME_BUILDING_TYPES,
+    EventFollowupSettlementRecord,
     GameState,
     SaveDataError,
     validate_game_state,
@@ -432,16 +433,33 @@ class LawSystem:
         followup = state.events.pending_followups.pop(command_name, None)
         if followup is None:
             return None
+        settled_day = state.calendar.current_day
+        settled_command_sequence = state.command_sequence + 1
+        state.events.consumed_followups.append(
+            EventFollowupSettlementRecord(
+                instance_id=followup.instance_id,
+                event_id=followup.event_id,
+                option_id=followup.option_id,
+                command_name=followup.command_name,
+                created_day=followup.created_day,
+                occurrence_index=followup.occurrence_index,
+                settled_day=settled_day,
+                settled_command_sequence=settled_command_sequence,
+            )
+        )
         trust_change = 1
         panic_change = -2
         self._change_emotion(
             state, trust=trust_change, panic=panic_change
         )
         return {
+            "instance_id": followup.instance_id,
             "event_id": followup.event_id,
             "option_id": followup.option_id,
             "created_day": followup.created_day,
             "occurrence_index": followup.occurrence_index,
+            "settled_day": settled_day,
+            "settled_command_sequence": settled_command_sequence,
             "trust_change": trust_change,
             "panic_change": panic_change,
             "consumed": True,

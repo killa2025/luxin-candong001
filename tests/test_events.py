@@ -82,6 +82,8 @@ class EventPatchTests(unittest.TestCase):
                     option_id="reject",
                     event_type="major",
                     resolved_day=rule.day,
+                    instance_id=f"{event_id}#0001",
+                    occurrence_index=1,
                     trust_change=effect.trust,
                     panic_change=effect.panic,
                     resource_changes={
@@ -206,6 +208,43 @@ class EventPatchTests(unittest.TestCase):
         state.resources.cooked_food = 10
         state.daily_survival.storage_used = storage_used(state.resources)
         state.events.metrics["food_warning_streak"] = 1
+        return state
+
+    def make_pending_medical_followup_state(self):
+        state = self.make_state(day=10)
+        state.laws.signed_law_ids = [
+            "basic_medical_law",
+            "medical_ration_law",
+        ]
+        built_station = self.execute_command(
+            self.building_system(),
+            state,
+            BUILD_COMMAND,
+            {"building_type": "medical_station", "zone": "inner_ring"},
+        )
+        self.assertEqual(built_station.code, ErrorCode.OK)
+        assigned = self.execute_command(
+            self.building_system(),
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": built_station.data["building_id"],
+                "population_type": "engineers",
+                "count": 5,
+            },
+        )
+        self.assertEqual(assigned.code, ErrorCode.OK)
+        state.population.healthy_population -= 5
+        state.population.critical_population = 5
+        events = self.event_system()
+        events.initialize_day(state)
+        resolved = self.execute(
+            events,
+            state,
+            "severe_case_backlog",
+            "medical_ration_prompt",
+        )
+        self.assertEqual(resolved.code, ErrorCode.OK)
         return state
 
     def test_fixed_arrival_is_blocking_and_never_auto_assigns_workers(self) -> None:
@@ -339,6 +378,8 @@ class EventPatchTests(unittest.TestCase):
                 option_id="promise_trust",
                 event_type="major",
                 resolved_day=1,
+                instance_id="trust_crack#0001",
+                occurrence_index=1,
                 promise_id="promise-0001",
                 trust_change=0,
                 panic_change=0,
@@ -523,6 +564,8 @@ class EventPatchTests(unittest.TestCase):
                 option_id="promise_food",
                 event_type="normal",
                 resolved_day=1,
+                instance_id="raw_food_dispute#0001",
+                occurrence_index=1,
                 promise_id="promise-0001",
                 trust_change=0,
                 panic_change=0,
@@ -957,6 +1000,8 @@ class EventPatchTests(unittest.TestCase):
                 option_id="quiet_handling",
                 event_type="major",
                 resolved_day=9,
+                instance_id="first_body#0001",
+                occurrence_index=1,
                 trust_change=0,
                 panic_change=1,
                 resource_changes={
@@ -1002,6 +1047,204 @@ class EventPatchTests(unittest.TestCase):
         self.assertEqual(ordinary_result.code, ErrorCode.OK)
         self.assertEqual(ordinary.trust_panic.trust, 52)
         self.assertEqual(ordinary.trust_panic.panic, 18)
+
+    def test_event_followup_pending_and_consumed_states_round_trip(self) -> None:
+        pending = self.make_pending_medical_followup_state()
+        pending_record = pending.events.pending_followups[
+            MEDICAL_RATION_COMMAND
+        ]
+        self.assertEqual(
+            pending_record.instance_id,
+            pending.events.resolution_history[-1].instance_id,
+        )
+        restored_pending = decode_game_state(encode_game_state(pending))
+        self.assertEqual(
+            restored_pending.events.pending_followups,
+            pending.events.pending_followups,
+        )
+        self.assertEqual(restored_pending.events.consumed_followups, [])
+
+        pending.resources.cooked_food = 100
+        pending.daily_survival.storage_used = storage_used(pending.resources)
+        result = self.execute_command(
+            self.law_system(),
+            pending,
+            MEDICAL_RATION_COMMAND,
+            {"confirm": True},
+        )
+        self.assertEqual(result.code, ErrorCode.OK)
+        self.assertEqual(pending.events.pending_followups, {})
+        self.assertEqual(len(pending.events.consumed_followups), 1)
+        consumed = pending.events.consumed_followups[0]
+        self.assertEqual(consumed.instance_id, pending_record.instance_id)
+        self.assertEqual(
+            consumed.settled_command_sequence, pending.command_sequence
+        )
+        restored_consumed = decode_game_state(encode_game_state(pending))
+        self.assertEqual(
+            restored_consumed.events.consumed_followups,
+            pending.events.consumed_followups,
+        )
+
+    def test_event_followup_lifecycle_rejects_deletion_readdition_and_duplicates(
+        self,
+    ) -> None:
+        pending = self.make_pending_medical_followup_state()
+        pending_document = encode_game_state(pending)
+
+        deleted = deepcopy(pending_document)
+        deleted["events"]["pending_followups"] = {}
+        with self.assertRaises(SaveDataError):
+            decode_game_state(deleted)
+
+        pending.resources.cooked_food = 100
+        pending.daily_survival.storage_used = storage_used(pending.resources)
+        self.assertEqual(
+            self.execute_command(
+                self.law_system(),
+                pending,
+                MEDICAL_RATION_COMMAND,
+                {"confirm": True},
+            ).code,
+            ErrorCode.OK,
+        )
+        consumed_document = encode_game_state(pending)
+
+        readded = deepcopy(consumed_document)
+        readded["events"]["pending_followups"] = deepcopy(
+            pending_document["events"]["pending_followups"]
+        )
+        with self.assertRaises(SaveDataError):
+            decode_game_state(readded)
+
+        duplicated = deepcopy(consumed_document)
+        duplicated["events"]["consumed_followups"].append(
+            deepcopy(duplicated["events"]["consumed_followups"][0])
+        )
+        with self.assertRaises(SaveDataError):
+            decode_game_state(duplicated)
+
+    def test_event_followup_rejects_wrong_instance_occurrence_and_command(
+        self,
+    ) -> None:
+        source = encode_game_state(self.make_pending_medical_followup_state())
+        mutations = []
+
+        wrong_occurrence = deepcopy(source)
+        wrong_occurrence["events"]["pending_followups"][
+            MEDICAL_RATION_COMMAND
+        ]["occurrence_index"] = 2
+        mutations.append(wrong_occurrence)
+
+        wrong_instance = deepcopy(source)
+        wrong_instance["events"]["pending_followups"][
+            MEDICAL_RATION_COMMAND
+        ]["instance_id"] = "severe_case_backlog#9999"
+        mutations.append(wrong_instance)
+
+        wrong_command = deepcopy(source)
+        wrong_command["events"]["pending_followups"][
+            MEDICAL_RATION_COMMAND
+        ]["command_name"] = MEMORIAL_COMMAND
+        mutations.append(wrong_command)
+
+        wrong_source_instance = deepcopy(source)
+        wrong_source_instance["events"]["resolution_history"][-1][
+            "instance_id"
+        ] = "severe_case_backlog#9999"
+        mutations.append(wrong_source_instance)
+
+        for document in mutations:
+            with self.subTest(document=document):
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(document)
+
+    def test_event_followup_failure_and_result_validation_roll_back(self) -> None:
+        pending = self.make_pending_medical_followup_state()
+        pending.resources.cooked_food = 0
+        pending.daily_survival.storage_used = storage_used(pending.resources)
+        before_failure = deepcopy(pending)
+        failed = self.execute_command(
+            self.law_system(),
+            pending,
+            MEDICAL_RATION_COMMAND,
+            {"confirm": True},
+        )
+        self.assertEqual(failed.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(pending, before_failure)
+
+        pending.resources.cooked_food = 100
+        pending.daily_survival.storage_used = storage_used(pending.resources)
+        before_validation_error = deepcopy(pending)
+
+        class InvalidResultLawSystem(LawSystem):
+            def _consume_event_followup(self, state, command_name):
+                result = super()._consume_event_followup(state, command_name)
+                if result is not None:
+                    state.events.consumed_followups[
+                        -1
+                    ].settled_command_sequence += 100
+                return result
+
+        invalid_system = InvalidResultLawSystem(
+            self.law_rules,
+            self.building_rules,
+            self.survival_rules,
+            self.technology_rules,
+        )
+        invalid = self.execute_command(
+            invalid_system,
+            pending,
+            MEDICAL_RATION_COMMAND,
+            {"confirm": True},
+        )
+        self.assertEqual(invalid.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(pending, before_validation_error)
+
+    def test_v8_followup_migration_is_safe_or_rejected_as_ambiguous(
+        self,
+    ) -> None:
+        pending = self.make_pending_medical_followup_state()
+        pending_v8 = encode_game_state(pending)
+        pending_v8["save_data_version"] = 8
+        pending_v8["events"].pop("consumed_followups")
+        for event in pending_v8["events"]["active_events"].values():
+            event.pop("instance_id")
+            event.pop("occurrence_index")
+        for history in pending_v8["events"]["resolution_history"]:
+            history.pop("instance_id")
+            history.pop("occurrence_index")
+        for followup in pending_v8["events"]["pending_followups"].values():
+            followup.pop("instance_id")
+
+        migrated = decode_game_state(pending_v8)
+        self.assertEqual(migrated.save_data_version, CURRENT_SAVE_DATA_VERSION)
+        self.assertIn(
+            MEDICAL_RATION_COMMAND, migrated.events.pending_followups
+        )
+
+        pending.resources.cooked_food = 100
+        pending.daily_survival.storage_used = storage_used(pending.resources)
+        self.assertEqual(
+            self.execute_command(
+                self.law_system(),
+                pending,
+                MEDICAL_RATION_COMMAND,
+                {"confirm": True},
+            ).code,
+            ErrorCode.OK,
+        )
+        consumed_v8 = encode_game_state(pending)
+        consumed_v8["save_data_version"] = 8
+        consumed_v8["events"].pop("consumed_followups")
+        for event in consumed_v8["events"]["active_events"].values():
+            event.pop("instance_id")
+            event.pop("occurrence_index")
+        for history in consumed_v8["events"]["resolution_history"]:
+            history.pop("instance_id")
+            history.pop("occurrence_index")
+        with self.assertRaises(SaveDataError):
+            decode_game_state(consumed_v8)
 
     def test_v7_migration_rejects_days_after_first_mandatory_arrival(self) -> None:
         for day, accepted in ((5, True), (6, True), (7, False), (19, False), (37, False)):

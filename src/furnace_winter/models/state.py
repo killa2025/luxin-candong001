@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 8
+CURRENT_SAVE_DATA_VERSION = 9
 FINAL_DAY = 55
 OVERTIME_BUILDING_TYPES = frozenset({
     "medical_station",
@@ -269,6 +269,8 @@ class EventRecord:
     event_type: str
     trigger_day: int
     priority: int
+    instance_id: str
+    occurrence_index: int
     trigger_reason_ids: list[str] = field(default_factory=list)
     option_ids: list[str] = field(default_factory=list)
     is_blocking: bool = False
@@ -280,6 +282,8 @@ class EventResolutionRecord:
     option_id: str
     event_type: str
     resolved_day: int
+    instance_id: str
+    occurrence_index: int
     promise_id: str | None = None
     trust_change: int | None = None
     panic_change: int | None = None
@@ -289,11 +293,24 @@ class EventResolutionRecord:
 
 @dataclass(slots=True)
 class EventFollowupRecord:
+    instance_id: str
     event_id: str
     option_id: str
     command_name: str
     created_day: int
     occurrence_index: int
+
+
+@dataclass(slots=True)
+class EventFollowupSettlementRecord:
+    instance_id: str
+    event_id: str
+    option_id: str
+    command_name: str
+    created_day: int
+    occurrence_index: int
+    settled_day: int
+    settled_command_sequence: int
 
 
 @dataclass(slots=True)
@@ -312,6 +329,9 @@ class EventState:
     recent_overtime_days: list[int] = field(default_factory=list)
     fixed_arrival_choices: dict[str, str] = field(default_factory=dict)
     pending_followups: dict[str, EventFollowupRecord] = field(default_factory=dict)
+    consumed_followups: list[EventFollowupSettlementRecord] = field(
+        default_factory=list
+    )
     frostfall_warning_stage: str = "none"
     frostfall_eve_status_shown: bool = False
     seventh_frostfall_active: bool = False
