@@ -850,6 +850,142 @@ class OathOrderPatchTests(unittest.TestCase):
         coal.assigned_workers = 0
         self.assertEqual(decode_game_state(encode_game_state(state)), state)
 
+    def test_capped_resource_losses_survive_cross_day_restock(self) -> None:
+        system = self.system()
+        state = self.make_state(day=44)
+        self.add_rejected_arrival_history(state, through_day=44)
+        self.prepare_countdown(system, state, deadline_day=44)
+        resources = ("cooked_food", "coal", "wood", "steel")
+        for resource in resources:
+            setattr(state.resources, resource, 1)
+
+        settlement = system._settle_old_city(state)
+
+        self.assertEqual(
+            settlement["resource_losses"],
+            {resource: 1 for resource in resources},
+        )
+        self.assertEqual(self.end_day(system, state).result.code, ErrorCode.OK)
+        self.assertEqual(state.calendar.current_day, 45)
+        for resource in resources:
+            setattr(state.resources, resource, 7)
+        self.assertEqual(decode_game_state(encode_game_state(state)), state)
+
+    def test_new_day_settlement_rechecks_both_hard_fail_axes(self) -> None:
+        cases = (
+            (
+                "trust_without_final_oath",
+                None,
+                16,
+                30,
+                HardFailType.TRUST_EXILE,
+                None,
+                0,
+            ),
+            (
+                "trust_with_final_oath",
+                "oath",
+                16,
+                30,
+                None,
+                "oath_carried_zero_trust",
+                1,
+            ),
+            (
+                "panic_without_highest_order",
+                None,
+                50,
+                84,
+                HardFailType.PANIC_EXPELLED,
+                None,
+                0,
+            ),
+            (
+                "panic_with_highest_order",
+                "iron",
+                50,
+                84,
+                None,
+                "decree_carried_panic",
+                1,
+            ),
+        )
+        for (
+            name,
+            route,
+            trust,
+            panic,
+            expected_fail,
+            expected_tag,
+            expected_new_day_calls,
+        ) in cases:
+            with self.subTest(name=name):
+                system = self.system()
+                state = self.make_state(day=35 if route else 45)
+                if route == "oath":
+                    self.sign_full_oath_route(system, state)
+                elif route == "iron":
+                    self.sign_full_iron_route(system, state)
+                self.prepare_countdown(
+                    system,
+                    state,
+                    deadline_day=45,
+                    option_id="promise_reduce_old_city",
+                )
+                state.old_city.member_count = state.old_city.high_threshold
+                state.trust_panic.trust = trust
+                state.trust_panic.panic = panic
+                new_day_calls: list[int] = []
+                engine = EndDayEngine()
+                system.install(engine)
+                engine.register_new_day_handler(
+                    lambda current, calls=new_day_calls: calls.append(
+                        current.calendar.current_day
+                    )
+                )
+
+                execution = engine.execute(
+                    state,
+                    CommandRequest(
+                        f"end-{name}",
+                        END_DAY_COMMAND,
+                        {},
+                        state.command_sequence,
+                    ),
+                )
+
+                self.assertEqual(execution.result.code, ErrorCode.OK)
+                self.assertEqual(
+                    state.old_city.promise_outcome, "failure"
+                )
+                self.assertEqual(state.old_city.result_id, "large_exodus")
+                self.assertEqual(
+                    state.final_result.hard_fail_type, expected_fail
+                )
+                self.assertEqual(
+                    execution.result.data["transition"],
+                    "hard_fail" if expected_fail is not None else "next_day",
+                )
+                self.assertEqual(len(new_day_calls), expected_new_day_calls)
+                if expected_tag is not None:
+                    self.assertIn(
+                        expected_tag,
+                        state.oath_order.ending_tag_candidates,
+                    )
+                recheck_logs = [
+                    item
+                    for item in execution.logs
+                    if item.code
+                    == "end_day.new_day_hard_fail_rechecked"
+                ]
+                self.assertEqual(len(recheck_logs), 1)
+                self.assertEqual(
+                    recheck_logs[0].payload[
+                        "new_day_handlers_skipped"
+                    ],
+                    expected_fail is not None,
+                )
+
     def test_final_oath_only_rewrites_trust_axis(self) -> None:
         system = self.system()
         state = self.make_state(day=35)

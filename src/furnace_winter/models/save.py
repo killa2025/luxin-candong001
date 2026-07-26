@@ -2801,10 +2801,7 @@ def _validate_state_invariants(
         )
         for resource, theoretical_loss in theoretical_losses.items():
             actual_loss = old_city.settlement_resource_losses[resource]
-            current_stock = getattr(state.resources, resource)
-            if actual_loss > theoretical_loss or (
-                actual_loss < theoretical_loss and current_stock != 0
-            ):
+            if actual_loss > theoretical_loss:
                 raise SaveDataError("old city resource loss summary is inconsistent")
     elif (
         old_city.result_id is not None

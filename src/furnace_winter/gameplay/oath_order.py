@@ -611,13 +611,13 @@ class OathOrderSystem:
 
     def resolve_old_city_deadline_transition(
         self, context: EndDayContext
-    ) -> None:
+    ) -> bool:
         """Resolve Patch 008 promises and countdowns at the new-day boundary."""
 
         state = context.state
         old = state.old_city
         if not old.is_unlocked or old.resolved:
-            return
+            return False
         countdown_due = (
             old.countdown_day is not None
             and context.settled_day >= old.countdown_day
@@ -662,6 +662,7 @@ class OathOrderSystem:
                     "settlement_day": old.settlement_day,
                 },
             )
+        return countdown_due or promise_resolution is not None
 
     def check_hard_fails(self, context: EndDayContext) -> None:
         state = context.state

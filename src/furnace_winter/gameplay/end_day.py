@@ -186,7 +186,7 @@ StageHandler = Callable[[EndDayContext], None]
 AutosaveSink = Callable[[AutosaveRecord], None]
 StateValidator = Callable[[GameState], None]
 NewDayHandler = Callable[[GameState], None]
-NewDayContextHandler = Callable[[EndDayContext], None]
+NewDayContextHandler = Callable[[EndDayContext], bool | None]
 
 
 def _snapshot_object(value: Any, name: str) -> dict[str, Any]:
@@ -319,7 +319,9 @@ class EndDayEngine:
 
         These handlers run before the ordinary Patch 007 new-day handlers so a
         deadline transition can consume the just-settled day's final state
-        before new events are generated.
+        before new events are generated. A handler must return ``True`` when it
+        changes state so the registered hard-fail handlers run again before
+        ordinary new-day processing.
         """
 
         if not callable(handler):
@@ -641,10 +643,40 @@ class EndDayEngine:
                             stage=current_stage,
                             _emit=append_log,
                         )
+                        boundary_state_changed = False
                         for handler in self._new_day_context_handlers:
-                            handler(new_day_context)
-                        for handler in self._new_day_handlers:
-                            handler(working)
+                            if handler(new_day_context) is True:
+                                boundary_state_changed = True
+                        if boundary_state_changed:
+                            hard_fail_context = EndDayContext(
+                                state=working,
+                                random=random,
+                                settled_day=settled_day,
+                                stage=EndDayStage.CHECK_HARD_FAILS,
+                                _emit=append_log,
+                            )
+                            for handler in self._stage_handlers[
+                                EndDayStage.CHECK_HARD_FAILS
+                            ]:
+                                handler(hard_fail_context)
+                            append_log(
+                                "end_day.new_day_hard_fail_rechecked",
+                                {
+                                    "hard_fail_type": (
+                                        working.final_result.hard_fail_type.value
+                                        if working.final_result.hard_fail_type
+                                        is not None
+                                        else None
+                                    ),
+                                    "new_day_handlers_skipped": (
+                                        working.final_result.hard_fail_type
+                                        is not None
+                                    ),
+                                },
+                            )
+                        if working.final_result.hard_fail_type is None:
+                            for handler in self._new_day_handlers:
+                                handler(working)
                 else:
                     context = EndDayContext(
                         state=working,
