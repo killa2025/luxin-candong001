@@ -99,6 +99,20 @@ class CliTests(unittest.TestCase):
 
                 self.assertEqual(exit_code, 1)
 
+    def test_validate_config_rejects_event_contract_mutation(self) -> None:
+        events = json.loads((ROOT / "data" / "events.json").read_text("utf-8"))
+        events["fixed_arrivals"]["arrival_day6"]["day"] = 19
+        events["fixed_arrivals"]["arrival_day19"]["day"] = 6
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, "events.json").write_text(
+                json.dumps(events, ensure_ascii=False), encoding="utf-8"
+            )
+            with redirect_stdout(StringIO()):
+                exit_code = main(["validate-config", temp_dir])
+
+        self.assertEqual(exit_code, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

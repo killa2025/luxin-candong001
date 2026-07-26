@@ -222,6 +222,15 @@ def validate_config_tree(root: Path) -> ValidationReport:
                 issues.append(
                     ValidationIssue(path, "$", f"科技规则结构校验失败：{exc}")
                 )
+        elif not file_issues and path.name == "events.json":
+            try:
+                from furnace_winter.config.events import load_event_rules
+
+                load_event_rules(path)
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(path, "$", f"事件规则结构校验失败：{exc}")
+                )
 
     manifest_path = root / "manifest.json"
     manifest_present = manifest_path in config_files

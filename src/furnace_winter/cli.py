@@ -6,6 +6,7 @@ from pathlib import Path
 
 from furnace_winter.config import (
     load_building_rules,
+    load_event_rules,
     load_law_rules,
     load_survival_rules,
     load_technology_rules,
@@ -14,6 +15,7 @@ from furnace_winter.config import (
 from furnace_winter.gameplay import (
     BuildingSystem,
     EndDayEngine,
+    EventSystem,
     LawSystem,
     SurvivalSystem,
     TechnologySystem,
@@ -44,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     state_parser = subparsers.add_parser(
         "state",
-        help="输出 Patch 006 炉律、科技研究与过载闭环的机器可读开局状态",
+        help="输出 Patch 007 事件、承诺与固定增员接口的机器可读开局状态",
     )
     state_parser.add_argument(
         "--seed",
@@ -69,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("data/laws.json"),
         help="Patch 005 炉律规则配置，默认 data/laws.json",
+    )
+    state_parser.add_argument(
+        "--events-config",
+        type=Path,
+        default=Path("data/events.json"),
+        help="Patch 007 事件、承诺与固定增员规则配置，默认 data/events.json",
     )
     state_parser.add_argument(
         "--technologies-config",
@@ -99,6 +107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         building_rules = load_building_rules(args.buildings_config)
         law_rules = load_law_rules(args.laws_config)
         technology_rules = load_technology_rules(args.technologies_config)
+        event_rules = load_event_rules(args.events_config)
         state = create_initial_survival_state(
             rules, building_rules, random_seed=args.seed
         )
@@ -111,14 +120,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             rules,
             law_rules,
         )
+        events = EventSystem(
+            event_rules,
+            building_rules,
+            rules,
+            technology_rules,
+        )
+        events.initialize_day(state)
         command_specs = (
             EndDayEngine().command_specs()
             + survival.command_specs()
             + buildings.command_specs()
             + laws.command_specs()
             + technologies.command_specs()
+            + events.command_specs()
         )
-        print(dumps(Observation.from_state(state, command_specs)))
+        print(
+            dumps(
+                Observation.from_state(
+                    state,
+                    command_specs,
+                    event_views=events.active_event_views(state),
+                    promise_views=events.active_promise_views(state),
+                )
+            )
+        )
         return 0
 
     parser.print_help()
