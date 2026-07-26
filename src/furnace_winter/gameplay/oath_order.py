@@ -18,6 +18,7 @@ from furnace_winter.gameplay.end_day import (
     RiskWarning,
     RiskWarningLevel,
 )
+from furnace_winter.gameplay.survival import medical_building_capacity
 from furnace_winter.interface import (
     ArgumentKind,
     CommandCatalog,
@@ -47,6 +48,34 @@ USE_OATH_ORDER_ACTION_COMMAND = "game.use_oath_order_action"
 _ROUTE_ENTRY_LAWS = {"oath": "guard_oath", "iron": "city_patrol_order"}
 _ROUTE_FACILITIES = {"oath": "oath_hall", "iron": "patrol_office"}
 _TERMINAL_LAWS = {"final_oath", "highest_order"}
+_CRITICAL_BUILDING_TYPES = frozenset(
+    {
+        "medical_station",
+        "hospital",
+        "canteen",
+        "hunting_lodge",
+        "greenhouse",
+        "improved_greenhouse",
+        "small_coal_miner",
+    }
+)
+_NON_SURVIVAL_BUILDING_TYPES = frozenset(
+    {
+        "research_institute",
+        "school",
+        "child_shelter",
+        "small_tavern",
+        "grand_casino",
+    }
+)
+_SECONDARY_BUILDING_TYPES = frozenset({"logging_camp", "small_steel_miner"})
+_ASSIGNMENT_ATTRIBUTES = (
+    "assigned_workers",
+    "assigned_children",
+    "assigned_medical_apprentices",
+    "assigned_engineering_apprentices",
+    "assigned_engineers",
+)
 _OLD_CITY_OPTIONS = {
     "southern_letter": ("publish", "suppress"),
     "rumors": ("public_explain", "ignore"),
@@ -451,6 +480,9 @@ class OathOrderSystem:
             EndDayStage.UPDATE_PROMISE_TARGETS, self.update_old_city
         )
         engine.register_stage_handler(EndDayStage.CHECK_HARD_FAILS, self.check_hard_fails)
+        engine.register_new_day_context_handler(
+            self.resolve_old_city_deadline_transition
+        )
         engine.register_new_day_handler(self.prepare_new_day)
 
     def evaluate_risks(self, state: GameState) -> tuple[RiskWarning, ...]:
@@ -478,7 +510,6 @@ class OathOrderSystem:
         if not old.is_unlocked or old.resolved or old.pending_event_id is not None:
             return
 
-        self._settle_old_city_promise(state, context.settled_day)
         pending_arrival = state.events.metrics.pop(
             "pending_old_city_arrival_delta", 0
         )
@@ -562,9 +593,12 @@ class OathOrderSystem:
         old.last_daily_trend = trend + pending_arrival
         old.member_count = min(max(old.member_count + trend + pending_arrival, 0), alive)
 
-        self._settle_old_city_promise(state, context.settled_day)
         self._advance_old_city_stage(state)
-        if context.settled_day >= self.rules.old_city.countdown_cap_day and not old.resolved:
+        if (
+            context.settled_day >= self.rules.old_city.countdown_cap_day
+            and old.countdown_day is None
+            and not old.resolved
+        ):
             self._settle_old_city(state)
         context.emit(
             "old_city.daily.updated",
@@ -574,6 +608,60 @@ class OathOrderSystem:
                 "stage_id": old.active_stage_id,
             },
         )
+
+    def resolve_old_city_deadline_transition(
+        self, context: EndDayContext
+    ) -> None:
+        """Resolve Patch 008 promises and countdowns at the new-day boundary."""
+
+        state = context.state
+        old = state.old_city
+        if not old.is_unlocked or old.resolved:
+            return
+        countdown_due = (
+            old.countdown_day is not None
+            and context.settled_day >= old.countdown_day
+        )
+        if countdown_due:
+            context.emit(
+                "deadline_day_end_state",
+                {
+                    "deadline_day": old.countdown_day,
+                    "settled_day": context.settled_day,
+                    "new_day": state.calendar.current_day,
+                    "member_count": old.member_count,
+                    "trust": state.trust_panic.trust,
+                    "panic": state.trust_panic.panic,
+                },
+            )
+        promise_resolution = self._settle_old_city_promise(
+            state, state.calendar.current_day
+        )
+        if countdown_due:
+            context.emit(
+                "promise_resolution",
+                promise_resolution
+                or {
+                    "status": (
+                        "already_settled"
+                        if old.promise_settled
+                        else "no_promise"
+                    ),
+                    "outcome": old.promise_outcome,
+                    "settled_day": old.promise_settled_day,
+                },
+            )
+            settlement = self._settle_old_city(
+                state, settlement_day=context.settled_day
+            )
+            context.emit(
+                "old_city_final_resolution",
+                {
+                    **settlement,
+                    "deadline_day": old.countdown_day,
+                    "settlement_day": old.settlement_day,
+                },
+            )
 
     def check_hard_fails(self, context: EndDayContext) -> None:
         state = context.state
@@ -737,6 +825,14 @@ class OathOrderSystem:
             "countdown_day": old.countdown_day,
             "resolved": old.resolved,
             "result_id": old.result_id,
+            "theoretical_departures": old.theoretical_departures,
+            "actual_departures": old.actual_departures,
+            "protected_jobs": dict(old.protected_jobs),
+            "protected_engineers": old.protected_engineers,
+            "reduction_reason": old.reduction_reason,
+            "settlement_resource_losses": dict(
+                old.settlement_resource_losses
+            ),
         }
 
     def _activate_old_city(self, state: GameState) -> None:
@@ -791,111 +887,228 @@ class OathOrderSystem:
                 self.rules.old_city.countdown_cap_day,
             )
 
-    def _settle_old_city_promise(self, state: GameState, settled_day: int) -> None:
+    def _settle_old_city_promise(
+        self, state: GameState, current_day: int
+    ) -> dict[str, Any] | None:
         old = state.old_city
         if not old.promise_active:
-            return
+            return None
         assert old.promise_target_count is not None
         assert old.promise_deadline_day is not None
         if old.member_count <= old.promise_target_count:
             outcome, trust, panic, count = "success", 3, -2, -8
-        elif settled_day >= old.promise_deadline_day:
+        elif current_day > old.promise_deadline_day:
             outcome, trust, panic, count = "failure", -8, 8, 6
         else:
-            return
+            return None
         old.promise_active = False
         old.promise_settled = True
         old.promise_outcome = outcome
-        old.promise_settled_day = settled_day
+        old.promise_settled_day = current_day
         old.member_count = min(
             max(old.member_count + count, 0), state.population.population_alive
         )
         self._change_emotion(state, trust=trust, panic=panic)
+        return {
+            "status": "settled",
+            "outcome": outcome,
+            "settled_day": current_day,
+            "deadline_day": old.promise_deadline_day,
+            "member_count_change": count,
+            "trust_change": trust,
+            "panic_change": panic,
+        }
 
-    def _settle_old_city(self, state: GameState) -> dict[str, Any]:
+    def _settle_old_city(
+        self, state: GameState, *, settlement_day: int | None = None
+    ) -> dict[str, Any]:
         old = state.old_city
         alive = state.population.population_alive
         settlement_member_count = old.member_count
         if old.member_count < old.low_threshold:
             result, leave, trust, panic = "scattered", 0, 3, -2
         elif old.member_count < old.high_threshold:
-            result = "partial_departure"
+            result = "partial_exodus"
             leave = min(floor(old.member_count * 0.40), floor(alive * 0.12))
             trust, panic = -5, 5
         else:
-            result = "large_departure"
+            result = "large_exodus"
             leave = min(floor(old.member_count * 0.55), floor(alive * 0.22))
             trust, panic = -8, 8
-        planned_departure = leave
-        leave = self._remove_population(state, leave)
-        if result == "partial_departure":
-            losses = {
+        theoretical_departures = leave
+        departure = self._remove_population(state, leave)
+        leave = departure["actual_departures"]
+        if result == "partial_exodus":
+            theoretical_losses = {
                 "cooked_food": leave,
                 "coal": leave * 2,
                 "wood": leave,
                 "steel": floor(leave / 2),
             }
-        elif result == "large_departure":
-            losses = {
+        elif result == "large_exodus":
+            theoretical_losses = {
                 "cooked_food": leave * 2,
                 "coal": leave * 3,
                 "wood": leave * 2,
                 "steel": leave,
             }
         else:
-            losses = {"cooked_food": 0, "coal": 0, "wood": 0, "steel": 0}
+            theoretical_losses = {
+                "cooked_food": 0,
+                "coal": 0,
+                "wood": 0,
+                "steel": 0,
+            }
+        losses = {
+            resource: min(getattr(state.resources, resource), loss)
+            for resource, loss in theoretical_losses.items()
+        }
         for resource, loss in losses.items():
             setattr(
                 state.resources,
                 resource,
-                max(getattr(state.resources, resource) - loss, 0),
+                getattr(state.resources, resource) - loss,
             )
         self._change_emotion(state, trust=trust, panic=panic)
         old.member_count = 0
         old.resolved = True
         old.result_id = result
-        old.settlement_day = state.calendar.current_day
+        old.settlement_day = (
+            state.calendar.current_day
+            if settlement_day is None
+            else settlement_day
+        )
         old.settlement_member_count = settlement_member_count
-        old.planned_departure = planned_departure
-        old.people_departed = leave
+        old.theoretical_departures = theoretical_departures
+        old.actual_departures = leave
+        old.protected_jobs = dict(departure["protected_jobs"])
+        old.protected_engineers = departure["protected_engineers"]
+        old.reduction_reason = departure["reduction_reason"]
         old.settlement_resource_losses = dict(losses)
         old.active_stage_id = None
         old.pending_event_id = None
         return {
             "result_id": result,
-            "people_departed": leave,
+            "theoretical_departures": theoretical_departures,
+            "actual_departures": leave,
+            "protected_jobs": dict(old.protected_jobs),
+            "protected_engineers": old.protected_engineers,
+            "reduction_reason": old.reduction_reason,
             "resource_losses": losses,
             "trust_change": trust,
             "panic_change": panic,
         }
 
-    def _remove_population(self, state: GameState, requested: int) -> int:
+    def _remove_population(
+        self, state: GameState, requested: int
+    ) -> dict[str, Any]:
+        if requested <= 0:
+            return {
+                "actual_departures": 0,
+                "protected_jobs": {},
+                "protected_engineers": 0,
+                "reduction_reason": None,
+            }
         population = state.population
-        removable_engineers = max(population.engineers - 2, 0)
+        protected_engineers = min(population.engineers, 2)
+        protected_assignments = self._protected_job_assignments(state)
+        protected_jobs = {
+            target_id: 1 for target_id in sorted(protected_assignments)
+        }
+        assigned = self._assignment_totals(state)
         categorized = population.workers + population.engineers + population.children
         uncategorized = max(population.population_alive - categorized, 0)
-        maximum = uncategorized + population.workers + population.children + removable_engineers
-        leave = min(requested, maximum)
-        remaining = leave
+        remaining = requested
+
         from_uncategorized = min(remaining, uncategorized)
         remaining -= from_uncategorized
-        workers = min(remaining, population.workers)
-        population.workers -= workers
-        remaining -= workers
-        children = min(remaining, population.children)
-        population.children -= children
-        remaining -= children
-        population.medical_apprentices = min(
-            population.medical_apprentices, population.children
+
+        def remove_unassigned(attribute: str, available: int) -> None:
+            nonlocal remaining
+            removed = min(remaining, max(available, 0))
+            if removed <= 0:
+                return
+            if attribute == "workers":
+                population.workers -= removed
+            elif attribute == "engineers":
+                population.engineers -= removed
+            elif attribute == "children":
+                population.children -= removed
+            elif attribute == "medical_apprentices":
+                population.medical_apprentices -= removed
+                population.children -= removed
+            elif attribute == "engineering_apprentices":
+                population.engineering_apprentices -= removed
+                population.children -= removed
+            remaining -= removed
+
+        remove_unassigned(
+            "workers", population.workers - assigned["assigned_workers"]
         )
-        population.engineering_apprentices = min(
-            population.engineering_apprentices,
-            population.children - population.medical_apprentices,
+        ordinary_children = (
+            population.children
+            - population.medical_apprentices
+            - population.engineering_apprentices
         )
-        engineers = min(remaining, removable_engineers)
-        population.engineers -= engineers
-        remaining -= engineers
-        actual = leave - remaining
+        remove_unassigned(
+            "children", ordinary_children - assigned["assigned_children"]
+        )
+        remove_unassigned(
+            "medical_apprentices",
+            population.medical_apprentices
+            - assigned["assigned_medical_apprentices"],
+        )
+        remove_unassigned(
+            "engineering_apprentices",
+            population.engineering_apprentices
+            - assigned["assigned_engineering_apprentices"],
+        )
+        remove_unassigned(
+            "engineers",
+            min(
+                population.engineers - assigned["assigned_engineers"],
+                population.engineers - protected_engineers,
+            ),
+        )
+
+        for _tier, target_id, item, attribute in self._departure_assignments(state):
+            if remaining <= 0:
+                break
+            value = getattr(item, attribute)
+            protected_assignment = protected_assignments.get(target_id)
+            protected = (
+                1
+                if (
+                    protected_assignment is not None
+                    and protected_assignment[0] is item
+                    and protected_assignment[1] == attribute
+                )
+                else 0
+            )
+            removable = max(value - protected, 0)
+            if attribute == "assigned_engineers":
+                removable = min(
+                    removable, population.engineers - protected_engineers
+                )
+            removed = min(remaining, removable)
+            if removed <= 0:
+                continue
+            setattr(item, attribute, value - removed)
+            if attribute == "assigned_workers":
+                population.workers -= removed
+            elif attribute == "assigned_engineers":
+                population.engineers -= removed
+            elif attribute == "assigned_children":
+                population.children -= removed
+            elif attribute == "assigned_medical_apprentices":
+                population.medical_apprentices -= removed
+                population.children -= removed
+            elif attribute == "assigned_engineering_apprentices":
+                population.engineering_apprentices -= removed
+                population.children -= removed
+            remaining -= removed
+
+        actual = requested - remaining
         health_remaining = actual
         for name in (
             "healthy_population", "sick_population",
@@ -932,52 +1145,169 @@ class OathOrderSystem:
             - state.medical.effective_capacity,
             0,
         )
-        self._trim_assignments(state)
-        return actual
-
-    def _trim_assignments(self, state: GameState) -> None:
-        def trim(items: list[Any], attribute: str, maximum: int) -> None:
-            total = sum(getattr(item, attribute) for item in items)
-            excess = max(total - maximum, 0)
-            for item in reversed(items):
-                if excess <= 0:
-                    break
-                value = getattr(item, attribute)
-                removed = min(value, excess)
-                setattr(item, attribute, value - removed)
-                excess -= removed
-
-        regular = list(state.buildings.values()) + list(
-            state.surface_resource_points.values()
+        for building in state.buildings.values():
+            if sum(
+                getattr(building, attribute)
+                for attribute in _ASSIGNMENT_ATTRIBUTES
+            ) == 0:
+                building.is_operational = False
+        state.medical.building_capacity = medical_building_capacity(
+            state, expected=False
         )
-        facilities = [state.oath_order.oath_hall, state.oath_order.patrol_office]
-        trim(facilities + regular, "assigned_workers", state.population.workers)
-        trim(facilities + regular, "assigned_engineers", state.population.engineers)
-        trim(
-            list(state.buildings.values()),
-            "assigned_medical_apprentices",
-            state.population.medical_apprentices,
+        state.medical.effective_capacity = (
+            state.medical.temporary_capacity
+            + state.medical.building_capacity
         )
-        trim(
-            list(state.buildings.values()),
-            "assigned_engineering_apprentices",
-            state.population.engineering_apprentices,
+        state.medical.medical_pressure = max(
+            population.sick_population
+            + population.critical_population
+            - state.medical.effective_capacity,
+            0,
         )
-        trim(
-            list(state.buildings.values()),
-            "assigned_children",
-            max(
-                state.population.children
-                - state.population.medical_apprentices
-                - state.population.engineering_apprentices,
-                0,
-            ),
-        )
-        for facility in facilities:
+        for facility in (
+            state.oath_order.oath_hall,
+            state.oath_order.patrol_office,
+        ):
             facility.is_running = (
                 facility.enabled
                 and facility.assigned_workers + facility.assigned_engineers >= 1
             )
+        reduction_reason = None
+        if actual < requested:
+            job_limited = bool(protected_assignments)
+            engineer_limited = (
+                population.engineers <= protected_engineers
+                and protected_engineers > 0
+            )
+            if job_limited and engineer_limited:
+                reduction_reason = "critical_jobs_and_engineer_floor"
+            elif job_limited:
+                reduction_reason = "critical_job_protection"
+            elif engineer_limited:
+                reduction_reason = "engineer_floor"
+            else:
+                reduction_reason = "population_protection"
+        return {
+            "actual_departures": actual,
+            "protected_jobs": protected_jobs,
+            "protected_engineers": protected_engineers,
+            "reduction_reason": reduction_reason,
+        }
+
+    def _protected_job_assignments(
+        self, state: GameState
+    ) -> dict[str, tuple[Any, str]]:
+        protected: dict[str, tuple[Any, str]] = {}
+        patients = (
+            state.population.sick_population
+            + state.population.critical_population
+        )
+        for building_id, building in sorted(state.buildings.items()):
+            if (
+                building.building_type not in _CRITICAL_BUILDING_TYPES
+                or not building.is_operational
+                or (
+                    building.building_type
+                    in {"medical_station", "hospital"}
+                    and patients <= 0
+                )
+            ):
+                continue
+            preferred = (
+                (
+                    "assigned_medical_apprentices",
+                    "assigned_engineers",
+                )
+                if building.building_type
+                in {"medical_station", "hospital"}
+                else ("assigned_workers", "assigned_engineers")
+            )
+            attribute = next(
+                (
+                    name
+                    for name in preferred
+                    if getattr(building, name) > 0
+                ),
+                None,
+            )
+            if attribute is not None:
+                protected[f"building:{building_id}"] = (
+                    building,
+                    attribute,
+                )
+        for resource_id, point in sorted(
+            state.surface_resource_points.items()
+        ):
+            if (
+                point.resource_type != "coal"
+                or point.is_depleted
+                or point.assigned_workers + point.assigned_engineers <= 0
+            ):
+                continue
+            attribute = (
+                "assigned_workers"
+                if point.assigned_workers > 0
+                else "assigned_engineers"
+            )
+            protected[f"resource:{resource_id}"] = (point, attribute)
+        return protected
+
+    def _departure_assignments(
+        self, state: GameState
+    ) -> list[tuple[int, str, Any, str]]:
+        assignments: list[tuple[int, str, Any, str]] = []
+        facilities = (
+            ("facility:oath_hall", state.oath_order.oath_hall),
+            ("facility:patrol_office", state.oath_order.patrol_office),
+        )
+        for target_id, facility in facilities:
+            for attribute in ("assigned_workers", "assigned_engineers"):
+                assignments.append((0, target_id, facility, attribute))
+        for building_id, building in state.buildings.items():
+            if building.building_type in _NON_SURVIVAL_BUILDING_TYPES:
+                tier = 0
+            elif building.building_type in _SECONDARY_BUILDING_TYPES:
+                tier = 1
+            elif building.building_type in _CRITICAL_BUILDING_TYPES:
+                tier = 3
+            else:
+                tier = 2
+            target_id = f"building:{building_id}"
+            for attribute in _ASSIGNMENT_ATTRIBUTES:
+                assignments.append((tier, target_id, building, attribute))
+        for resource_id, point in state.surface_resource_points.items():
+            tier = 3 if point.resource_type == "coal" else 1
+            target_id = f"resource:{resource_id}"
+            for attribute in ("assigned_workers", "assigned_engineers"):
+                assignments.append((tier, target_id, point, attribute))
+        attribute_order = {
+            name: index for index, name in enumerate(_ASSIGNMENT_ATTRIBUTES)
+        }
+        return sorted(
+            assignments,
+            key=lambda item: (
+                item[0],
+                item[1],
+                attribute_order[item[3]],
+            ),
+        )
+
+    @staticmethod
+    def _assignment_totals(state: GameState) -> dict[str, int]:
+        totals = {name: 0 for name in _ASSIGNMENT_ATTRIBUTES}
+        for item in state.buildings.values():
+            for attribute in _ASSIGNMENT_ATTRIBUTES:
+                totals[attribute] += getattr(item, attribute)
+        for item in state.surface_resource_points.values():
+            totals["assigned_workers"] += item.assigned_workers
+            totals["assigned_engineers"] += item.assigned_engineers
+        for facility in (
+            state.oath_order.oath_hall,
+            state.oath_order.patrol_office,
+        ):
+            totals["assigned_workers"] += facility.assigned_workers
+            totals["assigned_engineers"] += facility.assigned_engineers
+        return totals
 
     def _refresh_unlock(self, state: GameState) -> None:
         if self._is_page_available(state):

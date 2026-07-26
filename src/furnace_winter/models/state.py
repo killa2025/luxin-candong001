@@ -412,8 +412,11 @@ class OldCityState:
     promise_settled_day: int | None = None
     settlement_day: int | None = None
     settlement_member_count: int = 0
-    planned_departure: int = 0
-    people_departed: int = 0
+    theoretical_departures: int = 0
+    actual_departures: int = 0
+    protected_jobs: dict[str, int] = field(default_factory=dict)
+    protected_engineers: int = 0
+    reduction_reason: str | None = None
     settlement_resource_losses: dict[str, int] = field(default_factory=dict)
 
 

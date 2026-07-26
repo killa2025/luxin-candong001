@@ -310,6 +310,57 @@ def is_building_expected_operational(
     return temperature >= rule.min_operating_temperature
 
 
+def medical_building_capacity(
+    state: GameState,
+    *,
+    expected: bool,
+    building_rules: BuildingRules | None = None,
+    survival_rules: SurvivalRules | None = None,
+    technology_rules: TechnologyRules | None = None,
+) -> int:
+    """Return staffed capacity for the currently operational medical buildings."""
+
+    if expected and (building_rules is None or survival_rules is None):
+        raise ValueError(
+            "expected medical capacity requires building and survival rules"
+        )
+    capacity = 0
+    for building in state.buildings.values():
+        operational = (
+            is_building_expected_operational(
+                state,
+                building,
+                building_rules,
+                survival_rules,
+                technology_rules,
+            )
+            if expected
+            else building.is_operational
+        )
+        if not operational:
+            continue
+        staff = sum(
+            (
+                building.assigned_workers,
+                building.assigned_engineers,
+                building.assigned_children,
+                building.assigned_medical_apprentices,
+                building.assigned_engineering_apprentices,
+            )
+        )
+        if building.building_type == "medical_station":
+            full_capacity = (
+                12
+                if "tech_medical_tools_improvement"
+                in state.technologies.researched_tech_ids
+                else 10
+            )
+            capacity += (full_capacity * staff) // 5
+        elif building.building_type == "hospital":
+            capacity += (30 * staff) // 10
+    return capacity
+
+
 def create_initial_survival_state(
     rules: SurvivalRules,
     building_rules: BuildingRules | None = None,

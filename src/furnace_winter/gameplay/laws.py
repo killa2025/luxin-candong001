@@ -6,7 +6,10 @@ from typing import Any
 
 from furnace_winter.config import BuildingRules, LawRules, SurvivalRules, TechnologyRules
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage, RiskWarning, RiskWarningLevel
-from furnace_winter.gameplay.survival import is_building_expected_operational
+from furnace_winter.gameplay.survival import (
+    is_building_expected_operational,
+    medical_building_capacity,
+)
 from furnace_winter.interface import (
     ArgumentKind, CommandCatalog, CommandRequest, CommandResult, CommandSpec,
     CommandValidation, CommandValidator, ErrorCode, FeedbackItem, FeedbackLevel,
@@ -882,27 +885,13 @@ class LawSystem:
     def _building_medical_capacity(
         self, state: GameState, *, expected: bool
     ) -> int:
-        capacity = 0
-        for building in state.buildings.values():
-            operational = (
-                self._is_expected_operational(state, building)
-                if expected
-                else building.is_operational
-            )
-            if not operational:
-                continue
-            staff = self._assigned_total(building)
-            if building.building_type == "medical_station":
-                full_capacity = (
-                    12
-                    if "tech_medical_tools_improvement"
-                    in state.technologies.researched_tech_ids
-                    else 10
-                )
-                capacity += (full_capacity * staff) // 5
-            elif building.building_type == "hospital":
-                capacity += (30 * staff) // 10
-        return capacity
+        return medical_building_capacity(
+            state,
+            expected=expected,
+            building_rules=self.building_rules,
+            survival_rules=self.survival_rules,
+            technology_rules=self.technology_rules,
+        )
 
     def _has_operational_canteen(self, state: GameState) -> bool:
         return any(

@@ -1245,13 +1245,28 @@ def _decode_old_city(value: Any) -> OldCityState:
             "old_city.settlement_member_count",
             minimum=0,
         ),
-        planned_departure=_integer(
-            data["planned_departure"],
-            "old_city.planned_departure",
+        theoretical_departures=_integer(
+            data["theoretical_departures"],
+            "old_city.theoretical_departures",
             minimum=0,
         ),
-        people_departed=_integer(
-            data["people_departed"], "old_city.people_departed", minimum=0
+        actual_departures=_integer(
+            data["actual_departures"],
+            "old_city.actual_departures",
+            minimum=0,
+        ),
+        protected_jobs=_nonnegative_int_object(
+            data["protected_jobs"], "old_city.protected_jobs"
+        ),
+        protected_engineers=_integer(
+            data["protected_engineers"],
+            "old_city.protected_engineers",
+            minimum=0,
+        ),
+        reduction_reason=_string(
+            data["reduction_reason"],
+            "old_city.reduction_reason",
+            optional=True,
         ),
         settlement_resource_losses=_nonnegative_int_object(
             data["settlement_resource_losses"],
@@ -2174,9 +2189,22 @@ def _migrate_v9_to_v10(document: dict[str, Any]) -> dict[str, Any]:
     old_city = _object(
         migrated["old_city"], "old_city", _V9_OLD_CITY_FIELDS
     )
+    calendar = _object(
+        migrated["calendar"], "calendar", _field_names(CalendarState)
+    )
+    current_day = _integer(
+        calendar["current_day"],
+        "calendar.current_day",
+        minimum=1,
+        maximum=FINAL_DAY,
+    )
     if old_city["is_unlocked"]:
         raise SaveDataError(
             "v9 unlocked old city cannot reconstruct the Patch 008 lifecycle"
+        )
+    if current_day > old_city["trigger_day"]:
+        raise SaveDataError(
+            "v9 save after day 24 cannot reconstruct the Patch 008 lifecycle"
         )
     migrated["old_city"] = {
         **old_city,
@@ -2202,8 +2230,11 @@ def _migrate_v9_to_v10(document: dict[str, Any]) -> dict[str, Any]:
         "promise_settled_day": None,
         "settlement_day": None,
         "settlement_member_count": 0,
-        "planned_departure": 0,
-        "people_departed": 0,
+        "theoretical_departures": 0,
+        "actual_departures": 0,
+        "protected_jobs": {},
+        "protected_engineers": 0,
+        "reduction_reason": None,
         "settlement_resource_losses": {},
     }
     empty_facility = {
@@ -2647,20 +2678,23 @@ def _validate_state_invariants(
             old_city.middle_threshold,
             old_city.high_threshold,
             old_city.hidden_growth_days_remaining,
-            old_city.people_departed,
-            old_city.planned_departure,
+            old_city.actual_departures,
+            old_city.theoretical_departures,
+            old_city.protected_engineers,
             old_city.settlement_member_count,
+            len(old_city.protected_jobs),
             len(old_city.settlement_resource_losses),
             len(old_city.recent_major_death_days),
+            old_city.reduction_reason is not None,
         )
     ):
         raise SaveDataError("locked old city cannot retain Patch 008 values")
     if old_city.resolved:
         alive_before_departure = (
-            population.population_alive + old_city.people_departed
+            population.population_alive + old_city.actual_departures
         )
         if (
-            old_city.result_id not in {"scattered", "partial_departure", "large_departure"}
+            old_city.result_id not in {"scattered", "partial_exodus", "large_exodus"}
             or old_city.settlement_day is None
             or old_city.settlement_day > state.calendar.current_day
             or old_city.settlement_day > 48
@@ -2674,51 +2708,113 @@ def _validate_state_invariants(
             raise SaveDataError("resolved old city state is incomplete")
         if old_city.settlement_member_count < old_city.low_threshold:
             expected_result = "scattered"
-            expected_planned = 0
+            expected_theoretical = 0
         elif old_city.settlement_member_count < old_city.high_threshold:
-            expected_result = "partial_departure"
-            expected_planned = min(
+            expected_result = "partial_exodus"
+            expected_theoretical = min(
                 old_city.settlement_member_count * 40 // 100,
                 alive_before_departure * 12 // 100,
             )
         else:
-            expected_result = "large_departure"
-            expected_planned = min(
+            expected_result = "large_exodus"
+            expected_theoretical = min(
                 old_city.settlement_member_count * 55 // 100,
                 alive_before_departure * 22 // 100,
             )
         if (
             old_city.result_id != expected_result
-            or old_city.planned_departure != expected_planned
-            or old_city.people_departed > old_city.planned_departure
+            or old_city.theoretical_departures != expected_theoretical
+            or old_city.actual_departures > old_city.theoretical_departures
         ):
             raise SaveDataError("old city departure summary disagrees with its tier")
-        departed = old_city.people_departed
-        expected_losses = (
+        if (
+            old_city.actual_departures == old_city.theoretical_departures
+            and old_city.reduction_reason is not None
+        ) or (
+            old_city.actual_departures < old_city.theoretical_departures
+            and old_city.reduction_reason
+            not in {
+                "critical_job_protection",
+                "engineer_floor",
+                "critical_jobs_and_engineer_floor",
+                "population_protection",
+            }
+        ):
+            raise SaveDataError("old city departure reduction reason is inconsistent")
+        if old_city.protected_engineers > 2:
+            raise SaveDataError("old city engineer protection summary is invalid")
+        if old_city.theoretical_departures == 0:
+            if (
+                old_city.protected_jobs
+                or old_city.protected_engineers
+                or old_city.reduction_reason is not None
+            ):
+                raise SaveDataError(
+                    "old city zero-departure summary cannot retain protections"
+                )
+        for target_id, protected_count in old_city.protected_jobs.items():
+            if protected_count != 1:
+                raise SaveDataError("old city protected jobs must retain one worker")
+            kind, separator, target = target_id.partition(":")
+            if not separator or kind not in {"building", "resource"}:
+                raise SaveDataError("old city protected job id is invalid")
+            if kind == "building":
+                building = state.buildings.get(target)
+                if (
+                    building is None
+                    or building.building_type
+                    not in {
+                        "medical_station",
+                        "hospital",
+                        "canteen",
+                        "hunting_lodge",
+                        "greenhouse",
+                        "improved_greenhouse",
+                        "small_coal_miner",
+                    }
+                ):
+                    raise SaveDataError("old city protected building summary is invalid")
+            else:
+                point = state.surface_resource_points.get(target)
+                if (
+                    point is None
+                    or point.resource_type != "coal"
+                ):
+                    raise SaveDataError("old city protected resource summary is invalid")
+        departed = old_city.actual_departures
+        theoretical_losses = (
             {
                 "cooked_food": departed,
                 "coal": departed * 2,
                 "wood": departed,
                 "steel": departed // 2,
             }
-            if old_city.result_id == "partial_departure"
+            if old_city.result_id == "partial_exodus"
             else {
                 "cooked_food": departed * 2,
                 "coal": departed * 3,
                 "wood": departed * 2,
                 "steel": departed,
             }
-            if old_city.result_id == "large_departure"
+            if old_city.result_id == "large_exodus"
             else {"cooked_food": 0, "coal": 0, "wood": 0, "steel": 0}
         )
-        if old_city.settlement_resource_losses != expected_losses:
-            raise SaveDataError("old city resource loss summary is inconsistent")
+        for resource, theoretical_loss in theoretical_losses.items():
+            actual_loss = old_city.settlement_resource_losses[resource]
+            current_stock = getattr(state.resources, resource)
+            if actual_loss > theoretical_loss or (
+                actual_loss < theoretical_loss and current_stock != 0
+            ):
+                raise SaveDataError("old city resource loss summary is inconsistent")
     elif (
         old_city.result_id is not None
         or old_city.settlement_day is not None
         or old_city.settlement_member_count
-        or old_city.planned_departure
-        or old_city.people_departed
+        or old_city.theoretical_departures
+        or old_city.actual_departures
+        or old_city.protected_jobs
+        or old_city.protected_engineers
+        or old_city.reduction_reason is not None
         or old_city.settlement_resource_losses
     ):
         raise SaveDataError("unresolved old city cannot have a settlement result")
@@ -2735,6 +2831,12 @@ def _validate_state_invariants(
             24 <= old_city.countdown_day <= 48
         ):
             raise SaveDataError("old city countdown must end by day 48")
+        if (
+            not old_city.resolved
+            and old_city.countdown_day is not None
+            and state.calendar.current_day > old_city.countdown_day
+        ):
+            raise SaveDataError("old city countdown cannot remain unresolved after its deadline")
     promise_fields = (
         old_city.promise_created_day,
         old_city.promise_deadline_day,
@@ -2761,10 +2863,11 @@ def _validate_state_invariants(
             raise SaveDataError("settled old city promise is incomplete")
         if (
             old_city.promise_outcome == "success"
-            and old_city.promise_settled_day > old_city.promise_deadline_day
+            and old_city.promise_settled_day > old_city.promise_deadline_day + 1
         ) or (
             old_city.promise_outcome == "failure"
-            and old_city.promise_settled_day < old_city.promise_deadline_day
+            and old_city.promise_settled_day
+            != old_city.promise_deadline_day + 1
         ):
             raise SaveDataError("old city promise outcome disagrees with its deadline")
     elif (

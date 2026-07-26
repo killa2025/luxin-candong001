@@ -186,6 +186,7 @@ StageHandler = Callable[[EndDayContext], None]
 AutosaveSink = Callable[[AutosaveRecord], None]
 StateValidator = Callable[[GameState], None]
 NewDayHandler = Callable[[GameState], None]
+NewDayContextHandler = Callable[[EndDayContext], None]
 
 
 def _snapshot_object(value: Any, name: str) -> dict[str, Any]:
@@ -271,6 +272,7 @@ class EndDayEngine:
         }
         self._state_validators: list[StateValidator] = []
         self._new_day_handlers: list[NewDayHandler] = []
+        self._new_day_context_handlers: list[NewDayContextHandler] = []
         self._autosave_sink = autosave_sink
         self._last_autosave: AutosaveRecord | None = None
         self._pending_confirmation: EndDayConfirmation | None = None
@@ -309,6 +311,20 @@ class EndDayEngine:
         if not callable(handler):
             raise TypeError("new day handler must be callable")
         self._new_day_handlers.append(handler)
+
+    def register_new_day_context_handler(
+        self, handler: NewDayContextHandler
+    ) -> None:
+        """Run logged transactional work immediately after the day advances.
+
+        These handlers run before the ordinary Patch 007 new-day handlers so a
+        deadline transition can consume the just-settled day's final state
+        before new events are generated.
+        """
+
+        if not callable(handler):
+            raise TypeError("new day context handler must be callable")
+        self._new_day_context_handlers.append(handler)
 
     def last_autosave(self) -> AutosaveRecord | None:
         return deepcopy(self._last_autosave)
@@ -618,6 +634,15 @@ class EndDayEngine:
                 elif current_stage is EndDayStage.ADVANCE_DAY:
                     self._advance_after_settlement(working)
                     if working.calendar.current_day != settled_day:
+                        new_day_context = EndDayContext(
+                            state=working,
+                            random=random,
+                            settled_day=settled_day,
+                            stage=current_stage,
+                            _emit=append_log,
+                        )
+                        for handler in self._new_day_context_handlers:
+                            handler(new_day_context)
                         for handler in self._new_day_handlers:
                             handler(working)
                 else:

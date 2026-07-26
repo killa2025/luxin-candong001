@@ -32,8 +32,10 @@ from furnace_winter.gameplay.end_day import (
 )
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
+    BuildingState,
     CURRENT_SAVE_DATA_VERSION,
     DeterministicRandom,
+    EventResolutionRecord,
     HardFailType,
     SaveDataError,
     decode_game_state,
@@ -100,6 +102,93 @@ class OathOrderPatchTests(unittest.TestCase):
             confirm=True,
         )
         self.assertEqual(result.code, ErrorCode.OK)
+
+    def prepare_countdown(
+        self,
+        system: OathOrderSystem,
+        state,
+        *,
+        deadline_day: int,
+        option_id: str | None = None,
+    ) -> None:
+        system.prepare_new_day(state)
+        self.assertEqual(
+            self.execute(
+                system,
+                state,
+                RESOLVE_OLD_CITY_COMMAND,
+                event_id="southern_letter",
+                option_id="publish",
+            ).code,
+            ErrorCode.OK,
+        )
+        old = state.old_city
+        old.active_stage_id = "countdown"
+        old.member_count = old.high_threshold
+        old.countdown_day = deadline_day
+        old.pending_event_id = "countdown" if option_id is not None else None
+        old.stage_events_seen = [
+            "southern_letter",
+            "rumors",
+            "public_gathering",
+            "countdown",
+        ]
+        if option_id is not None:
+            self.assertEqual(
+                self.execute(
+                    system,
+                    state,
+                    RESOLVE_OLD_CITY_COMMAND,
+                    event_id="countdown",
+                    option_id=option_id,
+                ).code,
+                ErrorCode.OK,
+            )
+
+    def end_day(self, system: OathOrderSystem, state):
+        engine = EndDayEngine()
+        system.install(engine)
+        return engine.execute(
+            state,
+            CommandRequest(
+                f"end-{state.command_sequence + 1}",
+                END_DAY_COMMAND,
+                {},
+                state.command_sequence,
+            ),
+        )
+
+    @staticmethod
+    def add_rejected_arrival_history(state, *, through_day: int) -> None:
+        for event_id, day in (
+            ("arrival_day6", 6),
+            ("arrival_day19", 19),
+            ("arrival_day37", 37),
+        ):
+            if day >= through_day:
+                continue
+            state.events.fixed_arrival_choices[event_id] = "reject"
+            state.events.resolved_event_ids.append(event_id)
+            state.events.occurrence_counts[event_id] = 1
+            state.events.resolution_history.append(
+                EventResolutionRecord(
+                    event_id=event_id,
+                    option_id="reject",
+                    event_type="major",
+                    resolved_day=day,
+                    instance_id=f"{event_id}#0001",
+                    occurrence_index=1,
+                    trust_change=0,
+                    panic_change=0,
+                    resource_changes={
+                        "coal": 0,
+                        "wood": 0,
+                        "steel": 0,
+                        "raw_food": 0,
+                        "cooked_food": 0,
+                    },
+                )
+            )
 
     def sign_full_oath_route(self, system, state) -> None:
         self.enter_oath_route(system, state)
@@ -395,82 +484,371 @@ class OathOrderPatchTests(unittest.TestCase):
     def test_old_city_promise_has_success_and_failure_lifecycle(self) -> None:
         system = self.system()
         state = self.make_state(day=40)
-        system.prepare_new_day(state)
-        self.execute(
+        self.prepare_countdown(
             system,
             state,
-            RESOLVE_OLD_CITY_COMMAND,
-            event_id="southern_letter",
-            option_id="publish",
-        )
-        state.old_city.active_stage_id = "countdown"
-        state.old_city.member_count = state.old_city.high_threshold
-        state.old_city.countdown_day = 45
-        state.old_city.pending_event_id = "countdown"
-        state.old_city.stage_events_seen = [
-            "southern_letter", "rumors", "public_gathering", "countdown"
-        ]
-        result = self.execute(
-            system,
-            state,
-            RESOLVE_OLD_CITY_COMMAND,
-            event_id="countdown",
+            deadline_day=45,
             option_id="promise_reduce_old_city",
         )
-        self.assertEqual(result.code, ErrorCode.OK)
         assert state.old_city.promise_target_count is not None
-        state.old_city.member_count = state.old_city.promise_target_count
+        state.old_city.member_count = max(
+            state.old_city.promise_target_count - 10, 0
+        )
         system.update_old_city(self.context(state))
+        self.assertTrue(state.old_city.promise_active)
+        state.calendar.current_day = 41
+        transition = EndDayContext(
+            state=state,
+            random=DeterministicRandom.from_state(state.random),
+            settled_day=40,
+            stage=EndDayStage.ADVANCE_DAY,
+            _emit=lambda _code, _payload: None,
+        )
+        system.resolve_old_city_deadline_transition(transition)
         self.assertTrue(state.old_city.promise_settled)
         self.assertEqual(state.old_city.promise_outcome, "success")
 
-    def test_final_settlement_removes_people_without_deaths_or_negative_resources(self) -> None:
+    def test_final_settlement_records_actual_low_stock_losses_and_machine_id(self) -> None:
         system = self.system()
         state = self.make_state(day=44)
+        self.add_rejected_arrival_history(state, through_day=44)
         state.resources.cooked_food = 1
         state.resources.coal = 1
         state.resources.wood = 1
         state.resources.steel = 1
-        system.prepare_new_day(state)
-        self.execute(
-            system,
-            state,
-            RESOLVE_OLD_CITY_COMMAND,
-            event_id="southern_letter",
-            option_id="publish",
-        )
-        state.old_city.active_stage_id = "countdown"
-        state.old_city.member_count = state.old_city.high_threshold
-        state.old_city.countdown_day = 48
-        state.old_city.pending_event_id = "countdown"
-        state.old_city.stage_events_seen = [
-            "southern_letter", "rumors", "public_gathering", "countdown"
-        ]
         dead_before = state.population.population_dead
         alive_before = state.population.population_alive
-        result = self.execute(
+        self.prepare_countdown(
             system,
             state,
-            RESOLVE_OLD_CITY_COMMAND,
-            event_id="countdown",
+            deadline_day=48,
             option_id="do_not_stop",
         )
-        self.assertEqual(result.code, ErrorCode.OK)
         self.assertTrue(state.old_city.resolved)
         self.assertLess(state.population.population_alive, alive_before)
         self.assertEqual(state.population.population_dead, dead_before)
         self.assertGreaterEqual(state.population.engineers, 2)
+        self.assertEqual(state.old_city.result_id, "large_exodus")
+        self.assertEqual(
+            state.old_city.settlement_resource_losses,
+            {"cooked_food": 1, "coal": 1, "wood": 1, "steel": 1},
+        )
+        self.assertEqual(
+            decode_game_state(encode_game_state(state)), state
+        )
+
+    def test_countdown_deadline_resolves_before_day48_with_ordered_logs(self) -> None:
+        system = self.system()
+        state = self.make_state(day=40)
+        self.prepare_countdown(system, state, deadline_day=40)
+
+        execution = self.end_day(system, state)
+
+        self.assertEqual(execution.result.code, ErrorCode.OK)
+        self.assertEqual(state.calendar.current_day, 41)
+        self.assertTrue(state.old_city.resolved)
+        codes = [item.code for item in execution.logs]
+        ordered = [
+            codes.index("deadline_day_end_state"),
+            codes.index("promise_resolution"),
+            codes.index("old_city_final_resolution"),
+        ]
+        self.assertEqual(ordered, sorted(ordered))
+
+    def test_deadline_transition_validation_failure_rolls_back_and_skips_autosave(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=40)
+        self.prepare_countdown(system, state, deadline_day=40)
+        before = deepcopy(state)
+        autosaves = []
+        engine = EndDayEngine(autosave_sink=autosaves.append)
+        system.install(engine)
+
+        def corrupt_after_resolution(context: EndDayContext) -> None:
+            context.state.old_city.result_id = "forged_result"
+
+        engine.register_new_day_context_handler(corrupt_after_resolution)
+        execution = engine.execute(
+            state,
+            CommandRequest(
+                "end-corrupt",
+                END_DAY_COMMAND,
+                {},
+                state.command_sequence,
+            ),
+        )
+
+        self.assertEqual(execution.result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(state, before)
+        self.assertEqual(autosaves, [])
+
+    def test_countdown_extension_resolves_only_after_extended_deadline(self) -> None:
+        system = self.system()
+        state = self.make_state(day=40)
+        self.prepare_countdown(
+            system,
+            state,
+            deadline_day=40,
+            option_id="ask_for_time",
+        )
+        self.assertEqual(state.old_city.countdown_day, 42)
+
+        self.assertEqual(self.end_day(system, state).result.code, ErrorCode.OK)
+        self.assertFalse(state.old_city.resolved)
+        self.assertEqual(self.end_day(system, state).result.code, ErrorCode.OK)
+        self.assertFalse(state.old_city.resolved)
+        final = self.end_day(system, state)
+        self.assertEqual(final.result.code, ErrorCode.OK)
+        self.assertTrue(state.old_city.resolved)
+        self.assertEqual(state.old_city.settlement_day, 42)
+
+    def test_deadline_day_is_playable_then_promise_fails_next_day(self) -> None:
+        system = self.system()
+        state = self.make_state(day=45)
+        self.prepare_countdown(
+            system,
+            state,
+            deadline_day=45,
+            option_id="promise_reduce_old_city",
+        )
+        system.update_old_city(self.context(state))
+        self.assertTrue(state.old_city.promise_active)
+        self.assertFalse(state.old_city.promise_settled)
+
+        execution = self.end_day(system, state)
+
+        self.assertEqual(execution.result.code, ErrorCode.OK)
+        self.assertEqual(state.calendar.current_day, 46)
+        self.assertEqual(state.old_city.promise_outcome, "failure")
+        self.assertEqual(state.old_city.promise_settled_day, 46)
+        self.assertTrue(state.old_city.resolved)
+
+    def test_deadline_final_state_settles_promise_before_old_city_result(self) -> None:
+        system = self.system()
+        state = self.make_state(day=45)
+        self.prepare_countdown(
+            system,
+            state,
+            deadline_day=45,
+            option_id="promise_reduce_old_city",
+        )
+        assert state.old_city.promise_target_count is not None
+        state.old_city.member_count = max(
+            state.old_city.promise_target_count - 4, 0
+        )
+
+        execution = self.end_day(system, state)
+
+        self.assertEqual(execution.result.code, ErrorCode.OK)
+        self.assertEqual(state.old_city.promise_outcome, "success")
+        self.assertEqual(state.old_city.result_id, "scattered")
+        payloads = {
+            item.code: item.payload
+            for item in execution.logs
+            if item.code
+            in {
+                "deadline_day_end_state",
+                "promise_resolution",
+                "old_city_final_resolution",
+            }
+        }
+        self.assertEqual(payloads["promise_resolution"]["outcome"], "success")
+        self.assertEqual(
+            payloads["old_city_final_resolution"]["result_id"], "scattered"
+        )
+
+    def test_old_city_resource_losses_cover_zero_and_sufficient_stock(self) -> None:
+        system = self.system()
+        for stock in (0, 1000):
+            with self.subTest(stock=stock):
+                state = self.make_state(day=44)
+                self.add_rejected_arrival_history(state, through_day=44)
+                self.prepare_countdown(system, state, deadline_day=48)
+                state.resources.cooked_food = stock
+                state.resources.coal = stock
+                state.resources.wood = stock
+                state.resources.steel = stock
+
+                settlement = system._settle_old_city(state)
+                departed = settlement["actual_departures"]
+                expected_theoretical = {
+                    "cooked_food": departed * 2,
+                    "coal": departed * 3,
+                    "wood": departed * 2,
+                    "steel": departed,
+                }
+                expected = {
+                    key: min(stock, value)
+                    for key, value in expected_theoretical.items()
+                }
+                self.assertEqual(settlement["resource_losses"], expected)
+                self.assertEqual(
+                    decode_game_state(encode_game_state(state)), state
+                )
+
+    def test_partial_and_large_exodus_ids_survive_v10_round_trip(self) -> None:
+        system = self.system()
+        for result_id, member_count in (
+            ("partial_exodus", "middle"),
+            ("large_exodus", "high"),
+        ):
+            with self.subTest(result_id=result_id):
+                state = self.make_state(day=44)
+                self.add_rejected_arrival_history(state, through_day=44)
+                self.prepare_countdown(system, state, deadline_day=48)
+                state.old_city.member_count = (
+                    state.old_city.middle_threshold
+                    if member_count == "middle"
+                    else state.old_city.high_threshold
+                )
+                system._settle_old_city(state)
+                self.assertEqual(state.old_city.result_id, result_id)
+                restored = decode_game_state(encode_game_state(state))
+                self.assertEqual(restored.old_city.result_id, result_id)
+
+    def test_departure_caps_actual_count_to_protect_critical_jobs(self) -> None:
+        system = self.system()
+        state = self.make_state(day=44)
+        population = state.population
+        population.population_total = 6
+        population.population_alive = 6
+        population.workers = 4
+        population.engineers = 2
+        population.children = 0
+        population.medical_apprentices = 0
+        population.engineering_apprentices = 0
+        population.healthy_population = 6
+        population.sick_population = 0
+        population.critical_population = 0
+        population.disabled_population = 0
+        population.housed_population = 6
+        population.homeless_population = 0
+        for building_id, building_type in (
+            ("critical-canteen", "canteen"),
+            ("critical-hunt", "hunting_lodge"),
+            ("critical-greenhouse", "greenhouse"),
+        ):
+            state.buildings[building_id] = BuildingState(
+                building_id=building_id,
+                building_type=building_type,
+                zone="middle_ring",
+                slot_size=2,
+                is_built=True,
+                is_operational=True,
+                assigned_workers=1,
+            )
+        coal = state.surface_resource_points["surface-coal-1"]
+        coal.assigned_workers = 1
+        old = state.old_city
+        old.is_unlocked = True
+        old.reference_population = 6
+        old.low_threshold = 1
+        old.middle_threshold = 2
+        old.high_threshold = 3
+        old.active_stage_id = "countdown"
+        old.stage_events_seen = [
+            "southern_letter",
+            "rumors",
+            "public_gathering",
+            "countdown",
+        ]
+        old.countdown_day = 48
+        old.member_count = 3
+
+        settlement = system._settle_old_city(state)
+
+        self.assertEqual(settlement["theoretical_departures"], 1)
+        self.assertEqual(settlement["actual_departures"], 0)
+        self.assertEqual(settlement["protected_engineers"], 2)
+        self.assertEqual(
+            settlement["reduction_reason"],
+            "critical_jobs_and_engineer_floor",
+        )
+        self.assertEqual(
+            set(settlement["protected_jobs"]),
+            {
+                "building:critical-canteen",
+                "building:critical-greenhouse",
+                "building:critical-hunt",
+                "resource:surface-coal-1",
+            },
+        )
         self.assertTrue(
             all(
-                value >= 0
-                for value in (
-                    state.resources.cooked_food,
-                    state.resources.coal,
-                    state.resources.wood,
-                    state.resources.steel,
+                state.buildings[building_id].assigned_workers == 1
+                for building_id in (
+                    "critical-canteen",
+                    "critical-hunt",
+                    "critical-greenhouse",
                 )
             )
         )
+        self.assertEqual(coal.assigned_workers, 1)
+
+    def test_departure_resynchronizes_medical_capacity_after_staff_loss(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=44)
+        state.population.population_total = 5
+        state.population.population_alive = 5
+        state.population.workers = 0
+        state.population.engineers = 5
+        state.population.children = 0
+        state.population.sick_population = 3
+        state.population.healthy_population = 2
+        state.population.critical_population = 0
+        state.population.disabled_population = 0
+        state.population.housed_population = 5
+        state.population.homeless_population = 0
+        state.buildings["medical-1"] = BuildingState(
+            building_id="medical-1",
+            building_type="medical_station",
+            zone="inner_ring",
+            slot_size=2,
+            is_built=True,
+            is_operational=True,
+            assigned_engineers=5,
+        )
+        state.medical.building_capacity = 10
+        state.medical.effective_capacity = (
+            state.medical.temporary_capacity + 10
+        )
+        state.medical.medical_pressure = 0
+
+        departure = system._remove_population(state, requested=4)
+
+        self.assertEqual(departure["actual_departures"], 3)
+        self.assertEqual(state.population.engineers, 2)
+        self.assertEqual(
+            state.buildings["medical-1"].assigned_engineers, 2
+        )
+        self.assertEqual(state.medical.building_capacity, 4)
+        self.assertEqual(
+            state.medical.effective_capacity,
+            state.medical.temporary_capacity + 4,
+        )
+        self.assertEqual(state.medical.medical_pressure, 0)
+
+    def test_protected_job_summary_remains_historical_after_reassignment(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=44)
+        self.add_rejected_arrival_history(state, through_day=44)
+        self.prepare_countdown(system, state, deadline_day=48)
+        coal = state.surface_resource_points["surface-coal-1"]
+        coal.assigned_workers = 1
+
+        system._settle_old_city(state)
+
+        self.assertEqual(
+            state.old_city.protected_jobs["resource:surface-coal-1"], 1
+        )
+        coal.assigned_workers = 0
+        self.assertEqual(decode_game_state(encode_game_state(state)), state)
 
     def test_final_oath_only_rewrites_trust_axis(self) -> None:
         system = self.system()
@@ -559,6 +937,42 @@ class OathOrderPatchTests(unittest.TestCase):
             decode_game_state(encode_game_state(migrated)), migrated
         )
 
+    def test_v9_migration_accepts_day24_boundary_and_pending_activation(self) -> None:
+        for activation_pending in (False, True):
+            with self.subTest(activation_pending=activation_pending):
+                state = self.make_state(day=24)
+                self.add_rejected_arrival_history(state, through_day=24)
+                state.old_city.activation_pending = activation_pending
+                document = encode_game_state(state)
+                document["save_data_version"] = 9
+
+                migrated = decode_game_state(document)
+
+                self.assertEqual(migrated.calendar.current_day, 24)
+                self.assertEqual(
+                    migrated.old_city.activation_pending,
+                    activation_pending,
+                )
+
+    def test_v9_migration_rejects_day25_and_day30_old_city_gaps(self) -> None:
+        for day in (25, 30):
+            with self.subTest(day=day):
+                state = self.make_state(day=day)
+                self.add_rejected_arrival_history(state, through_day=day)
+                document = encode_game_state(state)
+                document["save_data_version"] = 9
+                with self.assertRaisesRegex(
+                    SaveDataError, "after day 24"
+                ):
+                    decode_game_state(document)
+
+    def test_v9_day24_migration_still_requires_fixed_arrival_history(self) -> None:
+        state = self.make_state(day=24)
+        document = encode_game_state(state)
+        document["save_data_version"] = 9
+        with self.assertRaises(SaveDataError):
+            decode_game_state(document)
+
     def test_route_facility_tampering_is_rejected(self) -> None:
         state = self.make_state()
         document = encode_game_state(state)
@@ -591,6 +1005,18 @@ class OathOrderPatchTests(unittest.TestCase):
         bad_cooldown = encode_game_state(route)
         bad_cooldown["oath_order"]["next_law_day"] += 1
         mutations.append(bad_cooldown)
+
+        settled = self.make_state(day=44)
+        self.add_rejected_arrival_history(settled, through_day=44)
+        self.prepare_countdown(system, settled, deadline_day=48)
+        system._settle_old_city(settled)
+        wrong_result = encode_game_state(settled)
+        wrong_result["old_city"]["result_id"] = "large_departure"
+        mutations.append(wrong_result)
+
+        impossible_loss = encode_game_state(settled)
+        impossible_loss["old_city"]["settlement_resource_losses"]["coal"] += 1
+        mutations.append(impossible_loss)
 
         for document in mutations:
             with self.subTest(document=document), self.assertRaises(SaveDataError):
