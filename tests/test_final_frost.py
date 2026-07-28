@@ -872,6 +872,10 @@ class FinalFrostPatchTests(unittest.TestCase):
             )
         )
         self.assertTrue(state.final_result.is_finalized)
+        self.assertTrue(state.final_result.report.is_generated)
+        self.assertEqual(state.final_result.report.generated_day, 55)
+        self.assertEqual(state.calendar.current_day, 55)
+        self.assertNotIn("56", state.final_frost.daily_records)
         self.assertEqual(len(state.final_result.system_scores), 6)
         self.assertEqual(
             state.final_result.total_score,
@@ -1454,6 +1458,10 @@ class FinalFrostPatchTests(unittest.TestCase):
         )
         self.assertEqual(len(autosaves), 8)
         self.assertTrue(state.final_result.is_finalized)
+        self.assertTrue(state.final_result.report.is_generated)
+        self.assertEqual(state.final_result.report.generated_day, 55)
+        self.assertEqual(state.calendar.current_day, 55)
+        self.assertNotIn("56", state.final_frost.daily_records)
         self.assertEqual(
             state.final_result.total_score,
             sum(state.final_result.system_scores.values()),

@@ -238,6 +238,7 @@ class MachineStartupTests(unittest.TestCase):
                 "game.sign_oath_order_law",
                 "game.staff_oath_order_facility",
                 "game.use_oath_order_action",
+                "game.end_run",
             ],
         )
         self.assertEqual(document["state"]["events"]["generated_for_day"], 1)
@@ -245,6 +246,7 @@ class MachineStartupTests(unittest.TestCase):
         self.assertEqual(document["promise_views"], [])
         self.assertFalse(document["old_city_view"]["is_unlocked"])
         self.assertFalse(document["oath_order_view"]["page_unlocked"])
+        self.assertFalse(document["ending_report_view"]["available"])
         self.assertEqual(len(document["state"]["surface_resource_points"]), 12)
 
 

@@ -10,6 +10,10 @@ from furnace_winter.text.registry import (
     TextRegistryError,
     TextVisibility,
 )
+from furnace_winter.text.ending import (
+    build_ending_pending_registry,
+    build_ending_text_registry,
+)
 
 __all__ = [
     "DeprecatedEntry",
@@ -22,4 +26,6 @@ __all__ = [
     "TextRegistry",
     "TextRegistryError",
     "TextVisibility",
+    "build_ending_pending_registry",
+    "build_ending_text_registry",
 ]

@@ -554,6 +554,9 @@ class EndDaySettlementTests(unittest.TestCase):
         self.assertEqual(execution.result.data["transition"], "hard_fail")
         self.assertEqual(state.calendar.current_day, 1)
         self.assertTrue(state.calendar.is_day_locked)
+        self.assertTrue(state.final_result.is_finalized)
+        self.assertTrue(state.final_result.report.is_generated)
+        self.assertEqual(state.final_result.report.generated_day, 1)
         assert execution.autosave is not None
         self.assertEqual(execution.autosave.resume_stage, "terminal_state")
         self.assertEqual(

@@ -6,8 +6,93 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 11
+CURRENT_SAVE_DATA_VERSION = 12
 FINAL_DAY = 55
+ENDING_TITLE_TEXT_IDS = {
+    "hard_fail": "ending.title.hard_fail",
+    "high_victory": "ending.title.high_victory",
+    "standard_victory": "ending.title.standard_victory",
+    "bitter_victory": "ending.title.bitter_victory",
+    "collapse_survival": "ending.title.collapse_survival",
+    "ember_survival": "ending.title.ember_survival",
+    "player_ended": "ending.title.player_ended",
+}
+ENDING_BODY_POOL_TEXT_IDS = {
+    "high_victory": "ending.high_victory.body_pool",
+    "standard_victory": "ending.standard_victory.body_pool",
+    "bitter_victory": "ending.bitter_victory.body_pool",
+    "collapse_survival": "ending.collapse_survival.body_pool",
+    "ember_survival": "ending.ember_survival.body_pool",
+    "player_ended": "ending.player_ended.body_pool",
+}
+ENDING_HARD_FAIL_BODY_POOL_TEXT_IDS = {
+    "population_zero": "ending.hard_fail.population_zero.body_pool",
+    "core_collapse": "ending.hard_fail.core_collapse.body_pool",
+    "trust_exile": "ending.hard_fail.trust_exile.body_pool",
+    "panic_expelled": "ending.hard_fail.panic_expelled.body_pool",
+}
+ENDING_HARD_FAIL_REASON_TEXT_IDS = {
+    "population_zero": "ending.hard_fail.population_zero.reason",
+    "core_collapse": "ending.hard_fail.core_collapse.reason",
+    "trust_exile": "ending.hard_fail.trust_exile.reason",
+    "panic_expelled": "ending.hard_fail.panic_expelled.reason",
+}
+ENDING_REPORT_NARRATIVE_POOL_TEXT_IDS = (
+    "ending.report.illness.pool",
+    "ending.report.trust_panic.pool",
+    "ending.report.core.pool",
+    "ending.report.coal_food.pool",
+    "ending.report.future.pool",
+)
+ENDING_REPORT_DEATH_RECORD_TEXT_ID = "ending.report.death_record_sentence"
+ENDING_REPORT_ZERO_FROST_DEATHS_TEXT_ID = (
+    "ending.report.frostfall_deaths.zero_sentence"
+)
+ENDING_PLAYER_ENDED_BODY_TEXT_IDS = (
+    "ending.player_ended.status",
+    "ending.player_ended.closing",
+)
+ENDING_INTERROGATION_POOL_BY_ENDING = {
+    "high_victory": "ending.interrogation.high_victory.pool",
+    "standard_victory": "ending.interrogation.general.pool",
+    "bitter_victory": "ending.interrogation.cost.pool",
+    "collapse_survival": "ending.interrogation.cost.pool",
+    "ember_survival": "ending.interrogation.ember.pool",
+}
+ENDING_ADDITIONAL_POOL_TAGS = {
+    "ending.additional.death.pool": {
+        "mass_death",
+        "grave_city",
+        "frost_survived_broken",
+    },
+    "ending.additional.medical.pool": {
+        "medical_strained",
+        "medical_collapse",
+        "silent_hospital",
+        "survived_with_disabled",
+    },
+    "ending.additional.food.pool": {
+        "famine_survivor",
+        "famine_city",
+    },
+    "ending.additional.core.pool": {
+        "coal_desperate",
+        "cold_engine",
+        "redline_survivor",
+        "overload_burned_city",
+        "heat_last_stand",
+    },
+    "ending.additional.society.pool": {
+        "broken_society",
+        "oath_carried_zero_trust",
+        "decree_carried_panic",
+    },
+    "ending.additional.housing.pool": {
+        "cold_houses",
+        "frozen_homeless",
+        "city_continuity_broken",
+    },
+}
 OVERTIME_BUILDING_TYPES = frozenset({
     "medical_station",
     "hospital",
@@ -28,6 +113,15 @@ class HardFailType(StrEnum):
     CORE_COLLAPSE = "core_collapse"
     TRUST_EXILE = "trust_exile"
     PANIC_EXPELLED = "panic_expelled"
+
+
+class RunState(StrEnum):
+    ACTIVE = "active"
+    ENDED = "ended"
+
+
+class TerminationReason(StrEnum):
+    PLAYER_ENDED = "player_ended"
 
 
 @dataclass(slots=True)
@@ -528,6 +622,20 @@ class FinalFrostState:
 
 
 @dataclass(slots=True)
+class EndingReportState:
+    """Persisted text selections for the deterministic Patch 010 report."""
+
+    is_generated: bool = False
+    generated_day: int | None = None
+    ending_state: str | None = None
+    display_result_id: str | None = None
+    title_text_id: str | None = None
+    body_text_ids: list[str] = field(default_factory=list)
+    pending_text_ids: list[str] = field(default_factory=list)
+    hidden_achievement_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class FinalResultState:
     is_finalized: bool = False
     ending_id: str | None = None
@@ -537,12 +645,26 @@ class FinalResultState:
     total_score: int | None = None
     major_tags: list[str] = field(default_factory=list)
     defining_tags: list[str] = field(default_factory=list)
+    run_state: RunState = RunState.ACTIVE
+    termination_reason: TerminationReason | None = None
+    termination_day: int | None = None
+    termination_command_sequence: int | None = None
+    report: EndingReportState = field(default_factory=EndingReportState)
 
     def __post_init__(self) -> None:
         if self.hard_fail_type is not None and not isinstance(
             self.hard_fail_type, HardFailType
         ):
             raise TypeError("hard_fail_type must be HardFailType or None")
+        if not isinstance(self.run_state, RunState):
+            raise TypeError("run_state must be RunState")
+        if (
+            self.termination_reason is not None
+            and not isinstance(self.termination_reason, TerminationReason)
+        ):
+            raise TypeError(
+                "termination_reason must be TerminationReason or None"
+            )
 
 
 @dataclass(slots=True)

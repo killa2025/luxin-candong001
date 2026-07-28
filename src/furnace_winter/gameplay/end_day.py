@@ -618,6 +618,19 @@ class EndDayEngine:
                     working.calendar.is_end_day_confirmed = True
                     working.random = random.snapshot()
                     working.command_sequence = state.command_sequence + 1
+                    if working.final_result.hard_fail_type is not None:
+                        final = working.final_result
+                        final.is_finalized = True
+                        final.ending_id = "hard_fail"
+                        final.ending_tags = [
+                            "hard_fail",
+                            final.hard_fail_type.value,
+                        ]
+                        from furnace_winter.gameplay.ending_report import (
+                            EndingReportSystem,
+                        )
+
+                        EndingReportSystem().generate(working)
                     self._validate_state(working)
                     resume_stage = (
                         "terminal_state"
