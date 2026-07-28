@@ -31,6 +31,10 @@
     "exposure_population_unit": 20,
     "small_group_minimum": 8,
     "untreated_sick_severe_divisor": 6,
+    "untreated_sick_severe_level_2_divisor": 5,
+    "untreated_sick_severe_level_3_divisor": 4,
+    "untreated_sick_severe_level_4_divisor": 3,
+    "frost_untreated_sick_extra_severe_divisor": 6,
     "untreated_critical_death_divisor": 3,
     "untreated_critical_extra_death_divisor": 6,
     "untreated_critical_disability_divisor": 5,
@@ -45,7 +49,11 @@
     "homeless_cold_death_divisor": 40,
     "housed_cold_death_divisor": 60,
     "frost_extra_cold_death_divisor": 50,
-    "medical_buffer_per_prevented_disability": 5
+    "medical_buffer_per_prevented_disability": 5,
+    "natural_death_cap_base": 12,
+    "natural_death_cap_maximum": 22,
+    "natural_death_cap_population_baseline": 80,
+    "natural_death_cap_population_divisor": 35
   },
   "daily_thresholds": {
     "overload_redline": 90,
@@ -90,7 +98,6 @@
     "high_victory_death_ratio_percent": 20,
     "grave_city_death_ratio_percent": 30,
     "mass_death_frost_ratio_percent": 20,
-    "low_death_frost_ratio_percent": 10,
     "city_continuity_minimum": 40,
     "city_continuity_population_percent": 30
   },

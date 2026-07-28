@@ -25,7 +25,10 @@ from furnace_winter.models import (
     encode_game_state,
     validate_game_state,
 )
-from tests import downgrade_to_pre_patch006_schema
+from tests import (
+    downgrade_to_pre_patch006_schema,
+    install_final_frost_history_stub,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +45,7 @@ class SurvivalPatchTests(unittest.TestCase):
     def make_engine(self) -> EndDayEngine:
         engine = EndDayEngine()
         SurvivalSystem(self.rules).install(engine)
+        install_final_frost_history_stub(engine)
         return engine
 
     @staticmethod
@@ -260,6 +264,7 @@ class SurvivalPatchTests(unittest.TestCase):
     def test_food_consumes_cooked_then_raw_and_reports_unfed_without_guessing_progression(self) -> None:
         state = self.make_state()
         state.population.population_total = 3
+        state.population.population_total_ever = 3
         state.population.population_alive = 3
         state.population.workers = 3
         state.population.engineers = 0

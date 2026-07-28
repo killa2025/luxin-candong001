@@ -372,6 +372,7 @@ def create_initial_survival_state(
     housing_capacity = rules.starting_housing_capacity
     state.population = PopulationState(
         population_total=total,
+        population_total_ever=total,
         population_alive=total,
         population_dead=0,
         workers=rules.population.workers,

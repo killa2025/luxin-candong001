@@ -37,6 +37,7 @@ from furnace_winter.models import (
     encode_game_state,
     validate_game_state,
 )
+from tests import install_final_frost_history_stub, seed_final_frost_history
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -155,6 +156,7 @@ class TechnologyPatchTests(unittest.TestCase):
             self.technology_rules,
         ).install(engine)
         self.technology_system().install(engine)
+        install_final_frost_history_stub(engine)
         return engine
 
     @staticmethod
@@ -451,6 +453,7 @@ class TechnologyPatchTests(unittest.TestCase):
     def test_final_furnace_stability_combines_confirmed_effects(self) -> None:
         state = self.make_state()
         state.calendar.current_day = 49
+        seed_final_frost_history(state)
         state.resources.coal = 200
         state.technologies.researched_tech_ids.extend(
             [

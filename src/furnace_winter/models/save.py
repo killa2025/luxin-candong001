@@ -90,6 +90,17 @@ _FINAL_ENDING_IDS = {
     "ember_survival",
     "hard_fail",
 }
+_EXTREME_CRISIS_CONDITION_IDS = {
+    "furnace_off",
+    "heating_shortfall",
+    "mass_exposure_level_4",
+    "mass_homeless_exposure",
+    "medical_capacity_zero_with_critical",
+    "untreated_critical_at_least_10",
+    "food_shortage_population_at_least_60",
+    "critical_building_shutdown",
+    "overload_redline_continued",
+}
 
 
 def _promise_sequence(promise_id: str) -> int:
@@ -261,7 +272,14 @@ _V8_EVENT_FOLLOWUP_FIELDS = tuple(
     if name != "instance_id"
 )
 _V8_EVENT_STATE_FIELDS = tuple(
-    name for name in _field_names(EventState) if name != "consumed_followups"
+    name
+    for name in _field_names(EventState)
+    if name
+    not in {
+        "consumed_followups",
+        "fixed_arrival_pressure_days",
+        "natural_death_overflow_candidates",
+    }
 )
 
 
@@ -383,6 +401,22 @@ def _string_map(value: Any, path: str) -> dict[str, str]:
         checked_value = _string(item, f"{path}.{checked_key}")
         assert isinstance(checked_key, str) and isinstance(checked_value, str)
         result[checked_key] = checked_value
+    return result
+
+
+def _day_list_map(value: Any, path: str) -> dict[str, list[int]]:
+    if not isinstance(value, Mapping):
+        raise SaveDataError(f"{path} must be an object")
+    result: dict[str, list[int]] = {}
+    for key, item in value.items():
+        checked_key = _string(key, f"{path} key")
+        assert isinstance(checked_key, str)
+        result[checked_key] = _integer_list(
+            item,
+            f"{path}.{checked_key}",
+            minimum=1,
+            maximum=FINAL_DAY,
+        )
     return result
 
 
@@ -1128,6 +1162,14 @@ def _decode_events(value: Any) -> EventState:
         fixed_arrival_choices=_string_map(
             data["fixed_arrival_choices"], "events.fixed_arrival_choices"
         ),
+        fixed_arrival_pressure_days=_day_list_map(
+            data["fixed_arrival_pressure_days"],
+            "events.fixed_arrival_pressure_days",
+        ),
+        natural_death_overflow_candidates=_nonnegative_int_object(
+            data["natural_death_overflow_candidates"],
+            "events.natural_death_overflow_candidates",
+        ),
         pending_followups=pending_followups,
         consumed_followups=consumed_followups,
         frostfall_warning_stage=_string(
@@ -1443,6 +1485,8 @@ def _decode_frost_day_record(value: Any, path: str) -> FrostDayRecord:
         "overload_redline",
         "core_near_collapse",
         "critical_building_frozen",
+        "cold_houses_day",
+        "mass_cold_exposure_day",
         "food_shortage",
         "starvation",
         "medical_overflow",
@@ -1454,7 +1498,8 @@ def _decode_frost_day_record(value: Any, path: str) -> FrostDayRecord:
         "panic_crisis",
     }
     integer_fields = set(_field_names(FrostDayRecord)) - boolean_fields - {
-        "display_label"
+        "display_label",
+        "extreme_crisis_conditions",
     }
     values: dict[str, Any] = {
         name: _boolean(data[name], f"{path}.{name}") for name in boolean_fields
@@ -1464,6 +1509,10 @@ def _decode_frost_day_record(value: Any, path: str) -> FrostDayRecord:
         values[name] = _integer(data[name], f"{path}.{name}", minimum=minimum)
     values["display_label"] = _string(
         data["display_label"], f"{path}.display_label"
+    )
+    values["extreme_crisis_conditions"] = _string_list(
+        data["extreme_crisis_conditions"],
+        f"{path}.extreme_crisis_conditions",
     )
     return FrostDayRecord(**values)
 
@@ -1527,6 +1576,10 @@ def _decode_final_frost(value: Any) -> FinalFrostState:
         ),
         preparation_tags=_string_list(
             data["preparation_tags"], "final_frost.preparation_tags"
+        ),
+        pending_extreme_crisis_conditions=_string_list(
+            data["pending_extreme_crisis_conditions"],
+            "final_frost.pending_extreme_crisis_conditions",
         ),
         daily_records=records,
         frost_deaths=_integer(
@@ -2219,6 +2272,9 @@ def _migrate_v8_to_v9(document: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw_events, Mapping):
         raise SaveDataError("events must be an object")
     raw_events = dict(raw_events)
+    raw_events.pop("consumed_followups", None)
+    raw_events.pop("fixed_arrival_pressure_days", None)
+    raw_events.pop("natural_death_overflow_candidates", None)
     if set(raw_events) == set(_field_names(EventState)):
         migrated["events"] = _object(
             raw_events, "events", _field_names(EventState)
@@ -2470,6 +2526,42 @@ def _migrate_v10_to_v11(document: dict[str, Any]) -> dict[str, Any]:
         raise SaveDataError(
             "v10 save at or after day 49 cannot reconstruct Patch 009 frost history"
         )
+    raw_population = dict(migrated["population"])
+    raw_population.pop("population_total_ever", None)
+    population = dict(
+        _object(
+            raw_population,
+            "population",
+            tuple(
+                name
+                for name in _field_names(PopulationState)
+                if name != "population_total_ever"
+            ),
+        )
+    )
+    old_city = _object(
+        migrated["old_city"], "old_city", _field_names(OldCityState)
+    )
+    population_total = _integer(
+        population["population_total"],
+        "population.population_total",
+        minimum=0,
+    )
+    actual_departures = _integer(
+        old_city["actual_departures"],
+        "old_city.actual_departures",
+        minimum=0,
+    )
+    migrated["population"] = {
+        **population,
+        "population_total_ever": population_total + actual_departures,
+    }
+    events = dict(migrated["events"])
+    events.pop("fixed_arrival_pressure_days", None)
+    events.pop("natural_death_overflow_candidates", None)
+    events["fixed_arrival_pressure_days"] = {}
+    events["natural_death_overflow_candidates"] = {}
+    migrated["events"] = events
     medical = _object(
         migrated["medical"], "medical", _V10_MEDICAL_FIELDS
     )
@@ -2521,6 +2613,36 @@ def _validate_state_invariants(
             raise SaveDataError(f"events.{name} must be sorted and unique")
         if any(day > legal_settled_day for day in days):
             raise SaveDataError(f"events.{name} cannot contain an unsettled day")
+    if set(events.fixed_arrival_pressure_days) - set(_FIXED_ARRIVAL_DAYS):
+        raise SaveDataError("arrival pressure history contains an unknown event")
+    for event_id, days in events.fixed_arrival_pressure_days.items():
+        if events.fixed_arrival_choices.get(event_id) in {None, "reject"}:
+            raise SaveDataError(
+                "arrival pressure history requires an accepted arrival"
+            )
+        if days != sorted(set(days)):
+            raise SaveDataError("arrival pressure days must be sorted and unique")
+        start_day = _FIXED_ARRIVAL_DAYS[event_id]
+        if any(
+            day < start_day
+            or day > start_day + 4
+            or day > legal_settled_day
+            for day in days
+        ):
+            raise SaveDataError(
+                "arrival pressure day is outside its settled five-day window"
+            )
+    for raw_day, pressure in events.natural_death_overflow_candidates.items():
+        if (
+            not raw_day.isdigit()
+            or str(int(raw_day)) != raw_day
+            or not 49 <= int(raw_day) <= 55
+            or int(raw_day) > legal_settled_day
+            or pressure <= 0
+        ):
+            raise SaveDataError(
+                "natural death overflow candidate is not a settled frost fact"
+            )
     resolution_promise_ids: set[str] = set()
     resolution_instances: dict[str, EventResolutionRecord] = {}
     resolution_occurrences: set[tuple[str, int]] = set()
@@ -3230,6 +3352,12 @@ def _validate_state_invariants(
         population.population_alive + population.population_dead
     ):
         raise SaveDataError("population_total must equal alive plus dead")
+    if population.population_total_ever != (
+        population.population_total + state.old_city.actual_departures
+    ):
+        raise SaveDataError(
+            "historical population must retain every resident and departure"
+        )
     if population.population_alive != (
         population.healthy_population
         + population.sick_population
@@ -3495,10 +3623,14 @@ def _validate_state_invariants(
         raise SaveDataError("final frost disabled baseline exceeds alive population")
     if frost.baseline_workable_population > frost.baseline_alive_population:
         raise SaveDataError("final frost workable baseline exceeds alive population")
-    if frost.prepared_item_count > 6 or frost.unprepared_item_count > 6:
-        raise SaveDataError("final frost preparation count exceeds its six checks")
+    if frost.prepared_item_count > 8 or frost.unprepared_item_count > 8:
+        raise SaveDataError("final frost preparation count exceeds its eight checks")
     if len(set(frost.preparation_tags)) != len(frost.preparation_tags):
         raise SaveDataError("final frost preparation tags must be unique")
+    if frost.pending_extreme_crisis_conditions:
+        raise SaveDataError(
+            "saved state cannot retain pending extreme crisis conditions"
+        )
     if set(frost.preparation_tags) - {
         "prepared_for_frost",
         "unprepared_frost",
@@ -3511,13 +3643,33 @@ def _validate_state_invariants(
         or frost.preparation_tags
     ):
         raise SaveDataError("inactive final frost cannot retain settlement facts")
+    if state.calendar.current_day >= 49 and not frost.entered:
+        raise SaveDataError("D49+ state must retain its final frost baseline")
+    if frost.entered and state.calendar.current_day < 49:
+        raise SaveDataError("final frost baseline cannot exist before D49")
+    record_days = sorted(int(key) for key in frost.daily_records)
+    latest_required_day = min(55, legal_settled_day)
+    expected_record_days = (
+        list(range(49, latest_required_day + 1))
+        if latest_required_day >= 49
+        else []
+    )
+    if record_days != expected_record_days:
+        raise SaveDataError(
+            "final frost records must cover every settled day from D49"
+        )
     previous_population: int | None = None
     total_recorded_deaths = 0
     for key in sorted(frost.daily_records, key=int):
         record = frost.daily_records[key]
         if record.day != int(key) or not 49 <= record.day <= 55:
             raise SaveDataError("final frost record key must match a D49-D55 day")
-        if previous_population is not None and record.population_start != previous_population:
+        if previous_population is None:
+            if record.population_start != frost.baseline_alive_population:
+                raise SaveDataError(
+                    "first final frost record must start from the D49 baseline"
+                )
+        elif record.population_start != previous_population:
             raise SaveDataError("final frost daily population chain is discontinuous")
         if record.population_end > record.population_start:
             raise SaveDataError("final frost daily population cannot increase during settlement")
@@ -3532,7 +3684,74 @@ def _validate_state_invariants(
         total_recorded_deaths += (
             record.population_start - record.population_end
         )
+        if record.extreme_crisis_conditions != sorted(
+            set(record.extreme_crisis_conditions)
+        ):
+            raise SaveDataError(
+                "extreme crisis conditions must be sorted and unique"
+            )
+        if set(record.extreme_crisis_conditions) - (
+            _EXTREME_CRISIS_CONDITION_IDS
+        ):
+            raise SaveDataError(
+                "final frost record contains an unknown extreme crisis condition"
+            )
+        expected_base_cap = min(
+            22,
+            12 + max(0, record.population_start - 80) // 35,
+        )
+        expected_applied_cap = (
+            (expected_base_cap * 3 + 1) // 2
+            if len(record.extreme_crisis_conditions) >= 2
+            else expected_base_cap
+        )
+        if (
+            record.base_natural_death_cap != expected_base_cap
+            or record.applied_natural_death_cap != expected_applied_cap
+        ):
+            raise SaveDataError(
+                "final frost natural death cap summary is inconsistent"
+            )
+        expected_disease_deaths = min(
+            record.raw_disease_deaths, expected_applied_cap
+        )
+        expected_cold_deaths = min(
+            record.raw_cold_deaths,
+            expected_applied_cap - expected_disease_deaths,
+        )
+        if (
+            record.actual_disease_deaths != expected_disease_deaths
+            or record.disease_deaths != expected_disease_deaths
+            or record.disease_death_overflow
+            != record.raw_disease_deaths - expected_disease_deaths
+            or record.actual_cold_deaths != expected_cold_deaths
+            or record.cold_deaths != expected_cold_deaths
+            or record.cold_death_overflow
+            != record.raw_cold_deaths - expected_cold_deaths
+            or record.natural_death_overflow_pressure
+            != record.disease_death_overflow
+            + record.cold_death_overflow
+        ):
+            raise SaveDataError(
+                "final frost natural death allocation is inconsistent"
+            )
+        candidate_pressure = events.natural_death_overflow_candidates.get(key)
+        if record.natural_death_overflow_pressure > 0:
+            if candidate_pressure != record.natural_death_overflow_pressure:
+                raise SaveDataError(
+                    "natural death overflow lacks its exact event candidate"
+                )
+        elif candidate_pressure is not None:
+            raise SaveDataError(
+                "zero natural death overflow cannot retain an event candidate"
+            )
         previous_population = record.population_end
+    if set(events.natural_death_overflow_candidates) - set(
+        frost.daily_records
+    ):
+        raise SaveDataError(
+            "natural death overflow candidate lacks its frost record"
+        )
     if frost.frost_deaths != total_recorded_deaths:
         raise SaveDataError("final frost death total must match daily records")
     if frost.final_score_day is not None and frost.final_score_day != 55:

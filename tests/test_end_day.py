@@ -21,6 +21,7 @@ from furnace_winter.interface import (
     ReplayLog,
 )
 from furnace_winter.models import GameState, HardFailType, encode_game_state
+from tests import install_final_frost_history_stub, seed_final_frost_history
 
 
 def request(name: str, command_id: str = "command-1") -> CommandRequest:
@@ -450,8 +451,11 @@ class EndDaySettlementTests(unittest.TestCase):
     def test_day_55_stops_at_final_settlement_boundary(self) -> None:
         state = GameState.initial()
         state.calendar.current_day = state.calendar.max_day
+        seed_final_frost_history(state)
+        engine = EndDayEngine()
+        install_final_frost_history_stub(engine)
 
-        execution = EndDayEngine().execute(state, request(END_DAY_COMMAND))
+        execution = engine.execute(state, request(END_DAY_COMMAND))
 
         self.assertEqual(execution.result.data["transition"], "final_settlement")
         self.assertEqual(state.calendar.current_day, 55)
@@ -465,6 +469,7 @@ class EndDaySettlementTests(unittest.TestCase):
         state = GameState.initial(random_seed=55)
         sink_records: list[object] = []
         engine = EndDayEngine(autosave_sink=sink_records.append)
+        install_final_frost_history_stub(engine)
 
         for settled_day in range(1, 56):
             execution = engine.execute(
@@ -490,6 +495,7 @@ class EndDaySettlementTests(unittest.TestCase):
         def run() -> tuple[dict[str, object], list[object]]:
             state = GameState.initial(random_seed=2025)
             engine = EndDayEngine()
+            install_final_frost_history_stub(engine)
             boundaries: list[object] = []
             for settled_day in range(1, 56):
                 execution = engine.execute(

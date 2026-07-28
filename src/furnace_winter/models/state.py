@@ -42,6 +42,7 @@ class CalendarState:
 @dataclass(slots=True)
 class PopulationState:
     population_total: int = 0
+    population_total_ever: int = 0
     population_alive: int = 0
     population_dead: int = 0
     workers: int = 0
@@ -329,6 +330,12 @@ class EventState:
     recent_canteen_outage_days: list[int] = field(default_factory=list)
     recent_overtime_days: list[int] = field(default_factory=list)
     fixed_arrival_choices: dict[str, str] = field(default_factory=dict)
+    fixed_arrival_pressure_days: dict[str, list[int]] = field(
+        default_factory=dict
+    )
+    natural_death_overflow_candidates: dict[str, int] = field(
+        default_factory=dict
+    )
     pending_followups: dict[str, EventFollowupRecord] = field(default_factory=dict)
     consumed_followups: list[EventFollowupSettlementRecord] = field(
         default_factory=list
@@ -464,8 +471,10 @@ class FrostDayRecord:
     heat_uses: int = 0
     critical_building_frozen: bool = False
     cold_houses_population: int = 0
+    cold_houses_day: bool = False
     homeless_exposure_population: int = 0
     mass_cold_exposure_population: int = 0
+    mass_cold_exposure_day: bool = False
     food_shortage: bool = False
     starvation: bool = False
     medical_gap: int = 0
@@ -479,6 +488,16 @@ class FrostDayRecord:
     food_deaths: int = 0
     disease_deaths: int = 0
     cold_deaths: int = 0
+    raw_disease_deaths: int = 0
+    actual_disease_deaths: int = 0
+    disease_death_overflow: int = 0
+    raw_cold_deaths: int = 0
+    actual_cold_deaths: int = 0
+    cold_death_overflow: int = 0
+    base_natural_death_cap: int = 0
+    applied_natural_death_cap: int = 0
+    extreme_crisis_conditions: list[str] = field(default_factory=list)
+    natural_death_overflow_pressure: int = 0
     mass_death: bool = False
     trust_crisis: bool = False
     panic_crisis: bool = False
@@ -499,6 +518,7 @@ class FinalFrostState:
     prepared_item_count: int = 0
     unprepared_item_count: int = 0
     preparation_tags: list[str] = field(default_factory=list)
+    pending_extreme_crisis_conditions: list[str] = field(default_factory=list)
     daily_records: dict[str, FrostDayRecord] = field(default_factory=dict)
     frost_deaths: int = 0
     final_score_day: int | None = None

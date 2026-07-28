@@ -65,6 +65,10 @@ _DAMAGE_FIELDS = {
     "exposure_population_unit",
     "small_group_minimum",
     "untreated_sick_severe_divisor",
+    "untreated_sick_severe_level_2_divisor",
+    "untreated_sick_severe_level_3_divisor",
+    "untreated_sick_severe_level_4_divisor",
+    "frost_untreated_sick_extra_severe_divisor",
     "untreated_critical_death_divisor",
     "untreated_critical_extra_death_divisor",
     "untreated_critical_disability_divisor",
@@ -80,6 +84,10 @@ _DAMAGE_FIELDS = {
     "housed_cold_death_divisor",
     "frost_extra_cold_death_divisor",
     "medical_buffer_per_prevented_disability",
+    "natural_death_cap_base",
+    "natural_death_cap_maximum",
+    "natural_death_cap_population_baseline",
+    "natural_death_cap_population_divisor",
 }
 _DAILY_THRESHOLD_FIELDS = {
     "overload_redline",
@@ -114,7 +122,6 @@ _SCORING_FIELDS = {
     "high_victory_death_ratio_percent",
     "grave_city_death_ratio_percent",
     "mass_death_frost_ratio_percent",
-    "low_death_frost_ratio_percent",
     "city_continuity_minimum",
     "city_continuity_population_percent",
 }
@@ -126,6 +133,56 @@ _RESULT_IDS = {
     "ember_survival",
 }
 _TAG_SEVERITIES = {"major", "defining"}
+_EXPECTED_KEY_TECHNOLOGY_IDS = {
+    "tech_furnace_coal_saving_2",
+    "tech_building_insulation_2",
+    "tech_final_furnace_stability",
+}
+_EXPECTED_TAG_SEVERITY = {
+    "coal_desperate": "major",
+    "cold_engine": "major",
+    "redline_survivor": "major",
+    "famine_survivor": "major",
+    "famine_city": "defining",
+    "cold_houses": "major",
+    "frozen_homeless": "defining",
+    "medical_collapse": "major",
+    "silent_hospital": "defining",
+    "mass_death": "major",
+    "grave_city": "defining",
+    "broken_society": "major",
+    "oath_carried_zero_trust": "defining",
+    "decree_carried_panic": "defining",
+    "city_continuity_broken": "major",
+    "prepared_for_frost": "major",
+    "unprepared_frost": "major",
+    "frost_survived_clean": "major",
+    "frost_survived_broken": "defining",
+    "old_city_stabilized": "major",
+    "old_city_persuaded": "major",
+    "old_city_suppressed": "major",
+    "old_city_departed": "defining",
+    "old_city_unresolved": "major",
+    "refugee_pressure": "major",
+    "opened_gates": "major",
+    "closed_gates": "major",
+    "mourning_bell": "major",
+    "ember_register": "major",
+    "shared_meal_oath": "major",
+    "stay_oath": "major",
+    "final_oath": "defining",
+    "morning_rollcall": "major",
+    "unified_notice": "major",
+    "detention_used": "major",
+    "census_control": "major",
+    "final_decree": "defining",
+    "promise_keeper": "major",
+    "promise_breaker": "major",
+    "medical_promise_failed": "major",
+    "food_promise_failed": "major",
+    "children_promise_failed": "major",
+    "old_city_promise_failed": "defining",
+}
 
 
 def _object(value: Any, path: str) -> dict[str, Any]:
@@ -262,6 +319,16 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
         raise FinalFrostConfigError(
             "the sealed D49-D55 real temperatures changed"
         )
+    expected_labels = {
+        **{day: "-70级第七霜落" for day in range(49, 55)},
+        55: "-80级第七霜落",
+    }
+    if {
+        day: rule.display_label for day, rule in temperatures.items()
+    } != expected_labels:
+        raise FinalFrostConfigError(
+            "the sealed D49-D55 display labels changed"
+        )
 
     restrictions = _object(data["restrictions"], "$.restrictions")
     _exact(
@@ -295,10 +362,32 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
         raise FinalFrostConfigError(
             "the sealed final-frost shutdown catalog changed"
         )
+    if restrictions["shutdown_surface_collection"] is not True:
+        raise FinalFrostConfigError(
+            "final frost must shut down surface collection"
+        )
 
     damage = _positive_integer_object(
         data["damage"], _DAMAGE_FIELDS, "$.damage"
     )
+    confirmed_damage_values = {
+        "untreated_sick_severe_divisor": 6,
+        "untreated_sick_severe_level_2_divisor": 5,
+        "untreated_sick_severe_level_3_divisor": 4,
+        "untreated_sick_severe_level_4_divisor": 3,
+        "frost_untreated_sick_extra_severe_divisor": 6,
+        "natural_death_cap_base": 12,
+        "natural_death_cap_maximum": 22,
+        "natural_death_cap_population_baseline": 80,
+        "natural_death_cap_population_divisor": 35,
+    }
+    if any(
+        damage[name] != expected
+        for name, expected in confirmed_damage_values.items()
+    ):
+        raise FinalFrostConfigError(
+            "confirmed final-frost disease and natural-death formulas changed"
+        )
     daily_thresholds = _positive_integer_object(
         data["daily_thresholds"],
         _DAILY_THRESHOLD_FIELDS,
@@ -325,6 +414,12 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
     ):
         raise FinalFrostConfigError(
             "preparation technology ids must be unique"
+        )
+    if set(normalized_preparation["key_technology_ids"]) != (
+        _EXPECTED_KEY_TECHNOLOGY_IDS
+    ):
+        raise FinalFrostConfigError(
+            "the final-frost key technology catalog changed"
         )
 
     scoring = _object(data["scoring"], "$.scoring")
@@ -360,6 +455,10 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
         raise FinalFrostConfigError(
             "the sealed final result score bands changed"
         )
+    if normalized_scoring["grave_city_death_ratio_percent"] != 30:
+        raise FinalFrostConfigError(
+            "grave_city must use the confirmed strict 30 percent threshold"
+        )
 
     raw_severity = _object(data["tag_severity"], "$.tag_severity")
     severity = {
@@ -371,6 +470,10 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
     if not severity or set(severity.values()) - _TAG_SEVERITIES:
         raise FinalFrostConfigError(
             "tag severity values must be major or defining"
+        )
+    if severity != _EXPECTED_TAG_SEVERITY:
+        raise FinalFrostConfigError(
+            "the required final-frost tag severity catalog changed"
         )
 
     return FinalFrostRules(
