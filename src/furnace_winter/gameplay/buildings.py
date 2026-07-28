@@ -666,6 +666,13 @@ class BuildingSystem:
         context.emit("buildings.temperature.calculated", {"building_count": len(state.buildings)})
 
     def resolve_building_operation(self, context: EndDayContext) -> None:
+        final_frost = 49 <= context.settled_day <= 55
+        frost_shutdown_types = {
+            "hunting_lodge",
+            "logging_camp",
+            "small_coal_miner",
+            "small_steel_miner",
+        }
         for building in context.state.buildings.values():
             rule = self.rules.buildings.get(building.building_type)
             if rule is None:
@@ -676,7 +683,15 @@ class BuildingSystem:
                 and building.effective_temperature < rule.min_operating_temperature
             )
             staffed = rule.staff_capacity == 0 or self._assigned_total(building) > 0
-            building.is_operational = building.is_built and staffed and not building.is_shutdown_by_temperature
+            building.is_operational = (
+                building.is_built
+                and staffed
+                and not building.is_shutdown_by_temperature
+                and not (
+                    final_frost
+                    and building.building_type in frost_shutdown_types
+                )
+            )
         context.emit(
             "buildings.operation.resolved",
             {"operational_count": sum(item.is_operational for item in context.state.buildings.values())},
@@ -693,6 +708,8 @@ class BuildingSystem:
             and building.bound_resource_id is not None
         }
         for resource_point_id, point in state.surface_resource_points.items():
+            if 49 <= context.settled_day <= 55:
+                continue
             if point.is_depleted:
                 continue
             point_rule = self.rules.surface_resource_points[resource_point_id]

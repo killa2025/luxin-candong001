@@ -36,7 +36,11 @@ from furnace_winter.models import (
     encode_game_state,
     validate_game_state,
 )
-from tests import downgrade_to_pre_patch006_schema
+from tests import (
+    downgrade_to_pre_patch006_schema,
+    install_final_frost_history_stub,
+    seed_final_frost_history,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +64,7 @@ class BuildingPatchTests(unittest.TestCase):
         engine = EndDayEngine(autosave_sink=autosave_sink)
         SurvivalSystem(self.survival_rules, self.building_rules).install(engine)
         self.make_system().install(engine)
+        install_final_frost_history_stub(engine)
         return engine
 
     def execute(self, state, name: str, arguments: dict, command_id: str = "command"):
@@ -269,6 +274,7 @@ class BuildingPatchTests(unittest.TestCase):
     def test_heat_reserves_furnace_coal_costs_once_and_resets_after_end_day(self) -> None:
         state = self.make_state()
         state.calendar.current_day = 55
+        seed_final_frost_history(state)
         state.resources.coal = 105
         state.furnace.mode_id = "level_2"
         state.furnace.is_active = True
@@ -346,6 +352,7 @@ class BuildingPatchTests(unittest.TestCase):
     def test_woodfuel_can_cover_the_shortfall_created_by_heat(self) -> None:
         state = self.make_state()
         state.calendar.current_day = 55
+        seed_final_frost_history(state)
         state.furnace.mode_id = "level_2"
         state.furnace.is_active = True
         built = self.execute(
@@ -552,6 +559,7 @@ class BuildingPatchTests(unittest.TestCase):
     def test_heat_requires_spare_coal_after_full_furnace_reserve(self) -> None:
         state = self.make_state()
         state.calendar.current_day = 55
+        seed_final_frost_history(state)
         state.furnace.mode_id = "level_2"
         state.furnace.is_active = True
         state.resources.coal = 100
@@ -570,6 +578,7 @@ class BuildingPatchTests(unittest.TestCase):
     def test_heat_city_limit_is_two_and_school_is_heat_eligible(self) -> None:
         state = self.make_state()
         state.calendar.current_day = 49
+        seed_final_frost_history(state)
         state.resources.coal = 500
         state.resources.wood = 500
         state.resources.steel = 500
@@ -602,6 +611,7 @@ class BuildingPatchTests(unittest.TestCase):
     def test_residences_and_research_institute_cannot_heat(self) -> None:
         state = self.make_state()
         state.calendar.current_day = 49
+        seed_final_frost_history(state)
         research = self.execute(
             state,
             BUILD_COMMAND,
@@ -806,6 +816,7 @@ class BuildingPatchTests(unittest.TestCase):
 
         heat_tampered = self.make_state()
         heat_tampered.calendar.current_day = 49
+        seed_final_frost_history(heat_tampered)
         heat_tampered.buildings["residence-start-001"].can_heat = True
         coal_before = heat_tampered.resources.coal
         result = self.execute(

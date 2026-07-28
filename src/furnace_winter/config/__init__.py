@@ -71,6 +71,12 @@ from furnace_winter.config.oath_order import (
     RouteLawRule,
     load_oath_order_rules,
 )
+from furnace_winter.config.final_frost import (
+    FinalFrostConfigError,
+    FinalFrostRules,
+    FrostTemperatureRule,
+    load_final_frost_rules,
+)
 
 __all__ = [
     "ArrivalEffectRule",
@@ -82,7 +88,10 @@ __all__ = [
     "EventConfigError",
     "EventRule",
     "EventRules",
+    "FinalFrostConfigError",
+    "FinalFrostRules",
     "FurnaceLevelRule",
+    "FrostTemperatureRule",
     "FixedArrivalRule",
     "HeatRule",
     "LoadedConfig",
@@ -120,6 +129,7 @@ __all__ = [
     "load_config_file",
     "load_config_tree",
     "load_event_rules",
+    "load_final_frost_rules",
     "load_building_rules",
     "load_law_rules",
     "load_oath_order_rules",

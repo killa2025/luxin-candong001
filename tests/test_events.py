@@ -424,6 +424,27 @@ class EventPatchTests(unittest.TestCase):
 
         frost_state = self.make_state(day=49)
         frost_state.trust_panic.trust = 30
+        frost_state.final_frost.entered = True
+        frost_state.final_frost.baseline_day = 49
+        frost_state.final_frost.baseline_alive_population = (
+            frost_state.population.population_alive
+        )
+        frost_state.final_frost.baseline_healthy_population = (
+            frost_state.population.healthy_population
+        )
+        frost_state.final_frost.baseline_sick_population = (
+            frost_state.population.sick_population
+        )
+        frost_state.final_frost.baseline_critical_population = (
+            frost_state.population.critical_population
+        )
+        frost_state.final_frost.baseline_disabled_population = (
+            frost_state.population.disabled_population
+        )
+        frost_state.final_frost.baseline_workable_population = (
+            frost_state.population.workers
+            + frost_state.population.engineers
+        )
         system.initialize_day(frost_state)
         self.assertEqual(set(frost_state.events.active_events), {"seventh_frost_start"})
         self.assertTrue(frost_state.events.seventh_frostfall_active)

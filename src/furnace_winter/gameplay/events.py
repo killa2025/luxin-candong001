@@ -1055,6 +1055,7 @@ class EventSystem:
         population = state.population
         healthy = effect.total - effect.sick - effect.critical - effect.disabled
         population.population_total += effect.total
+        population.population_total_ever += effect.total
         population.population_alive += effect.total
         population.workers += effect.workers
         population.engineers += effect.engineers
@@ -1121,6 +1122,25 @@ class EventSystem:
     def capture_daily_metrics(self, context: EndDayContext) -> None:
         state = context.state
         day = context.settled_day
+        arrival_pressure = (
+            state.population.homeless_population > 0
+            or state.daily_survival.food_shortfall > 0
+            or state.medical.medical_pressure > 0
+        )
+        if arrival_pressure:
+            for event_id, rule in self.rules.fixed_arrivals.items():
+                choice = state.events.fixed_arrival_choices.get(event_id)
+                if (
+                    choice is not None
+                    and choice != "reject"
+                    and rule.day <= day <= rule.day + 4
+                ):
+                    days = state.events.fixed_arrival_pressure_days.setdefault(
+                        event_id, []
+                    )
+                    if day not in days:
+                        days.append(day)
+                        days.sort()
         if state.daily_survival.raw_food_eaten > state.daily_survival.cooked_food_eaten:
             state.events.recent_raw_food_days.append(day)
         if not any(
@@ -1256,6 +1276,30 @@ class EventSystem:
                 raise SaveDataError("fixed arrival choice does not match event rules")
             if self.rules.fixed_arrivals[event_id].day > state.calendar.current_day:
                 raise SaveDataError("fixed arrival choice cannot come from a future day")
+        if set(state.events.fixed_arrival_pressure_days) - set(
+            self.rules.fixed_arrivals
+        ):
+            raise SaveDataError("arrival pressure history contains an unknown event")
+        for event_id, days in state.events.fixed_arrival_pressure_days.items():
+            rule = self.rules.fixed_arrivals[event_id]
+            choice = state.events.fixed_arrival_choices.get(event_id)
+            if choice is None or choice == "reject":
+                raise SaveDataError(
+                    "arrival pressure history requires an accepted arrival"
+                )
+            if days != sorted(set(days)):
+                raise SaveDataError(
+                    "arrival pressure days must be sorted and unique"
+                )
+            if any(
+                day < rule.day
+                or day > rule.day + 4
+                or day > state.calendar.current_day
+                for day in days
+            ):
+                raise SaveDataError(
+                    "arrival pressure day is outside its five-day window"
+                )
         self._validate_fixed_arrival_history(state)
         expected_frost_stage = "none"
         for day, stage in sorted(_FROST_STAGE_BY_DAY.items()):

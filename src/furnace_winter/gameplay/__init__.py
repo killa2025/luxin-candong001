@@ -69,6 +69,7 @@ from furnace_winter.gameplay.oath_order import (
     OathOrderSystem,
     build_oath_order_catalog,
 )
+from furnace_winter.gameplay.final_frost import FinalFrostSystem
 
 __all__ = [
     "ASSIGN_COMMAND",
@@ -87,6 +88,7 @@ __all__ = [
     "EndDayExecution",
     "EndDayStage",
     "EventSystem",
+    "FinalFrostSystem",
     "HEAT_COMMAND",
     "LawSystem",
     "MEDICAL_RATION_COMMAND",

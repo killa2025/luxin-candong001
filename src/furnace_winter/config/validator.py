@@ -243,6 +243,19 @@ def validate_config_tree(root: Path) -> ValidationReport:
                         path, "$", f"Patch 008 oath/order rules invalid: {exc}"
                     )
                 )
+        elif not file_issues and path.name == "final_frost.json":
+            try:
+                from furnace_winter.config.final_frost import (
+                    load_final_frost_rules,
+                )
+
+                load_final_frost_rules(path)
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(
+                        path, "$", f"Patch 009 final-frost rules invalid: {exc}"
+                    )
+                )
 
     manifest_path = root / "manifest.json"
     manifest_present = manifest_path in config_files
@@ -310,9 +323,11 @@ def validate_config_tree(root: Path) -> ValidationReport:
     if not manifest_present:
         buildings_path = root / "buildings.json"
         technologies_path = root / "technologies.json"
+        final_frost_path = root / "final_frost.json"
     elif manifest_config_paths is None:
         buildings_path = None
         technologies_path = None
+        final_frost_path = None
     else:
         building_matches = [
             path for path in manifest_config_paths if path.name == "buildings.json"
@@ -322,17 +337,31 @@ def validate_config_tree(root: Path) -> ValidationReport:
             for path in manifest_config_paths
             if path.name == "technologies.json"
         ]
-        if len(building_matches) > 1 or len(technology_matches) > 1:
+        final_frost_matches = [
+            path
+            for path in manifest_config_paths
+            if path.name == "final_frost.json"
+        ]
+        if (
+            len(building_matches) > 1
+            or len(technology_matches) > 1
+            or len(final_frost_matches) > 1
+        ):
             issues.append(
                 ValidationIssue(
                     manifest_path,
                     "$.configs",
-                    "manifest 中建筑与科技配置路径各自最多登记一项",
+                    "manifest 中建筑、科技与终霜配置路径各自最多登记一项",
                 )
             )
         buildings_path = building_matches[0] if len(building_matches) == 1 else None
         technologies_path = (
             technology_matches[0] if len(technology_matches) == 1 else None
+        )
+        final_frost_path = (
+            final_frost_matches[0]
+            if len(final_frost_matches) == 1
+            else None
         )
 
     if buildings_path is not None and technologies_path is not None:
@@ -359,6 +388,56 @@ def validate_config_tree(root: Path) -> ValidationReport:
                         technologies_path,
                         "$",
                         f"建筑与科技跨配置校验失败：{exc}",
+                    )
+                )
+    if (
+        buildings_path is not None
+        and technologies_path is not None
+        and final_frost_path is not None
+    ):
+        linked_paths = {
+            buildings_path.resolve(),
+            technologies_path.resolve(),
+            final_frost_path.resolve(),
+        }
+        available_paths = {path.resolve() for path in config_files}
+        linked_paths_are_valid = not any(
+            issue.path.resolve() in linked_paths for issue in issues
+        )
+        if linked_paths.issubset(available_paths) and linked_paths_are_valid:
+            try:
+                from furnace_winter.config.buildings import load_building_rules
+                from furnace_winter.config.final_frost import (
+                    load_final_frost_rules,
+                )
+                from furnace_winter.config.technologies import (
+                    load_technology_rules,
+                )
+
+                building_rules = load_building_rules(buildings_path)
+                technology_rules = load_technology_rules(technologies_path)
+                final_frost_rules = load_final_frost_rules(final_frost_path)
+                unknown_buildings = (
+                    final_frost_rules.shutdown_building_types
+                    - set(building_rules.buildings)
+                )
+                unknown_technologies = (
+                    set(final_frost_rules.preparation["key_technology_ids"])
+                    - set(technology_rules.technologies)
+                )
+                if unknown_buildings or unknown_technologies:
+                    raise ValueError(
+                        "unknown shutdown buildings="
+                        f"{sorted(unknown_buildings)}, "
+                        "unknown key technologies="
+                        f"{sorted(unknown_technologies)}"
+                    )
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(
+                        final_frost_path,
+                        "$",
+                        f"终霜跨配置校验失败：{exc}",
                     )
                 )
     return ValidationReport(

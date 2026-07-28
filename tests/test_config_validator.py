@@ -273,6 +273,39 @@ class ConfigValidatorTests(unittest.TestCase):
 
             self.assertFalse(report.is_valid)
 
+    def test_final_frost_cross_references_must_exist(self) -> None:
+        for filename, collection, missing_id in (
+            (
+                "technologies.json",
+                "technologies",
+                "tech_final_furnace_stability",
+            ),
+            ("buildings.json", "buildings", "hunting_lodge"),
+        ):
+            with self.subTest(
+                filename=filename,
+                missing_id=missing_id,
+            ), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                for source in (self.PROJECT_ROOT / "data").glob("*.json"):
+                    document = json.loads(source.read_text("utf-8"))
+                    if source.name == filename:
+                        del document[collection][missing_id]
+                    (root / source.name).write_text(
+                        json.dumps(document, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                report = validate_config_tree(root)
+
+            self.assertFalse(report.is_valid)
+            self.assertTrue(
+                any(
+                    missing_id in issue.message
+                    for issue in report.issues
+                ),
+                [issue.message for issue in report.issues],
+            )
+
     def test_manifest_nested_paths_drive_cross_file_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

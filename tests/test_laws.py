@@ -39,7 +39,10 @@ from furnace_winter.models import (
     decode_game_state,
     encode_game_state,
 )
-from tests import downgrade_to_pre_patch006_schema
+from tests import (
+    downgrade_to_pre_patch006_schema,
+    install_final_frost_history_stub,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +91,7 @@ class LawPatchTests(unittest.TestCase):
         SurvivalSystem(self.survival_rules, self.building_rules).install(engine)
         self.building_system().install(engine)
         self.law_system().install(engine)
+        install_final_frost_history_stub(engine)
         return engine
 
     @staticmethod
