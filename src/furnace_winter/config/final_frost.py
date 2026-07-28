@@ -14,6 +14,15 @@ class FinalFrostConfigError(ValueError):
     pass
 
 
+def _freeze_mapping(value: Mapping[Any, Any]) -> Mapping[Any, Any]:
+    return MappingProxyType(
+        {
+            key: _freeze_mapping(item) if isinstance(item, Mapping) else item
+            for key, item in value.items()
+        }
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class FrostTemperatureRule:
     real: int
@@ -49,7 +58,7 @@ class FinalFrostRules:
         object.__setattr__(
             self, "preparation", MappingProxyType(dict(self.preparation))
         )
-        object.__setattr__(self, "scoring", MappingProxyType(dict(self.scoring)))
+        object.__setattr__(self, "scoring", _freeze_mapping(self.scoring))
         object.__setattr__(
             self, "tag_severity", MappingProxyType(dict(self.tag_severity))
         )

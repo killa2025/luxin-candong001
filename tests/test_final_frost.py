@@ -11,7 +11,10 @@ from unittest.mock import patch
 from furnace_winter.config import (
     FinalFrostConfigError,
     load_building_rules,
+    load_event_rules,
     load_final_frost_rules,
+    load_law_rules,
+    load_oath_order_rules,
     load_survival_rules,
     load_technology_rules,
 )
@@ -21,12 +24,19 @@ from furnace_winter.gameplay import (
     END_DAY_COMMAND,
     EndDayEngine,
     EndDayStage,
+    EventSystem,
     FinalFrostSystem,
+    LawSystem,
+    OathOrderSystem,
+    RESOLVE_EVENT_COMMAND,
+    RESOLVE_OLD_CITY_COMMAND,
     SurvivalSystem,
+    TechnologySystem,
     create_initial_survival_state,
 )
 from furnace_winter.gameplay.end_day import EndDayContext
 from furnace_winter.models import (
+    BuildingState,
     DeterministicRandom,
     EventResolutionRecord,
     FrostDayRecord,
@@ -49,6 +59,11 @@ class FinalFrostPatchTests(unittest.TestCase):
         cls.buildings = load_building_rules(ROOT / "data" / "buildings.json")
         cls.technology = load_technology_rules(
             ROOT / "data" / "technologies.json"
+        )
+        cls.laws = load_law_rules(ROOT / "data" / "laws.json")
+        cls.events = load_event_rules(ROOT / "data" / "events.json")
+        cls.oath_order = load_oath_order_rules(
+            ROOT / "data" / "oath_order.json"
         )
         cls.rules = load_final_frost_rules(
             ROOT / "data" / "final_frost.json"
@@ -98,6 +113,139 @@ class FinalFrostPatchTests(unittest.TestCase):
             self.survival,
             self.technology,
         )
+
+    def full_engine(
+        self,
+        *,
+        autosave_sink=None,
+    ) -> tuple[EndDayEngine, EventSystem, OathOrderSystem]:
+        engine = EndDayEngine(autosave_sink=autosave_sink)
+        SurvivalSystem(
+            self.survival,
+            self.buildings,
+            self.technology,
+        ).install(engine)
+        BuildingSystem(
+            self.buildings,
+            self.survival,
+            self.technology,
+        ).install(engine)
+        LawSystem(
+            self.laws,
+            self.buildings,
+            self.survival,
+            self.technology,
+        ).install(engine)
+        TechnologySystem(
+            self.technology,
+            self.buildings,
+            self.survival,
+            self.laws,
+        ).install(engine)
+        events = EventSystem(
+            self.events,
+            self.buildings,
+            self.survival,
+            self.technology,
+        )
+        events.install(engine)
+        oath_order = OathOrderSystem(
+            self.oath_order,
+            self.buildings,
+            self.survival,
+            self.technology,
+        )
+        oath_order.install(engine)
+        self.system().install(engine)
+        return engine, events, oath_order
+
+    def settle(self, engine: EndDayEngine, state, command_id: str):
+        execution = engine.execute(
+            state,
+            CommandRequest(
+                command_id,
+                END_DAY_COMMAND,
+                {},
+                state.command_sequence,
+            ),
+        )
+        if execution.result.code is ErrorCode.END_DAY_CONFIRMATION_REQUIRED:
+            execution = engine.execute(
+                state,
+                CommandRequest(
+                    f"confirm-{command_id}",
+                    CONFIRM_END_DAY_COMMAND,
+                    execution.result.data["confirmation"],
+                    state.command_sequence,
+                ),
+            )
+        return execution
+
+    @staticmethod
+    def resolve_active_events(events: EventSystem, state) -> None:
+        for event_id, event in list(state.events.active_events.items()):
+            for option_id in event.option_ids:
+                result = events.execute(
+                    state,
+                    CommandRequest(
+                        f"resolve-{state.command_sequence + 1}",
+                        RESOLVE_EVENT_COMMAND,
+                        {
+                            "event_id": event_id,
+                            "option_id": option_id,
+                        },
+                        state.command_sequence,
+                    ),
+                )
+                if result.code is ErrorCode.OK:
+                    break
+            else:
+                raise AssertionError(f"no legal option for {event_id}")
+
+    @staticmethod
+    def resolve_pending_old_city(
+        oath_order: OathOrderSystem,
+        state,
+    ) -> None:
+        options = {
+            "southern_letter": "publish",
+            "rumors": "public_explain",
+            "public_gathering": "public_explain",
+            "countdown": "do_not_stop",
+        }
+        while state.old_city.pending_event_id is not None:
+            event_id = state.old_city.pending_event_id
+            result = oath_order.execute(
+                state,
+                CommandRequest(
+                    f"old-city-{state.command_sequence + 1}",
+                    RESOLVE_OLD_CITY_COMMAND,
+                    {
+                        "event_id": event_id,
+                        "option_id": options[event_id],
+                    },
+                    state.command_sequence,
+                ),
+            )
+            if result.code is not ErrorCode.OK:
+                raise AssertionError((event_id, result.code, result.data))
+
+    @staticmethod
+    def v10_document(state) -> dict:
+        document = encode_game_state(state)
+        document["save_data_version"] = 10
+        del document["final_frost"]
+        del document["medical"]["sick_treatment_progress"]
+        document["events"].pop("fixed_arrival_pressure_days")
+        document["events"].pop("natural_death_overflow_candidates")
+        for field in (
+            "system_scores",
+            "total_score",
+            "major_tags",
+            "defining_tags",
+        ):
+            del document["final_result"][field]
+        return document
 
     @staticmethod
     def set_population(
@@ -235,6 +383,12 @@ class FinalFrostPatchTests(unittest.TestCase):
                     with self.assertRaises(FinalFrostConfigError):
                         load_final_frost_rules(path)
 
+    def test_nested_scoring_configuration_is_immutable(self) -> None:
+        minimums = self.rules.scoring["result_score_minimums"]
+        with self.assertRaises(TypeError):
+            minimums["high_victory"] = 0
+        self.assertEqual(minimums["high_victory"], 20)
+
     def test_day_49_baseline_and_preparation_are_stable(self) -> None:
         state = self.make_state()
         self.system().prepare_new_day(state)
@@ -246,6 +400,97 @@ class FinalFrostPatchTests(unittest.TestCase):
         self.assertEqual(state.final_frost.prepared_item_count, 6)
         self.assertEqual(
             state.final_frost.preparation_tags, ["prepared_for_frost"]
+        )
+
+    def test_day_49_food_preparation_only_converts_raw_food_for_running_canteen(
+        self,
+    ) -> None:
+        def prepared_state(
+            *,
+            operational: bool,
+            temperature: int,
+            workers: int = 5,
+            children: int = 0,
+        ):
+            state = self.make_state()
+            state.resources.cooked_food = 0
+            state.resources.raw_food = 200
+            state.trust_panic.trust = 49
+            canteen_rule = self.buildings.buildings["canteen"]
+            state.buildings["canteen-test"] = BuildingState(
+                building_id="canteen-test",
+                building_type="canteen",
+                zone="inner_ring",
+                slot_size=canteen_rule.slot_size,
+                is_built=True,
+                is_operational=operational,
+                assigned_workers=workers,
+                assigned_children=children,
+                can_heat=True,
+                effective_temperature=temperature,
+                is_shutdown_by_temperature=(
+                    canteen_rule.min_operating_temperature is not None
+                    and temperature < canteen_rule.min_operating_temperature
+                ),
+            )
+            state.building_management.zone_slots_used["inner_ring"] += (
+                canteen_rule.slot_size
+            )
+            return state
+
+        running = prepared_state(operational=True, temperature=-35)
+        before_resources = deepcopy(running.resources)
+        self.system().prepare_new_day(running)
+        self.assertEqual(running.final_frost.prepared_item_count, 5)
+        self.assertEqual(
+            running.final_frost.preparation_tags,
+            ["prepared_for_frost"],
+        )
+        self.assertEqual(running.resources, before_resources)
+
+        for name, state in (
+            (
+                "not operational",
+                prepared_state(operational=False, temperature=-35),
+            ),
+            (
+                "temperature shutdown",
+                prepared_state(operational=True, temperature=-36),
+            ),
+            (
+                "illegal staffing",
+                prepared_state(
+                    operational=True,
+                    temperature=-35,
+                    workers=0,
+                    children=5,
+                ),
+            ),
+        ):
+            with self.subTest(name=name):
+                self.system().prepare_new_day(state)
+                self.assertEqual(state.final_frost.prepared_item_count, 4)
+                self.assertEqual(state.final_frost.preparation_tags, [])
+
+    def test_unprepared_preparation_tag_overrides_prepared_tag(self) -> None:
+        state = self.make_state()
+        state.resources.coal = 0
+        state.resources.cooked_food = 0
+        state.resources.raw_food = 0
+        state.population.housed_population = state.population.population_alive
+        state.population.homeless_population = 0
+        state.furnace.pressure = 80
+        state.technologies.researched_tech_ids = [
+            "tech_final_furnace_stability"
+        ]
+
+        self.system().prepare_new_day(state)
+
+        self.assertGreaterEqual(state.final_frost.prepared_item_count, 5)
+        self.assertGreaterEqual(state.final_frost.unprepared_item_count, 3)
+        self.assertEqual(
+            state.final_frost.preparation_tags,
+            ["unprepared_frost"],
         )
 
     def test_surface_collection_is_frozen_without_consuming_reserve(self) -> None:
@@ -288,6 +533,12 @@ class FinalFrostPatchTests(unittest.TestCase):
         )
         record = state.final_frost.daily_records["49"]
         self.assertGreater(record.new_sick, 0)
+        self.assertGreater(
+            record.homeless_new_sick
+            + record.homeless_new_disabled
+            + record.homeless_cold_deaths,
+            0,
+        )
         self.assertEqual(record.real_temperature, -66)
         restored = decode_game_state(encode_game_state(state))
         self.assertEqual(restored, state)
@@ -568,19 +819,31 @@ class FinalFrostPatchTests(unittest.TestCase):
         ):
             system.validate_state(state)
 
+    def test_explicit_system_collapse_conditions_override_higher_scores(
+        self,
+    ) -> None:
+        state = self.make_state()
+        state.final_frost.daily_records = {
+            str(day): self.frost_record(day) for day in range(49, 56)
+        }
+        for day in (49, 50, 51):
+            state.final_frost.daily_records[str(day)].overload_redline = True
+        for day in (49, 50, 51, 52):
+            state.final_frost.daily_records[
+                str(day)
+            ].critical_building_frozen = True
+            state.final_frost.daily_records[str(day)].medical_collapse = True
+        state.medical.effective_capacity = 100
+
+        scores = self.system()._score(state)
+
+        self.assertEqual(scores["coal_and_core"], 0)
+        self.assertEqual(scores["housing_and_temperature"], 0)
+        self.assertEqual(scores["medical_and_disease"], 0)
+
     def test_v10_migration_is_safe_before_frost_and_rejects_frost_history_gap(self) -> None:
         state = self.make_state(day=48)
-        document = encode_game_state(state)
-        document["save_data_version"] = 10
-        del document["final_frost"]
-        del document["medical"]["sick_treatment_progress"]
-        for field in (
-            "system_scores",
-            "total_score",
-            "major_tags",
-            "defining_tags",
-        ):
-            del document["final_result"][field]
+        document = self.v10_document(state)
         restored = decode_game_state(document)
         self.assertEqual(restored.calendar.current_day, 48)
         self.assertFalse(restored.final_frost.entered)
@@ -588,6 +851,88 @@ class FinalFrostPatchTests(unittest.TestCase):
         document["calendar"]["current_day"] = 49
         with self.assertRaisesRegex(SaveDataError, "cannot reconstruct"):
             decode_game_state(document)
+
+    def test_v10_migration_rejects_accepted_arrival_after_pressure_window_starts(
+        self,
+    ) -> None:
+        def arrival_document(
+            *,
+            current_day: int,
+            settled_day: int | None,
+            option_id: str,
+        ) -> dict:
+            state = self.make_state(day=max(current_day, 7))
+            history = next(
+                item
+                for item in state.events.resolution_history
+                if item.event_id == "arrival_day6"
+            )
+            state.events.fixed_arrival_choices["arrival_day6"] = option_id
+            history.option_id = option_id
+            state.calendar.current_day = current_day
+            state.daily_survival.settled_day = settled_day
+            if settled_day is not None:
+                temperature = self.survival.weather_for_day(settled_day)
+                state.daily_survival.base_temperature = temperature
+                state.daily_survival.zone_temperatures = {
+                    "inner_ring": temperature,
+                    "middle_ring": temperature,
+                    "outer_ring": temperature,
+                }
+                state.daily_survival.storage_used = sum(
+                    getattr(state.resources, name)
+                    for name in (
+                        "coal",
+                        "wood",
+                        "steel",
+                        "raw_food",
+                        "cooked_food",
+                    )
+                )
+            return self.v10_document(state)
+
+        safe_acceptance = arrival_document(
+            current_day=6,
+            settled_day=5,
+            option_id="accept_all",
+        )
+        self.assertEqual(
+            decode_game_state(safe_acceptance).calendar.current_day,
+            6,
+        )
+
+        for current_day, settled_day in (
+            (6, 6),
+            (7, 6),
+            (10, 10),
+            (11, 10),
+        ):
+            with self.subTest(
+                current_day=current_day,
+                settled_day=settled_day,
+            ):
+                accepted = arrival_document(
+                    current_day=current_day,
+                    settled_day=settled_day,
+                    option_id="accept_partial",
+                )
+                with self.assertRaisesRegex(
+                    SaveDataError,
+                    "pressure history cannot be reconstructed",
+                ):
+                    decode_game_state(accepted)
+
+        rejected = arrival_document(
+            current_day=11,
+            settled_day=10,
+            option_id="reject",
+        )
+        self.assertEqual(
+            decode_game_state(rejected).events.fixed_arrival_choices[
+                "arrival_day6"
+            ],
+            "reject",
+        )
 
     def test_v11_rejects_deleted_future_and_wrong_baseline_records(self) -> None:
         state = self.make_state()
@@ -821,6 +1166,56 @@ class FinalFrostPatchTests(unittest.TestCase):
             self.system()._ending_tags(state, two_zero_scores),
         )
 
+        state.population.population_total = 20
+        state.population.population_alive = 20
+        state.population.healthy_population = 20
+        state.population.workers = 20
+        state.population.housed_population = 20
+        state.population.homeless_population = 0
+        overlap_scores = {
+            "coal_and_core": 4,
+            "food": 4,
+            "housing_and_temperature": 4,
+            "medical_and_disease": 4,
+            "trust_and_panic": 4,
+            "population_and_death": 1,
+        }
+        overlap_tags = self.system()._ending_tags(state, overlap_scores)
+        self.assertIn("frost_survived_broken", overlap_tags)
+        self.assertNotIn("frost_survived_clean", overlap_tags)
+
+    def test_frozen_homeless_uses_only_homeless_group_harm(self) -> None:
+        state = self.make_state()
+        scores = {
+            "coal_and_core": 4,
+            "food": 4,
+            "housing_and_temperature": 4,
+            "medical_and_disease": 4,
+            "trust_and_panic": 4,
+            "population_and_death": 4,
+        }
+        state.final_frost.daily_records = {
+            str(day): self.frost_record(day) for day in range(49, 56)
+        }
+        record = state.final_frost.daily_records["49"]
+        record.homeless_exposure_population = 1
+        record.new_sick = 5
+        record.new_disabled = 2
+        record.cold_deaths = 1
+        record.raw_cold_deaths = 1
+        record.actual_cold_deaths = 1
+
+        self.assertNotIn(
+            "frozen_homeless",
+            self.system()._ending_tags(state, scores),
+        )
+
+        record.homeless_new_sick = 1
+        self.assertIn(
+            "frozen_homeless",
+            self.system()._ending_tags(state, scores),
+        )
+
     def test_refugee_and_promise_tags_use_windowed_settlement_facts(self) -> None:
         state = self.make_state()
         scores = {
@@ -908,6 +1303,110 @@ class FinalFrostPatchTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(SaveDataError, "discontinuous"):
             decode_game_state(encode_game_state(state))
+
+    def test_full_d48_to_d55_pipeline_uses_every_real_system_and_rolls_back(
+        self,
+    ) -> None:
+        state = self.make_state(day=48)
+        self.set_population(state, healthy=20, housed=20)
+        state.resources.coal = 1400
+        state.resources.cooked_food = 200
+        state.resources.raw_food = 0
+        state.furnace.is_active = True
+        state.furnace.mode_id = "level_3"
+        state.old_city.is_unlocked = True
+        state.old_city.reference_population = 20
+        state.old_city.low_threshold = 10
+        state.old_city.middle_threshold = 18
+        state.old_city.high_threshold = 28
+        state.old_city.stage_events_seen = [
+            "southern_letter",
+            "rumors",
+            "public_gathering",
+            "countdown",
+        ]
+        state.old_city.countdown_day = 48
+        state.old_city.resolved = True
+        state.old_city.result_id = "scattered"
+        state.old_city.settlement_day = 48
+        state.old_city.settlement_member_count = 8
+        state.old_city.settlement_resource_losses = {
+            "cooked_food": 0,
+            "coal": 0,
+            "wood": 0,
+            "steel": 0,
+        }
+        autosaves = []
+        engine, events, oath_order = self.full_engine(
+            autosave_sink=autosaves.append
+        )
+        events.initialize_day(state)
+        pre_day_55 = None
+
+        for day in range(48, 56):
+            self.assertEqual(state.calendar.current_day, day)
+            self.resolve_active_events(events, state)
+            self.resolve_pending_old_city(oath_order, state)
+            if day == 55:
+                pre_day_55 = deepcopy(state)
+            execution = self.settle(engine, state, f"full-end-{day}")
+            self.assertEqual(
+                execution.result.code,
+                ErrorCode.OK,
+                (
+                    day,
+                    execution.result.data,
+                    [
+                        (item.code, dict(item.payload))
+                        for item in execution.logs[-5:]
+                    ],
+                ),
+            )
+            self.assertEqual(
+                decode_game_state(encode_game_state(state)),
+                state,
+            )
+
+        self.assertEqual(
+            sorted(int(day) for day in state.final_frost.daily_records),
+            list(range(49, 56)),
+        )
+        self.assertEqual(len(autosaves), 8)
+        self.assertTrue(state.final_result.is_finalized)
+        self.assertEqual(
+            state.final_result.total_score,
+            sum(state.final_result.system_scores.values()),
+        )
+        all_tags = set(state.final_result.ending_tags)
+        self.assertFalse(
+            {"prepared_for_frost", "unprepared_frost"}.issubset(all_tags)
+        )
+        self.assertFalse(
+            {"frost_survived_clean", "frost_survived_broken"}.issubset(
+                all_tags
+            )
+        )
+
+        assert pre_day_55 is not None
+        failed = deepcopy(pre_day_55)
+        failed_before = deepcopy(failed)
+        failed_autosaves = []
+        failed_engine, _failed_events, _failed_oath_order = self.full_engine(
+            autosave_sink=failed_autosaves.append
+        )
+
+        def corrupt_final_result(context: EndDayContext) -> None:
+            context.state.final_result.system_scores["food"] = 99
+
+        failed_engine.register_stage_handler(
+            EndDayStage.RECORD_DAILY_LOG_AND_ENDING_TAGS,
+            corrupt_final_result,
+        )
+        rejected = self.settle(failed_engine, failed, "corrupt-end-55")
+        self.assertEqual(rejected.result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(failed, failed_before)
+        self.assertEqual(failed_autosaves, [])
+        self.assertIsNone(failed_engine.last_autosave())
 
     def test_day_48_boundary_and_day_49_settlement_are_transactional(self) -> None:
         state = self.make_state(day=48)

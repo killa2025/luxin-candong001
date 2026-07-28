@@ -2526,6 +2526,22 @@ def _migrate_v10_to_v11(document: dict[str, Any]) -> dict[str, Any]:
         raise SaveDataError(
             "v10 save at or after day 49 cannot reconstruct Patch 009 frost history"
         )
+    if not isinstance(migrated["events"], Mapping):
+        raise SaveDataError("events must be an object")
+    legacy_events = dict(migrated["events"])
+    arrival_choices = _string_map(
+        legacy_events["fixed_arrival_choices"],
+        "events.fixed_arrival_choices",
+    )
+    legal_settled_day = max(current_day - 1, settled_day or 0)
+    for event_id, arrival_day in _FIXED_ARRIVAL_DAYS.items():
+        if (
+            arrival_choices.get(event_id) not in {None, "reject"}
+            and legal_settled_day >= arrival_day
+        ):
+            raise SaveDataError(
+                "v10 accepted arrival pressure history cannot be reconstructed"
+            )
     raw_population = dict(migrated["population"])
     raw_population.pop("population_total_ever", None)
     population = dict(
@@ -3627,6 +3643,10 @@ def _validate_state_invariants(
         raise SaveDataError("final frost preparation count exceeds its eight checks")
     if len(set(frost.preparation_tags)) != len(frost.preparation_tags):
         raise SaveDataError("final frost preparation tags must be unique")
+    if {"prepared_for_frost", "unprepared_frost"}.issubset(
+        frost.preparation_tags
+    ):
+        raise SaveDataError("final frost preparation tags must be mutually exclusive")
     if frost.pending_extreme_crisis_conditions:
         raise SaveDataError(
             "saved state cannot retain pending extreme crisis conditions"
@@ -3681,6 +3701,22 @@ def _validate_state_invariants(
             record.population_start - record.population_end
         ):
             raise SaveDataError("final frost deaths exceed the daily population loss")
+        if (
+            record.homeless_new_sick > record.new_sick
+            or record.homeless_new_disabled > record.new_disabled
+            or record.homeless_cold_deaths > record.cold_deaths
+            or (
+                record.homeless_exposure_population == 0
+                and (
+                    record.homeless_new_sick
+                    or record.homeless_new_disabled
+                    or record.homeless_cold_deaths
+                )
+            )
+        ):
+            raise SaveDataError(
+                "homeless frost harm must be attributed within daily totals"
+            )
         total_recorded_deaths += (
             record.population_start - record.population_end
         )
@@ -3767,6 +3803,16 @@ def _validate_state_invariants(
             raise SaveDataError(f"final result {name} must be unique")
     if set(final.major_tags) & set(final.defining_tags):
         raise SaveDataError("major and defining ending tags must be disjoint")
+    if (
+        {"prepared_for_frost", "unprepared_frost"}.issubset(
+            final.major_tags
+        )
+        or (
+            "frost_survived_clean" in final.major_tags
+            and "frost_survived_broken" in final.defining_tags
+        )
+    ):
+        raise SaveDataError("opposing final frost tags must be mutually exclusive")
     if final.is_finalized:
         if final.hard_fail_type is not None:
             if final.ending_id not in {None, "hard_fail"}:

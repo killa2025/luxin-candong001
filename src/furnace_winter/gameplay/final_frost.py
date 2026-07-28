@@ -187,15 +187,27 @@ class FinalFrostSystem:
             default=0,
         )
 
-        requested_sick = 0
-        for level, people, _homeless in exposure:
+        requested_housed_sick = 0
+        requested_homeless_sick = 0
+        for level, people, homeless in exposure:
             if level <= 0 or people <= 0:
                 continue
             amount = (people // damage["exposure_population_unit"]) * min(level, 4)
             if level >= 3 and people >= damage["small_group_minimum"]:
                 amount = max(amount, 1)
-            requested_sick += amount
-        new_sick = min(requested_sick, state.population.healthy_population)
+            if homeless:
+                requested_homeless_sick += amount
+            else:
+                requested_housed_sick += amount
+        housed_new_sick = min(
+            requested_housed_sick,
+            state.population.healthy_population,
+        )
+        homeless_new_sick = min(
+            requested_homeless_sick,
+            state.population.healthy_population - housed_new_sick,
+        )
+        new_sick = housed_new_sick + homeless_new_sick
         state.population.healthy_population -= new_sick
         state.population.sick_population += new_sick
 
@@ -284,8 +296,10 @@ class FinalFrostSystem:
         if untreated_sick >= 6 and exposure_level >= 3:
             new_critical = max(new_critical, 1)
 
-        exposure_disability = 0
-        raw_cold_deaths = 0
+        housed_exposure_disability = 0
+        homeless_exposure_disability = 0
+        raw_housed_cold_deaths = 0
+        raw_homeless_cold_deaths = 0
         medical_buffer = max(capacity - critical_before - sick_before, 0)
         for level, people, homeless in exposure:
             divisor = (
@@ -296,17 +310,25 @@ class FinalFrostSystem:
                 else damage["cold_disability_level_2_divisor"]
             )
             if level >= 2:
-                exposure_disability += people // divisor
+                if homeless:
+                    homeless_exposure_disability += people // divisor
+                else:
+                    housed_exposure_disability += people // divisor
             if level >= 4:
                 death_divisor = (
                     damage["homeless_cold_death_divisor"]
                     if homeless
                     else damage["housed_cold_death_divisor"]
                 )
-                raw_cold_deaths += (
+                group_deaths = (
                     people // death_divisor
                     + people // damage["frost_extra_cold_death_divisor"]
                 )
+                if homeless:
+                    raw_homeless_cold_deaths += group_deaths
+                else:
+                    raw_housed_cold_deaths += group_deaths
+        raw_cold_deaths = raw_housed_cold_deaths + raw_homeless_cold_deaths
 
         extreme_conditions = self._extreme_crisis_conditions(
             state,
@@ -339,6 +361,14 @@ class FinalFrostSystem:
             ),
         )
         actual_cold_deaths = min(raw_cold_deaths, remaining_cap)
+        capped_housed_cold_deaths = min(
+            raw_housed_cold_deaths,
+            raw_cold_deaths,
+        )
+        homeless_cold_deaths = max(
+            actual_cold_deaths - capped_housed_cold_deaths,
+            0,
+        )
         disease_overflow = raw_disease_deaths - actual_disease_deaths
         cold_overflow = raw_cold_deaths - actual_cold_deaths
         overflow_pressure = disease_overflow + cold_overflow
@@ -379,9 +409,25 @@ class FinalFrostSystem:
         prevented = medical_buffer // damage[
             "medical_buffer_per_prevented_disability"
         ]
-        exposure_disability = max(exposure_disability - prevented, 0)
+        prevented_housed_disability = min(
+            housed_exposure_disability,
+            prevented,
+        )
+        housed_exposure_disability -= prevented_housed_disability
+        prevented -= prevented_housed_disability
+        homeless_exposure_disability = max(
+            homeless_exposure_disability - prevented,
+            0,
+        )
+        requested_exposure_disability = (
+            housed_exposure_disability + homeless_exposure_disability
+        )
         exposure_disability = self._apply_disabilities(
-            state, exposure_disability
+            state, requested_exposure_disability
+        )
+        homeless_new_disabled = max(
+            exposure_disability - housed_exposure_disability,
+            0,
         )
         actual_cold_deaths = self._apply_deaths(
             state,
@@ -408,6 +454,15 @@ class FinalFrostSystem:
         metrics[f"{_FROST_METRIC_PREFIX}new_critical"] = new_critical
         metrics[f"{_FROST_METRIC_PREFIX}new_disabled"] = (
             new_disabled + exposure_disability
+        )
+        metrics[f"{_FROST_METRIC_PREFIX}homeless_new_sick"] = (
+            homeless_new_sick
+        )
+        metrics[f"{_FROST_METRIC_PREFIX}homeless_new_disabled"] = (
+            homeless_new_disabled
+        )
+        metrics[f"{_FROST_METRIC_PREFIX}homeless_cold_deaths"] = (
+            homeless_cold_deaths
         )
         metrics[f"{_FROST_METRIC_PREFIX}disease_deaths"] = (
             actual_disease_deaths
@@ -609,6 +664,15 @@ class FinalFrostSystem:
             new_disabled=metrics.get(
                 f"{_FROST_METRIC_PREFIX}new_disabled", 0
             ),
+            homeless_new_sick=metrics.get(
+                f"{_FROST_METRIC_PREFIX}homeless_new_sick", 0
+            ),
+            homeless_new_disabled=metrics.get(
+                f"{_FROST_METRIC_PREFIX}homeless_new_disabled", 0
+            ),
+            homeless_cold_deaths=metrics.get(
+                f"{_FROST_METRIC_PREFIX}homeless_cold_deaths", 0
+            ),
             food_deaths=food_deaths,
             disease_deaths=disease_deaths,
             cold_deaths=cold_deaths,
@@ -745,9 +809,10 @@ class FinalFrostSystem:
         coal_days = state.resources.coal // max(
             furnace_coal_cost(state, self.survival_rules, 3), 1
         )
-        food_days = (
-            state.resources.cooked_food + state.resources.raw_food
-        ) // max(population.population_alive, 1)
+        food_equivalent = state.resources.cooked_food
+        if self._canteen_operational_for_preparation(state):
+            food_equivalent += state.resources.raw_food * 2
+        food_days = food_equivalent // max(population.population_alive, 1)
         trust = state.trust_panic.trust or 0
         panic = state.trust_panic.panic or 0
         pressure = state.furnace.pressure
@@ -783,10 +848,54 @@ class FinalFrostSystem:
         )
         frost.prepared_item_count = sum(checks)
         frost.unprepared_item_count = sum(weak)
-        if frost.prepared_item_count >= prep["prepared_required_items"]:
-            frost.preparation_tags.append("prepared_for_frost")
-        elif frost.unprepared_item_count >= prep["unprepared_required_items"]:
+        if frost.unprepared_item_count >= prep["unprepared_required_items"]:
             frost.preparation_tags.append("unprepared_frost")
+        elif frost.prepared_item_count >= prep["prepared_required_items"]:
+            frost.preparation_tags.append("prepared_for_frost")
+
+    def _canteen_operational_for_preparation(self, state: GameState) -> bool:
+        for building in state.buildings.values():
+            if building.building_type != "canteen":
+                continue
+            rule = self.building_rules.buildings["canteen"]
+            assignments = {
+                "workers": building.assigned_workers,
+                "engineers": building.assigned_engineers,
+                "children": building.assigned_children,
+                "medical_apprentices": (
+                    building.assigned_medical_apprentices
+                ),
+                "engineering_apprentices": (
+                    building.assigned_engineering_apprentices
+                ),
+            }
+            assigned = sum(assignments.values())
+            legal_staffing = (
+                assigned <= rule.staff_capacity
+                and all(
+                    count == 0
+                    for population_type, count in assignments.items()
+                    if population_type not in rule.allowed_staff_types
+                )
+            )
+            staffed = (
+                legal_staffing
+                and (rule.staff_capacity == 0 or assigned > 0)
+            )
+            temperature_allows_operation = (
+                rule.min_operating_temperature is None
+                or building.effective_temperature
+                >= rule.min_operating_temperature
+            )
+            if (
+                building.is_built
+                and building.is_operational
+                and staffed
+                and temperature_allows_operation
+                and not building.is_shutdown_by_temperature
+            ):
+                return True
+        return False
 
     def _exposure(self, state: GameState) -> list[tuple[int, int, bool]]:
         alive_to_assign = min(
@@ -1099,7 +1208,12 @@ class FinalFrostSystem:
         furnace_off = count("furnace_off")
         underheated = count("furnace_underheated")
         redline = count("overload_redline")
-        if (
+        coal_collapsed = (
+            furnace_off >= 3 or coal_shortage >= 6 or redline >= 3
+        )
+        if coal_collapsed:
+            coal = 0
+        elif (
             furnace_off == 0
             and coal_shortage == 0
             and underheated <= 1
@@ -1112,8 +1226,6 @@ class FinalFrostSystem:
             coal = 3
         elif furnace_off <= 1 and coal_shortage <= 3 and underheated <= 4 and state.furnace.pressure < 95:
             coal = 2
-        elif furnace_off >= 3 or coal_shortage >= 6 or redline >= 3:
-            coal = 0
         else:
             coal = 1
 
@@ -1140,14 +1252,20 @@ class FinalFrostSystem:
         cold_days = count("cold_houses_day")
         cold_death_days = sum(record.cold_deaths > 0 for record in records)
         frozen_days = count("critical_building_frozen")
-        if cover >= 100 and state.population.homeless_population == 0 and cold_days <= 1 and cold_death_days == 0 and frozen_days == 0:
+        housing_collapsed = (
+            state.population.homeless_population > 40
+            or cold_days >= 5
+            or cold_death_days >= 2
+            or frozen_days >= 4
+        )
+        if housing_collapsed:
+            housing = 0
+        elif cover >= 100 and state.population.homeless_population == 0 and cold_days <= 1 and cold_death_days == 0 and frozen_days == 0:
             housing = 4
         elif cover >= 95 and state.population.homeless_population <= 5 and cold_days <= 2 and cold_death_days == 0:
             housing = 3
         elif cover >= 80 and state.population.homeless_population <= 20 and cold_days <= 4 and cold_death_days <= 1:
             housing = 2
-        elif state.population.homeless_population > 40 or cold_days >= 5 or cold_death_days >= 2 or frozen_days >= 4:
-            housing = 0
         else:
             housing = 1
 
@@ -1157,14 +1275,21 @@ class FinalFrostSystem:
         overflow = count("medical_overflow")
         collapse = count("medical_collapse")
         disease_deaths = sum(record.disease_deaths for record in records)
-        if medical_cover >= 100 and critical_ratio <= 5 and overflow <= 1 and disease_deaths == 0:
+        medical_collapsed = (
+            collapse >= 4
+            or (
+                self._medical_buildings_exist(state)
+                and count("hospital_shutdown") >= 4
+            )
+        )
+        if medical_collapsed:
+            medical = 0
+        elif medical_cover >= 100 and critical_ratio <= 5 and overflow <= 1 and disease_deaths == 0:
             medical = 4
         elif medical_cover >= 80 and critical_ratio <= 10 and overflow <= 2:
             medical = 3
         elif medical_cover >= 50 and critical_ratio <= 18 and collapse <= 1:
             medical = 2
-        elif collapse >= 4 or (self._medical_buildings_exist(state) and count("hospital_shutdown") >= 4):
-            medical = 0
         else:
             medical = 1
 
@@ -1256,7 +1381,19 @@ class FinalFrostSystem:
             or any(item.food_deaths > 0 for item in records),
         )
         add("cold_houses", sum(item.cold_houses_day for item in records) >= 2)
-        add("frozen_homeless", any(item.homeless_exposure_population > 0 and (item.new_sick + item.new_disabled + item.cold_deaths) > 0 for item in records))
+        add(
+            "frozen_homeless",
+            any(
+                item.homeless_exposure_population > 0
+                and (
+                    item.homeless_new_sick
+                    + item.homeless_new_disabled
+                    + item.homeless_cold_deaths
+                )
+                > 0
+                for item in records
+            ),
+        )
         add("medical_collapse", sum(item.medical_collapse for item in records) >= 2 or scores["medical_and_disease"] == 0)
         add("silent_hospital", sum(item.hospital_shutdown for item in records) >= 2)
         add(
@@ -1293,23 +1430,22 @@ class FinalFrostSystem:
             state.population.population_alive > 0
             and state.final_result.hard_fail_type is None
         )
-        add(
-            "frost_survived_clean",
-            survived
-            and zero_scores == 0
-            and insufficient_scores <= 1
-            and not mass_death_day,
+        broken_survival = survived and (
+            zero_scores >= 2
+            or sum(scores.values()) <= 9
+            or city_continuity_broken
+            or (mass_death_day and low_scores >= 2)
         )
-        add(
-            "frost_survived_broken",
-            survived
-            and (
-                zero_scores >= 2
-                or sum(scores.values()) <= 9
-                or city_continuity_broken
-                or (mass_death_day and low_scores >= 2)
-            ),
-        )
+        if broken_survival:
+            add("frost_survived_broken", True)
+        else:
+            add(
+                "frost_survived_clean",
+                survived
+                and zero_scores == 0
+                and insufficient_scores <= 1
+                and not mass_death_day,
+            )
         add("old_city_stabilized", state.old_city.result_id == "scattered")
         add(
             "old_city_departed",

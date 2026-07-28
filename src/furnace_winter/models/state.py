@@ -485,6 +485,9 @@ class FrostDayRecord:
     new_sick: int = 0
     new_critical: int = 0
     new_disabled: int = 0
+    homeless_new_sick: int = 0
+    homeless_new_disabled: int = 0
+    homeless_cold_deaths: int = 0
     food_deaths: int = 0
     disease_deaths: int = 0
     cold_deaths: int = 0
