@@ -35,6 +35,9 @@ from furnace_winter.gameplay import (
     create_initial_survival_state,
 )
 from furnace_winter.gameplay.end_day import EndDayContext
+from furnace_winter.gameplay.survival import (
+    is_building_expected_operational,
+)
 from furnace_winter.models import (
     BuildingState,
     DeterministicRandom,
@@ -409,10 +412,12 @@ class FinalFrostPatchTests(unittest.TestCase):
             *,
             operational: bool,
             temperature: int,
+            furnace_mode: str = "level_3",
             workers: int = 5,
             children: int = 0,
         ):
             state = self.make_state()
+            state.furnace.mode_id = furnace_mode
             state.resources.cooked_food = 0
             state.resources.raw_food = 200
             state.trust_panic.trust = 49
@@ -438,7 +443,7 @@ class FinalFrostPatchTests(unittest.TestCase):
             )
             return state
 
-        running = prepared_state(operational=True, temperature=-35)
+        running = prepared_state(operational=False, temperature=-60)
         before_resources = deepcopy(running.resources)
         self.system().prepare_new_day(running)
         self.assertEqual(running.final_frost.prepared_item_count, 5)
@@ -450,12 +455,12 @@ class FinalFrostPatchTests(unittest.TestCase):
 
         for name, state in (
             (
-                "not operational",
-                prepared_state(operational=False, temperature=-35),
-            ),
-            (
-                "temperature shutdown",
-                prepared_state(operational=True, temperature=-36),
+                "D49 furnace off",
+                prepared_state(
+                    operational=True,
+                    temperature=-35,
+                    furnace_mode="off",
+                ),
             ),
             (
                 "illegal staffing",
@@ -471,6 +476,82 @@ class FinalFrostPatchTests(unittest.TestCase):
                 self.system().prepare_new_day(state)
                 self.assertEqual(state.final_frost.prepared_item_count, 4)
                 self.assertEqual(state.final_frost.preparation_tags, [])
+
+    def test_day_48_running_canteen_uses_day_49_projection_for_preparation(
+        self,
+    ) -> None:
+        state = self.make_state(day=48)
+        state.furnace.mode_id = "level_3"
+        state.technologies.researched_tech_ids = [
+            "tech_drawing_board",
+            "tech_drafting_instrument",
+            "tech_furnace_coal_saving_1",
+            "tech_furnace_coal_saving_2",
+        ]
+        state.resources.coal = 120
+        state.resources.cooked_food = 0
+        state.resources.raw_food = 200
+        state.trust_panic.trust = 49
+        canteen_rule = self.buildings.buildings["canteen"]
+        canteen = BuildingState(
+            building_id="canteen-boundary",
+            building_type="canteen",
+            zone="inner_ring",
+            slot_size=canteen_rule.slot_size,
+            is_built=True,
+            assigned_workers=5,
+            can_heat=True,
+        )
+        state.buildings[canteen.building_id] = canteen
+        state.building_management.zone_slots_used["inner_ring"] += (
+            canteen_rule.slot_size
+        )
+        self.system().validate_state(state)
+
+        engine = EndDayEngine()
+        SurvivalSystem(
+            self.survival,
+            self.buildings,
+            self.technology,
+        ).install(engine)
+        BuildingSystem(
+            self.buildings,
+            self.survival,
+            self.technology,
+        ).install(engine)
+        self.system().install(engine)
+
+        settled = self.settle(engine, state, "d48-canteen-boundary")
+
+        self.assertEqual(
+            settled.result.code,
+            ErrorCode.OK,
+            settled.result.data,
+        )
+        self.assertEqual(state.calendar.current_day, 49)
+        canteen = state.buildings[canteen.building_id]
+        self.assertTrue(canteen.is_operational)
+        self.assertGreaterEqual(
+            canteen.effective_temperature,
+            canteen_rule.min_operating_temperature,
+        )
+        self.assertFalse(
+            is_building_expected_operational(
+                state,
+                canteen,
+                self.buildings,
+                self.survival,
+                self.technology,
+            )
+        )
+        self.assertEqual(state.resources.coal, 0)
+        self.assertEqual(state.resources.cooked_food, 40)
+        self.assertEqual(state.resources.raw_food, 140)
+        self.assertEqual(state.final_frost.prepared_item_count, 4)
+        self.assertEqual(
+            state.final_frost.preparation_tags,
+            ["unprepared_frost"],
+        )
 
     def test_unprepared_preparation_tag_overrides_prepared_tag(self) -> None:
         state = self.make_state()

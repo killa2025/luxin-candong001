@@ -7,7 +7,10 @@ from furnace_winter.config.final_frost import FinalFrostRules
 from furnace_winter.config.survival import SurvivalRules
 from furnace_winter.config.technologies import TechnologyRules
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage
-from furnace_winter.gameplay.survival import furnace_coal_cost
+from furnace_winter.gameplay.survival import (
+    furnace_coal_cost,
+    is_building_expected_operational,
+)
 from furnace_winter.models.save import validate_game_state
 from furnace_winter.models.state import FrostDayRecord, GameState
 
@@ -882,17 +885,16 @@ class FinalFrostSystem:
                 legal_staffing
                 and (rule.staff_capacity == 0 or assigned > 0)
             )
-            temperature_allows_operation = (
-                rule.min_operating_temperature is None
-                or building.effective_temperature
-                >= rule.min_operating_temperature
-            )
             if (
                 building.is_built
-                and building.is_operational
                 and staffed
-                and temperature_allows_operation
-                and not building.is_shutdown_by_temperature
+                and is_building_expected_operational(
+                    state,
+                    building,
+                    self.building_rules,
+                    self.survival_rules,
+                    self.technology_rules,
+                )
             ):
                 return True
         return False
