@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from furnace_winter.config import (
 from furnace_winter.gameplay import (
     BuildingSystem,
     EndDayEngine,
+    EndingReportSystem,
     EventSystem,
     FinalFrostSystem,
     LawSystem,
@@ -26,7 +28,7 @@ from furnace_winter.gameplay import (
     create_initial_survival_state,
 )
 from furnace_winter.interface import Observation
-from furnace_winter.models import dumps
+from furnace_winter.models import decode_game_state, dumps
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -100,6 +102,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("data/technologies.json"),
         help="Patch 006 科技规则配置，默认 data/technologies.json",
     )
+    report_parser = subparsers.add_parser(
+        "report",
+        help="输出存档中的 Patch 010 机器可读终局报告",
+    )
+    report_parser.add_argument(
+        "save_path",
+        type=Path,
+        help="需要读取的 JSON 存档路径",
+    )
     return parser
 
 
@@ -156,6 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             rules,
             technology_rules,
         )
+        ending_report = EndingReportSystem()
         events.initialize_day(state)
         command_specs = (
             EndDayEngine().command_specs()
@@ -165,6 +177,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             + technologies.command_specs()
             + events.command_specs()
             + oath_order.command_specs()
+            + ending_report.command_specs()
         )
         print(
             dumps(
@@ -176,9 +189,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     old_city_view=oath_order.old_city_view(state),
                     oath_order_view=oath_order.route_view(state),
                     final_frost_view=final_frost.observe(state),
+                    ending_report_view=ending_report.observe(state),
                 )
             )
         )
+        return 0
+
+    if args.command == "report":
+        document = json.loads(
+            args.save_path.read_text(encoding="utf-8-sig")
+        )
+        state = decode_game_state(document)
+        print(dumps(EndingReportSystem().observe(state)))
         return 0
 
     parser.print_help()

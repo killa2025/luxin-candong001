@@ -1,0 +1,330 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import fields
+from typing import Any
+
+from furnace_winter.interface import (
+    ArgumentKind,
+    CommandCatalog,
+    CommandRequest,
+    CommandResult,
+    CommandSpec,
+    CommandValidation,
+    CommandValidator,
+    ErrorCode,
+    FeedbackItem,
+    FeedbackLevel,
+)
+from furnace_winter.models import (
+    FINAL_DAY,
+    GameState,
+    RunState,
+    SaveDataError,
+    TerminationReason,
+    validate_game_state,
+)
+from furnace_winter.models.state import (
+    ENDING_ADDITIONAL_POOL_TAGS,
+    ENDING_BODY_POOL_TEXT_IDS,
+    ENDING_HARD_FAIL_BODY_POOL_TEXT_IDS,
+    ENDING_HARD_FAIL_REASON_TEXT_IDS,
+    ENDING_INTERROGATION_POOL_BY_ENDING,
+    ENDING_PLAYER_ENDED_BODY_TEXT_IDS,
+    ENDING_REPORT_DEATH_RECORD_TEXT_ID,
+    ENDING_REPORT_NARRATIVE_POOL_TEXT_IDS,
+    ENDING_REPORT_ZERO_FROST_DEATHS_TEXT_ID,
+    ENDING_TITLE_TEXT_IDS,
+)
+from furnace_winter.text import (
+    PendingRegistry,
+    TextRegistry,
+    build_ending_pending_registry,
+    build_ending_text_registry,
+)
+
+
+END_RUN_COMMAND = "game.end_run"
+
+
+def build_ending_report_catalog() -> CommandCatalog:
+    catalog = CommandCatalog()
+    catalog.register(
+        CommandSpec(
+            name=END_RUN_COMMAND,
+            required_arguments={"confirm": ArgumentKind.BOOLEAN},
+        )
+    )
+    return catalog
+
+
+def _pending_text_ids(state: GameState) -> list[str]:
+    final = state.final_result
+    pending: set[str] = {ENDING_REPORT_DEATH_RECORD_TEXT_ID}
+    if final.ending_id == "hard_fail":
+        if final.hard_fail_type is not None:
+            pending.add(
+                ENDING_HARD_FAIL_BODY_POOL_TEXT_IDS[
+                    final.hard_fail_type.value
+                ]
+            )
+        pending.add("ending.hard_fail.closing_pool")
+    else:
+        pending.update(ENDING_REPORT_NARRATIVE_POOL_TEXT_IDS)
+        if final.ending_id is not None:
+            pending.add(ENDING_BODY_POOL_TEXT_IDS[final.ending_id])
+            interrogation_id = ENDING_INTERROGATION_POOL_BY_ENDING.get(
+                final.ending_id
+            )
+            if interrogation_id is not None:
+                pending.add(interrogation_id)
+        tags = set(final.major_tags) | set(final.defining_tags)
+        for text_id, matching_tags in ENDING_ADDITIONAL_POOL_TAGS.items():
+            if tags & matching_tags:
+                pending.add(text_id)
+    if final.run_state is RunState.ENDED:
+        pending.add(ENDING_BODY_POOL_TEXT_IDS["player_ended"])
+    if state.final_frost.frost_deaths == 0:
+        pending.add(ENDING_REPORT_ZERO_FROST_DEATHS_TEXT_ID)
+    return sorted(pending)
+
+
+class EndingReportSystem:
+    """Patch 010 deterministic report selection and run termination."""
+
+    def __init__(
+        self,
+        text_registry: TextRegistry | None = None,
+        pending_registry: PendingRegistry | None = None,
+    ) -> None:
+        self.text_registry = text_registry or build_ending_text_registry()
+        self.pending_registry = (
+            pending_registry or build_ending_pending_registry()
+        )
+        self._catalog = build_ending_report_catalog()
+        self._validator = CommandValidator(self._catalog)
+
+    def command_specs(self) -> tuple[CommandSpec, ...]:
+        return self._catalog.specs()
+
+    def generate(self, state: GameState) -> None:
+        """Persist a report selection after canonical terminal finalization."""
+
+        final = state.final_result
+        if final.report.is_generated:
+            self.validate_state(state)
+            return
+        if not final.is_finalized:
+            raise ValueError("ending report requires a completed result")
+        if final.hard_fail_type is not None:
+            if final.ending_id != "hard_fail":
+                raise ValueError("hard-fail report requires a canonical result")
+            body_text_ids = [
+                ENDING_HARD_FAIL_REASON_TEXT_IDS[
+                    final.hard_fail_type.value
+                ]
+            ]
+        else:
+            if (
+                state.final_frost.final_score_day != FINAL_DAY
+                or final.ending_id not in ENDING_BODY_POOL_TEXT_IDS
+            ):
+                raise ValueError(
+                    "survival report requires a completed D55 score"
+                )
+            body_text_ids = []
+        report = final.report
+        report.is_generated = True
+        report.generated_day = state.calendar.current_day
+        report.ending_state = final.ending_id
+        report.display_result_id = final.ending_id
+        report.title_text_id = ENDING_TITLE_TEXT_IDS[final.ending_id]
+        report.body_text_ids = body_text_ids
+        report.pending_text_ids = _pending_text_ids(state)
+        report.hidden_achievement_ids = sorted(
+            set(state.events.hidden_achievements_unlocked)
+        )
+
+    def execute(self, state: GameState, request: CommandRequest) -> CommandResult:
+        command_id = (
+            request.command_id
+            if isinstance(request, CommandRequest)
+            and isinstance(request.command_id, str)
+            else ""
+        )
+        sequence = (
+            state.command_sequence
+            if isinstance(state, GameState)
+            and isinstance(state.command_sequence, int)
+            and not isinstance(state.command_sequence, bool)
+            else 0
+        )
+        validation = self._validator.validate(request)
+        if not validation.is_valid:
+            return self._rejected(command_id, sequence, validation)
+        try:
+            self.validate_state(state)
+        except (SaveDataError, TypeError, ValueError) as exc:
+            return self._error(
+                command_id, sequence, "input_state_validation", exc
+            )
+        validation = self._validator.validate(
+            request, state, self._legality
+        )
+        if not validation.is_valid:
+            return self._rejected(command_id, sequence, validation)
+
+        working = deepcopy(state)
+        final = working.final_result
+        final.run_state = RunState.ENDED
+        final.termination_reason = TerminationReason.PLAYER_ENDED
+        final.termination_day = FINAL_DAY
+        final.termination_command_sequence = working.command_sequence + 1
+        final.report.display_result_id = TerminationReason.PLAYER_ENDED.value
+        final.report.title_text_id = ENDING_TITLE_TEXT_IDS["player_ended"]
+        final.report.body_text_ids = list(ENDING_PLAYER_ENDED_BODY_TEXT_IDS)
+        final.report.pending_text_ids = _pending_text_ids(working)
+        working.command_sequence += 1
+        try:
+            self.validate_state(working)
+        except (SaveDataError, TypeError, ValueError) as exc:
+            return self._error(
+                command_id, sequence, "result_state_validation", exc
+            )
+
+        for item in fields(GameState):
+            setattr(state, item.name, deepcopy(getattr(working, item.name)))
+        data = self.observe(state)
+        return CommandResult(
+            command_id=command_id,
+            accepted=True,
+            code=ErrorCode.OK,
+            state_changed=True,
+            state_sequence=state.command_sequence,
+            feedback=(FeedbackItem(FeedbackLevel.INFO, data=data),),
+            data=data,
+        )
+
+    def validate_state(self, state: GameState) -> None:
+        validate_game_state(state)
+        report = state.final_result.report
+        if not report.is_generated:
+            return
+        for text_id in [report.title_text_id, *report.body_text_ids]:
+            if text_id is None:
+                raise ValueError("generated report text ids must not be null")
+            self.text_registry.require(text_id)
+        pending_ids = {
+            entry.entry_id for entry in self.pending_registry.entries()
+        }
+        if set(report.pending_text_ids) - pending_ids:
+            raise ValueError("ending report contains an unknown pending text id")
+
+    def observe(self, state: GameState) -> dict[str, Any]:
+        self.validate_state(state)
+        final = state.final_result
+        report = final.report
+        if not report.is_generated:
+            return {
+                "available": False,
+                "run_state": final.run_state.value,
+                "termination_reason": (
+                    final.termination_reason.value
+                    if final.termination_reason is not None
+                    else None
+                ),
+            }
+        title = self.text_registry.require(str(report.title_text_id))
+        body = [
+            {
+                "text_id": text_id,
+                "text": self.text_registry.require(text_id).text,
+            }
+            for text_id in report.body_text_ids
+        ]
+        return {
+            "available": True,
+            "generated_day": report.generated_day,
+            "run_state": final.run_state.value,
+            "termination_reason": (
+                final.termination_reason.value
+                if final.termination_reason is not None
+                else None
+            ),
+            "ending_state": report.ending_state,
+            "display_result_id": report.display_result_id,
+            "title": {"text_id": title.text_id, "text": title.text},
+            "body": body,
+            "pending_text_ids": list(report.pending_text_ids),
+            "system_scores": dict(final.system_scores),
+            "total_score": final.total_score,
+            "major_tags": list(final.major_tags),
+            "defining_tags": list(final.defining_tags),
+            "ending_tags": list(final.ending_tags),
+            "hidden_achievement_ids": list(
+                report.hidden_achievement_ids
+            ),
+        }
+
+    @staticmethod
+    def _legality(
+        state: GameState, request: CommandRequest
+    ) -> CommandValidation:
+        final = state.final_result
+        if final.run_state is RunState.ENDED:
+            return EndingReportSystem._illegal("already_ended")
+        if request.arguments.get("confirm") is not True:
+            return EndingReportSystem._illegal("confirmation_required")
+        if final.hard_fail_type is not None:
+            return EndingReportSystem._illegal("hard_fail_cannot_be_overwritten")
+        if state.calendar.current_day != FINAL_DAY:
+            return EndingReportSystem._illegal("d55_not_reached")
+        if (
+            state.daily_survival.settled_day != FINAL_DAY
+            or state.final_frost.final_score_day != FINAL_DAY
+            or not final.is_finalized
+            or final.ending_id not in ENDING_BODY_POOL_TEXT_IDS
+            or not final.report.is_generated
+        ):
+            return EndingReportSystem._illegal(
+                "d55_final_settlement_incomplete"
+            )
+        return CommandValidation.valid()
+
+    @staticmethod
+    def _illegal(reason: str, **details: Any) -> CommandValidation:
+        return CommandValidation(
+            False,
+            ErrorCode.ILLEGAL_COMMAND,
+            {"reason": reason, **details},
+        )
+
+    @staticmethod
+    def _rejected(
+        command_id: str, sequence: int, validation: CommandValidation
+    ) -> CommandResult:
+        data = dict(validation.details)
+        return CommandResult(
+            command_id=command_id,
+            accepted=False,
+            code=validation.code,
+            state_changed=False,
+            state_sequence=sequence,
+            feedback=(FeedbackItem(FeedbackLevel.ERROR, data=data),),
+            data=data,
+        )
+
+    @staticmethod
+    def _error(
+        command_id: str, sequence: int, stage: str, exc: Exception
+    ) -> CommandResult:
+        data = {"failed_stage": stage, "exception_type": type(exc).__name__}
+        return CommandResult(
+            command_id=command_id,
+            accepted=False,
+            code=ErrorCode.INTERNAL_ERROR,
+            state_changed=False,
+            state_sequence=sequence,
+            feedback=(FeedbackItem(FeedbackLevel.ERROR, data=data),),
+            data=data,
+        )

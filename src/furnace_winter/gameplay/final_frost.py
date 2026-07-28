@@ -738,6 +738,9 @@ class FinalFrostSystem:
                 "final_frost.result.finalized",
                 {"ending_id": "hard_fail"},
             )
+            from furnace_winter.gameplay.ending_report import EndingReportSystem
+
+            EndingReportSystem().generate(state)
             return
         scores = self._score(state)
         total = sum(scores.values())
@@ -773,6 +776,9 @@ class FinalFrostSystem:
                 "defining_tags": defining,
             },
         )
+        from furnace_winter.gameplay.ending_report import EndingReportSystem
+
+        EndingReportSystem().generate(state)
 
     def observe(self, state: GameState) -> dict[str, object]:
         self.validate_state(state)

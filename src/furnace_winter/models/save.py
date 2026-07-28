@@ -21,6 +21,7 @@ from furnace_winter.models.state import (
     EventFollowupSettlementRecord,
     EventResolutionRecord,
     EventState,
+    EndingReportState,
     FinalFrostState,
     FinalResultState,
     FrostDayRecord,
@@ -39,10 +40,22 @@ from furnace_winter.models.state import (
     PromiseState,
     ResourceState,
     RouteFacilityState,
+    RunState,
     SocialPolicyState,
     SurfaceResourcePointState,
     TechState,
+    TerminationReason,
     TrustPanicState,
+    ENDING_ADDITIONAL_POOL_TAGS,
+    ENDING_BODY_POOL_TEXT_IDS,
+    ENDING_HARD_FAIL_BODY_POOL_TEXT_IDS,
+    ENDING_HARD_FAIL_REASON_TEXT_IDS,
+    ENDING_INTERROGATION_POOL_BY_ENDING,
+    ENDING_PLAYER_ENDED_BODY_TEXT_IDS,
+    ENDING_REPORT_DEATH_RECORD_TEXT_ID,
+    ENDING_REPORT_NARRATIVE_POOL_TEXT_IDS,
+    ENDING_REPORT_ZERO_FROST_DEATHS_TEXT_ID,
+    ENDING_TITLE_TEXT_IDS,
 )
 
 
@@ -103,6 +116,58 @@ _EXTREME_CRISIS_CONDITION_IDS = {
 }
 
 
+def _expected_report_pending_text_ids_from_values(
+    *,
+    ending_id: str | None,
+    hard_fail_type: str | None,
+    run_state: RunState,
+    major_tags: list[str],
+    defining_tags: list[str],
+    frost_deaths: int,
+) -> list[str]:
+    pending: set[str] = {ENDING_REPORT_DEATH_RECORD_TEXT_ID}
+    if ending_id == "hard_fail":
+        if hard_fail_type is not None:
+            pending.add(
+                ENDING_HARD_FAIL_BODY_POOL_TEXT_IDS[hard_fail_type]
+            )
+        pending.add("ending.hard_fail.closing_pool")
+    else:
+        pending.update(ENDING_REPORT_NARRATIVE_POOL_TEXT_IDS)
+        if ending_id is not None:
+            pending.add(ENDING_BODY_POOL_TEXT_IDS[ending_id])
+            interrogation_id = ENDING_INTERROGATION_POOL_BY_ENDING.get(
+                ending_id
+            )
+            if interrogation_id is not None:
+                pending.add(interrogation_id)
+        tags = set(major_tags) | set(defining_tags)
+        for text_id, matching_tags in ENDING_ADDITIONAL_POOL_TAGS.items():
+            if tags & matching_tags:
+                pending.add(text_id)
+    if run_state is RunState.ENDED:
+        pending.add(ENDING_BODY_POOL_TEXT_IDS["player_ended"])
+    if frost_deaths == 0:
+        pending.add(ENDING_REPORT_ZERO_FROST_DEATHS_TEXT_ID)
+    return sorted(pending)
+
+
+def _expected_report_pending_text_ids(state: GameState) -> list[str]:
+    final = state.final_result
+    return _expected_report_pending_text_ids_from_values(
+        ending_id=final.ending_id,
+        hard_fail_type=(
+            final.hard_fail_type.value
+            if final.hard_fail_type is not None
+            else None
+        ),
+        run_state=final.run_state,
+        major_tags=final.major_tags,
+        defining_tags=final.defining_tags,
+        frost_deaths=state.final_frost.frost_deaths,
+    )
+
+
 def _promise_sequence(promise_id: str) -> int:
     match = _PROMISE_ID_PATTERN.fullmatch(promise_id)
     if match is None:
@@ -147,9 +212,34 @@ class SaveMigrationRegistry:
                     "pre-v11 save cannot contain non-default final-frost state"
                 )
             migrated.pop("final_frost")
+        if version < 12 and isinstance(migrated.get("final_result"), Mapping):
+            raw_final_result = dict(migrated["final_result"])
+            patch_010_fields = set(_field_names(FinalResultState)) - set(
+                _V11_FINAL_RESULT_FIELDS
+            )
+            older_fields = set(raw_final_result) - patch_010_fields
+            if (
+                patch_010_fields.issubset(raw_final_result)
+                and frozenset(older_fields)
+                in {
+                    frozenset(_V10_FINAL_RESULT_FIELDS),
+                    frozenset(_V11_FINAL_RESULT_FIELDS),
+                }
+            ):
+                defaults = to_primitive(FinalResultState())
+                for name in patch_010_fields:
+                    if raw_final_result[name] != defaults[name]:
+                        raise SaveDataError(
+                            "pre-v12 save cannot contain Patch 010 final values"
+                        )
+                migrated["final_result"] = {
+                    name: raw_final_result[name]
+                    for name in raw_final_result
+                    if name not in patch_010_fields
+                }
         if version < 11 and isinstance(migrated.get("final_result"), Mapping):
             raw_final_result = dict(migrated["final_result"])
-            if set(raw_final_result) == set(_field_names(FinalResultState)):
+            if set(raw_final_result) == set(_V11_FINAL_RESULT_FIELDS):
                 defaults = to_primitive(FinalResultState())
                 for name in set(raw_final_result) - set(
                     _V10_FINAL_RESULT_FIELDS
@@ -229,6 +319,13 @@ _V10_FINAL_RESULT_FIELDS = (
     "ending_id",
     "hard_fail_type",
     "ending_tags",
+)
+_V11_FINAL_RESULT_FIELDS = (
+    *_V10_FINAL_RESULT_FIELDS,
+    "system_scores",
+    "total_score",
+    "major_tags",
+    "defining_tags",
 )
 _V10_MEDICAL_FIELDS = tuple(
     name
@@ -1443,6 +1540,46 @@ def _decode_oath_order(value: Any) -> OathOrderState:
     )
 
 
+def _decode_ending_report(value: Any) -> EndingReportState:
+    data = _object(value, "final_result.report", _field_names(EndingReportState))
+    return EndingReportState(
+        is_generated=_boolean(
+            data["is_generated"], "final_result.report.is_generated"
+        ),
+        generated_day=_optional_integer(
+            data["generated_day"],
+            "final_result.report.generated_day",
+            minimum=1,
+            maximum=FINAL_DAY,
+        ),
+        ending_state=_string(
+            data["ending_state"],
+            "final_result.report.ending_state",
+            optional=True,
+        ),
+        display_result_id=_string(
+            data["display_result_id"],
+            "final_result.report.display_result_id",
+            optional=True,
+        ),
+        title_text_id=_string(
+            data["title_text_id"],
+            "final_result.report.title_text_id",
+            optional=True,
+        ),
+        body_text_ids=_string_list(
+            data["body_text_ids"], "final_result.report.body_text_ids"
+        ),
+        pending_text_ids=_string_list(
+            data["pending_text_ids"], "final_result.report.pending_text_ids"
+        ),
+        hidden_achievement_ids=_string_list(
+            data["hidden_achievement_ids"],
+            "final_result.report.hidden_achievement_ids",
+        ),
+    )
+
+
 def _decode_final_result(value: Any) -> FinalResultState:
     data = _object(value, "final_result", _field_names(FinalResultState))
     hard_fail_value = _string(
@@ -1456,6 +1593,21 @@ def _decode_final_result(value: Any) -> FinalResultState:
         raise SaveDataError(
             f"unsupported hard_fail_type: {hard_fail_value}"
         ) from exc
+    run_state_value = _string(data["run_state"], "final_result.run_state")
+    termination_reason_value = _string(
+        data["termination_reason"],
+        "final_result.termination_reason",
+        optional=True,
+    )
+    try:
+        run_state = RunState(run_state_value)
+        termination_reason = (
+            None
+            if termination_reason_value is None
+            else TerminationReason(termination_reason_value)
+        )
+    except ValueError as exc:
+        raise SaveDataError("unsupported final-result run lifecycle") from exc
     return FinalResultState(
         is_finalized=_boolean(data["is_finalized"], "final_result.is_finalized"),
         ending_id=_string(data["ending_id"], "final_result.ending_id", optional=True),
@@ -1471,6 +1623,20 @@ def _decode_final_result(value: Any) -> FinalResultState:
         defining_tags=_string_list(
             data["defining_tags"], "final_result.defining_tags"
         ),
+        run_state=run_state,
+        termination_reason=termination_reason,
+        termination_day=_optional_integer(
+            data["termination_day"],
+            "final_result.termination_day",
+            minimum=1,
+            maximum=FINAL_DAY,
+        ),
+        termination_command_sequence=_optional_integer(
+            data["termination_command_sequence"],
+            "final_result.termination_command_sequence",
+            minimum=1,
+        ),
+        report=_decode_ending_report(data["report"]),
     )
 
 
@@ -1618,6 +1784,7 @@ def _decode_game_state(
         migrations.register(8, _migrate_v8_to_v9)
         migrations.register(9, _migrate_v9_to_v10)
         migrations.register(10, _migrate_v10_to_v11)
+        migrations.register(11, _migrate_v11_to_v12)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -2596,6 +2763,112 @@ def _migrate_v10_to_v11(document: dict[str, Any]) -> dict[str, Any]:
     }
     migrated["final_frost"] = to_primitive(FinalFrostState())
     migrated["save_data_version"] = 11
+    return migrated
+
+
+def _migrate_v11_to_v12(document: dict[str, Any]) -> dict[str, Any]:
+    legacy = _object(document, "$", _field_names(GameState))
+    migrated = deepcopy(legacy)
+    final_result = dict(_object(
+        migrated["final_result"],
+        "final_result",
+        _V11_FINAL_RESULT_FIELDS,
+    ))
+    is_finalized = _boolean(
+        final_result["is_finalized"], "final_result.is_finalized"
+    )
+    hard_fail_type = _string(
+        final_result["hard_fail_type"],
+        "final_result.hard_fail_type",
+        optional=True,
+    )
+    if hard_fail_type is not None:
+        if hard_fail_type not in ENDING_HARD_FAIL_REASON_TEXT_IDS:
+            raise SaveDataError("unsupported hard_fail_type in v11 save")
+        final_result["is_finalized"] = True
+        final_result["ending_id"] = "hard_fail"
+        final_result["ending_tags"] = ["hard_fail", hard_fail_type]
+        final_result["system_scores"] = {}
+        final_result["total_score"] = None
+        final_result["major_tags"] = []
+        final_result["defining_tags"] = []
+        is_finalized = True
+
+    report = to_primitive(EndingReportState())
+    if is_finalized:
+        calendar = _object(
+            migrated["calendar"], "calendar", _field_names(CalendarState)
+        )
+        generated_day = _integer(
+            calendar["current_day"],
+            "calendar.current_day",
+            minimum=1,
+            maximum=FINAL_DAY,
+        )
+        ending_id = _string(
+            final_result["ending_id"],
+            "final_result.ending_id",
+        )
+        assert ending_id is not None
+        if ending_id not in ENDING_TITLE_TEXT_IDS:
+            raise SaveDataError("v11 final result has an unsupported ending id")
+        major_tags = _string_list(
+            final_result["major_tags"], "final_result.major_tags"
+        )
+        defining_tags = _string_list(
+            final_result["defining_tags"], "final_result.defining_tags"
+        )
+        frost = _object(
+            migrated["final_frost"],
+            "final_frost",
+            _field_names(FinalFrostState),
+        )
+        frost_deaths = _integer(
+            frost["frost_deaths"],
+            "final_frost.frost_deaths",
+            minimum=0,
+        )
+        events = _object(
+            migrated["events"], "events", _field_names(EventState)
+        )
+        hidden_achievements = sorted(
+            set(
+                _string_list(
+                    events["hidden_achievements_unlocked"],
+                    "events.hidden_achievements_unlocked",
+                )
+            )
+        )
+        report = {
+            "is_generated": True,
+            "generated_day": generated_day,
+            "ending_state": ending_id,
+            "display_result_id": ending_id,
+            "title_text_id": ENDING_TITLE_TEXT_IDS[ending_id],
+            "body_text_ids": (
+                [ENDING_HARD_FAIL_REASON_TEXT_IDS[hard_fail_type]]
+                if hard_fail_type is not None
+                else []
+            ),
+            "pending_text_ids": _expected_report_pending_text_ids_from_values(
+                ending_id=ending_id,
+                hard_fail_type=hard_fail_type,
+                run_state=RunState.ACTIVE,
+                major_tags=major_tags,
+                defining_tags=defining_tags,
+                frost_deaths=frost_deaths,
+            ),
+            "hidden_achievement_ids": hidden_achievements,
+        }
+    migrated["final_result"] = {
+        **final_result,
+        "run_state": RunState.ACTIVE.value,
+        "termination_reason": None,
+        "termination_day": None,
+        "termination_command_sequence": None,
+        "report": report,
+    }
+    migrated["save_data_version"] = 12
     return migrated
 
 
@@ -3856,6 +4129,129 @@ def _validate_state_invariants(
         or final.defining_tags
     ):
         raise SaveDataError("unfinished result cannot retain final scoring fields")
+
+    if final.run_state is RunState.ACTIVE:
+        if (
+            final.termination_reason is not None
+            or final.termination_day is not None
+            or final.termination_command_sequence is not None
+        ):
+            raise SaveDataError(
+                "active run cannot retain termination history"
+            )
+    elif final.run_state is RunState.ENDED:
+        if final.termination_reason is not TerminationReason.PLAYER_ENDED:
+            raise SaveDataError(
+                "ended run must use the player-ended termination reason"
+            )
+        if (
+            final.termination_day != FINAL_DAY
+            or final.termination_command_sequence is None
+            or final.termination_command_sequence != state.command_sequence
+        ):
+            raise SaveDataError(
+                "player-ended termination history is inconsistent"
+            )
+        if (
+            not final.is_finalized
+            or final.hard_fail_type is not None
+            or final.ending_id not in _FINAL_ENDING_IDS - {"hard_fail"}
+            or frost.final_score_day != FINAL_DAY
+        ):
+            raise SaveDataError(
+                "player-ended run requires a completed survival result"
+            )
+    else:
+        raise SaveDataError("unsupported final-result run state")
+
+    report = final.report
+    for name, values in (
+        ("body_text_ids", report.body_text_ids),
+        ("pending_text_ids", report.pending_text_ids),
+        ("hidden_achievement_ids", report.hidden_achievement_ids),
+    ):
+        if len(values) != len(set(values)):
+            raise SaveDataError(f"ending report {name} must be unique")
+    if report.pending_text_ids != sorted(report.pending_text_ids):
+        raise SaveDataError(
+            "ending report pending text ids must use stable sorted order"
+        )
+    if report.hidden_achievement_ids != sorted(
+        report.hidden_achievement_ids
+    ):
+        raise SaveDataError(
+            "ending report hidden achievement ids must be sorted"
+        )
+    if not report.is_generated:
+        if report != EndingReportState():
+            raise SaveDataError(
+                "ungenerated ending report cannot retain report fields"
+            )
+        if final.is_finalized:
+            raise SaveDataError(
+                "completed result must retain its generated ending report"
+            )
+    else:
+        if (
+            report.generated_day != state.calendar.current_day
+            or not final.is_finalized
+            or report.ending_state != final.ending_id
+        ):
+            raise SaveDataError(
+                "ending report must match the completed result"
+            )
+        expected_display_result = (
+            TerminationReason.PLAYER_ENDED.value
+            if final.run_state is RunState.ENDED
+            else final.ending_id
+        )
+        if (
+            report.display_result_id != expected_display_result
+            or report.title_text_id
+            != ENDING_TITLE_TEXT_IDS[expected_display_result]
+        ):
+            raise SaveDataError(
+                "ending report presentation result is not canonical"
+            )
+        if final.run_state is RunState.ENDED:
+            expected_body_text_ids = list(
+                ENDING_PLAYER_ENDED_BODY_TEXT_IDS
+            )
+        elif final.hard_fail_type is not None:
+            expected_body_text_ids = [
+                ENDING_HARD_FAIL_REASON_TEXT_IDS[
+                    final.hard_fail_type.value
+                ]
+            ]
+        else:
+            expected_body_text_ids = []
+        if report.body_text_ids != expected_body_text_ids:
+            raise SaveDataError(
+                "ending report body text ids are not canonical"
+            )
+        if report.pending_text_ids != _expected_report_pending_text_ids(
+            state
+        ):
+            raise SaveDataError(
+                "ending report pending text ids are not canonical"
+            )
+        if report.hidden_achievement_ids != sorted(
+            set(events.hidden_achievements_unlocked)
+        ):
+            raise SaveDataError(
+                "ending report hidden achievements are inconsistent"
+            )
+        if (
+            final.hard_fail_type is None
+            and (
+                report.generated_day != FINAL_DAY
+                or state.calendar.current_day != FINAL_DAY
+                or frost.final_score_day != FINAL_DAY
+            )
+        ):
+            raise SaveDataError(
+                "survival ending report requires a D55 score"
+            )
 
 
 def _validate_building_rule_invariants(
