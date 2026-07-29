@@ -14,6 +14,7 @@ from furnace_winter.config import (
     load_event_rules,
     load_final_frost_rules,
     load_law_rules,
+    load_map_rules,
     load_oath_order_rules,
     load_survival_rules,
     load_technology_rules,
@@ -28,6 +29,7 @@ from furnace_winter.gameplay import (
     EventSystem,
     FinalFrostSystem,
     LawSystem,
+    MapSystem,
     OathOrderSystem,
     RiskWarning,
     SurvivalSystem,
@@ -67,6 +69,7 @@ _CONFIG_FILENAMES = {
     "survival": "survival.json",
     "buildings": "buildings.json",
     "laws": "laws.json",
+    "maps": "maps.json",
     "technologies": "technologies.json",
     "events": "events.json",
     "oath_order": "oath_order.json",
@@ -128,6 +131,9 @@ class GameSession:
         self.law_rules = load_law_rules(
             config_dir / _CONFIG_FILENAMES["laws"]
         )
+        self.map_rules = load_map_rules(
+            config_dir / _CONFIG_FILENAMES["maps"]
+        )
         self.technology_rules = load_technology_rules(
             config_dir / _CONFIG_FILENAMES["technologies"]
         )
@@ -157,6 +163,7 @@ class GameSession:
             self.survival_rules,
             self.technology_rules,
         )
+        self.maps = MapSystem(self.map_rules, self.building_rules)
         self.technologies = TechnologySystem(
             self.technology_rules,
             self.building_rules,
@@ -186,6 +193,7 @@ class GameSession:
             autosave_sink=self._capture_end_day_autosave
         )
         for system in (
+            self.maps,
             self.survival,
             self.buildings,
             self.laws,
@@ -222,6 +230,8 @@ class GameSession:
         config_dir: str | Path = "data",
         save_path: str | Path | None = None,
         seed: int = 0,
+        map_mode: str = "random",
+        map_key: str | None = None,
         overwrite: bool = False,
     ) -> GameSession:
         config_path = Path(config_dir)
@@ -245,10 +255,16 @@ class GameSession:
         buildings = load_building_rules(
             config_path / _CONFIG_FILENAMES["buildings"]
         )
+        maps = load_map_rules(
+            config_path / _CONFIG_FILENAMES["maps"]
+        )
         state = create_initial_survival_state(
             survival,
             buildings,
             random_seed=seed,
+            map_rules=maps,
+            map_selection_mode=map_mode,
+            map_key=map_key,
         )
         session = cls(
             config_dir=config_path,
@@ -288,6 +304,8 @@ class GameSession:
         *,
         config_dir: str | Path = "data",
         seed: int = 0,
+        map_mode: str = "random",
+        map_key: str | None = None,
     ) -> GameSession:
         target = Path(save_path)
         if target.exists():
@@ -296,6 +314,8 @@ class GameSession:
             config_dir=config_dir,
             save_path=target,
             seed=seed,
+            map_mode=map_mode,
+            map_key=map_key,
         )
 
     @staticmethod
@@ -343,6 +363,7 @@ class GameSession:
             self.command_specs(),
             event_views=self.events.active_event_views(self._state),
             promise_views=self.events.active_promise_views(self._state),
+            map_view=self.maps.view(self._state),
             old_city_view=self.oath_order.old_city_view(self._state),
             oath_order_view=self.oath_order.route_view(self._state),
             final_frost_view=self.final_frost.observe(self._state),
@@ -395,6 +416,7 @@ class GameSession:
             },
             "trust": state.trust_panic.trust,
             "panic": state.trust_panic.panic,
+            "map": self.maps.view(state),
             "research": {
                 "active_tech_id": state.technologies.active_research_id,
                 "progress_units": state.technologies.research_progress_units,
@@ -877,6 +899,7 @@ class GameSession:
             self.technology_rules,
         )
         self.laws.validate_state(self._state)
+        self.maps.validate_state(self._state)
         self.events.validate_state(self._state)
         self.oath_order.validate_state(self._state)
         self.final_frost.validate_state(self._state)

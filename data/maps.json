@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "config_status": "FINAL",
+  "selection": {
+    "default_mode": "random",
+    "legacy_default_map_key": "black_ash_lowland",
+    "random_integer_weights": {
+      "rustbone_tundra": 33,
+      "black_ash_lowland": 34,
+      "twin_source_rift": 33
+    }
+  },
+  "shared": {
+    "small_coal_piles": 4,
+    "small_wood_piles": 5,
+    "small_steel_piles": 3,
+    "initial_hunting_grounds": 1,
+    "total_hunting_grounds": 2,
+    "forest_zones": 2
+  },
+  "templates": {
+    "rustbone_tundra": {
+      "display_name_zh": "锈骨冻原",
+      "difficulty_zh": "偏难",
+      "large_coal_mine_points": 1,
+      "large_steel_mine_points": 2
+    },
+    "black_ash_lowland": {
+      "display_name_zh": "黑烬洼地",
+      "difficulty_zh": "标准",
+      "large_coal_mine_points": 2,
+      "large_steel_mine_points": 1
+    },
+    "twin_source_rift": {
+      "display_name_zh": "双源裂谷",
+      "difficulty_zh": "偏易",
+      "large_coal_mine_points": 2,
+      "large_steel_mine_points": 2
+    }
+  }
+}

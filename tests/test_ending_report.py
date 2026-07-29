@@ -377,7 +377,7 @@ class EndingReportPatchTests(unittest.TestCase):
         ):
             del legacy["final_result"][field]
         migrated = decode_game_state(legacy)
-        self.assertEqual(migrated.save_data_version, 12)
+        self.assertEqual(migrated.save_data_version, 13)
         self.assertIs(migrated.final_result.run_state, RunState.ACTIVE)
         self.assertFalse(migrated.final_result.report.is_generated)
 

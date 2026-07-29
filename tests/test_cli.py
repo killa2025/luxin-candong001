@@ -15,6 +15,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class CliTests(unittest.TestCase):
+    def test_state_cli_accepts_manual_map_selection(self) -> None:
+        output = StringIO()
+        with redirect_stdout(output):
+            exit_code = main(
+                [
+                    "state",
+                    "--seed",
+                    "4",
+                    "--map-mode",
+                    "manual",
+                    "--map-key",
+                    "rustbone_tundra",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        document = json.loads(output.getvalue())
+        self.assertEqual(
+            document["map_view"]["map_key"], "rustbone_tundra"
+        )
+        self.assertEqual(document["state"]["random"]["draws"], 0)
+
     def test_validate_config_success_exit_code(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, redirect_stdout(StringIO()):
             exit_code = main(["validate-config", temp_dir])

@@ -31,6 +31,7 @@ from furnace_winter.models.state import (
     HousingState,
     HungerState,
     LawState,
+    MapState,
     MedicalState,
     OathOrderState,
     OldCityState,
@@ -206,6 +207,12 @@ class SaveMigrationRegistry:
             raise SaveDataError("save_data_version must be an integer")
         if version > self.current_version:
             raise SaveDataError(f"save version {version} is newer than supported version")
+        if version < 13 and "map" in migrated:
+            if migrated["map"] != to_primitive(MapState()):
+                raise SaveDataError(
+                    "pre-v13 save cannot contain non-default map state"
+                )
+            migrated.pop("map")
         if version < 11 and "final_frost" in migrated:
             if migrated["final_frost"] != to_primitive(FinalFrostState()):
                 raise SaveDataError(
@@ -306,12 +313,15 @@ def _field_names(model: type[Any]) -> tuple[str, ...]:
     return tuple(item.name for item in fields(model))
 
 
+_V12_GAME_STATE_FIELDS = tuple(
+    name for name in _field_names(GameState) if name != "map"
+)
 _V10_GAME_STATE_FIELDS = tuple(
-    name for name in _field_names(GameState) if name != "final_frost"
+    name for name in _V12_GAME_STATE_FIELDS if name != "final_frost"
 )
 _V9_GAME_STATE_FIELDS = tuple(
     name
-    for name in _field_names(GameState)
+    for name in _V12_GAME_STATE_FIELDS
     if name not in {"oath_order", "final_frost"}
 )
 _V10_FINAL_RESULT_FIELDS = (
@@ -532,6 +542,60 @@ def _decode_random(value: Any) -> RandomState:
     if state.algorithm != RANDOM_ALGORITHM:
         raise SaveDataError(f"unsupported random algorithm: {state.algorithm}")
     return state
+
+
+def _decode_map(value: Any) -> MapState:
+    data = _object(value, "map", _field_names(MapState))
+    return MapState(
+        map_key=str(_string(data["map_key"], "map.map_key")),
+        selection_mode=str(
+            _string(data["selection_mode"], "map.selection_mode")
+        ),
+        display_name_zh=str(
+            _string(data["display_name_zh"], "map.display_name_zh")
+        ),
+        difficulty_zh=str(
+            _string(data["difficulty_zh"], "map.difficulty_zh")
+        ),
+        small_coal_piles=_integer(
+            data["small_coal_piles"],
+            "map.small_coal_piles",
+            minimum=1,
+        ),
+        small_wood_piles=_integer(
+            data["small_wood_piles"],
+            "map.small_wood_piles",
+            minimum=1,
+        ),
+        small_steel_piles=_integer(
+            data["small_steel_piles"],
+            "map.small_steel_piles",
+            minimum=1,
+        ),
+        initial_hunting_grounds=_integer(
+            data["initial_hunting_grounds"],
+            "map.initial_hunting_grounds",
+            minimum=1,
+        ),
+        total_hunting_grounds=_integer(
+            data["total_hunting_grounds"],
+            "map.total_hunting_grounds",
+            minimum=1,
+        ),
+        forest_zones=_integer(
+            data["forest_zones"], "map.forest_zones", minimum=1
+        ),
+        large_coal_mine_points=_integer(
+            data["large_coal_mine_points"],
+            "map.large_coal_mine_points",
+            minimum=1,
+        ),
+        large_steel_mine_points=_integer(
+            data["large_steel_mine_points"],
+            "map.large_steel_mine_points",
+            minimum=1,
+        ),
+    )
 
 
 def _decode_calendar(value: Any) -> CalendarState:
@@ -1785,6 +1849,7 @@ def _decode_game_state(
         migrations.register(9, _migrate_v9_to_v10)
         migrations.register(10, _migrate_v10_to_v11)
         migrations.register(11, _migrate_v11_to_v12)
+        migrations.register(12, _migrate_v12_to_v13)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -1813,6 +1878,7 @@ def _decode_game_state(
             daily_survival=_decode_daily_survival(data["daily_survival"]),
             trust_panic=_decode_trust_panic(data["trust_panic"]),
             furnace=_decode_furnace(data["furnace"]),
+            map=_decode_map(data["map"]),
             buildings=_decode_buildings(data["buildings"]),
             surface_resource_points=_decode_surface_resource_points(
                 data["surface_resource_points"]
@@ -2767,7 +2833,7 @@ def _migrate_v10_to_v11(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def _migrate_v11_to_v12(document: dict[str, Any]) -> dict[str, Any]:
-    legacy = _object(document, "$", _field_names(GameState))
+    legacy = _object(document, "$", _V12_GAME_STATE_FIELDS)
     migrated = deepcopy(legacy)
     final_result = dict(_object(
         migrated["final_result"],
@@ -2872,13 +2938,38 @@ def _migrate_v11_to_v12(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v12_to_v13(document: dict[str, Any]) -> dict[str, Any]:
+    legacy = _object(document, "$", _V12_GAME_STATE_FIELDS)
+    migrated = deepcopy(legacy)
+    migrated["map"] = to_primitive(MapState())
+    migrated["save_data_version"] = 13
+    return migrated
+
+
 def _validate_state_invariants(
     state: GameState, *, strict_event_timeline: bool = True
 ) -> None:
     population = state.population
+    map_state = state.map
     technologies = state.technologies
     events = state.events
     promises = state.promises
+    if map_state.selection_mode not in {
+        "random",
+        "manual",
+        "legacy_default",
+    }:
+        raise SaveDataError("unsupported map selection mode")
+    if map_state.map_key not in {
+        "rustbone_tundra",
+        "black_ash_lowland",
+        "twin_source_rift",
+    }:
+        raise SaveDataError("unsupported map key")
+    if map_state.initial_hunting_grounds > map_state.total_hunting_grounds:
+        raise SaveDataError(
+            "initial hunting grounds cannot exceed total hunting grounds"
+        )
     if len(set(events.resolved_event_ids)) != len(events.resolved_event_ids):
         raise SaveDataError("resolved event ids must be unique")
     if len(set(events.suppressed_event_ids_today)) != len(

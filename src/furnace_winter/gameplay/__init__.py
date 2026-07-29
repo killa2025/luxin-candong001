@@ -76,6 +76,11 @@ from furnace_winter.gameplay.ending_report import (
     EndingReportSystem,
     build_ending_report_catalog,
 )
+from furnace_winter.gameplay.maps import (
+    MAP_SELECTION_MODES,
+    MapSystem,
+    select_initial_map,
+)
 
 __all__ = [
     "ASSIGN_COMMAND",
@@ -101,6 +106,8 @@ __all__ = [
     "build_ending_report_catalog",
     "HEAT_COMMAND",
     "LawSystem",
+    "MAP_SELECTION_MODES",
+    "MapSystem",
     "MEDICAL_RATION_COMMAND",
     "MEMORIAL_COMMAND",
     "OVERTIME_COMMAND",
@@ -140,4 +147,5 @@ __all__ = [
     "furnace_mode_id",
     "is_over_capacity",
     "storage_used",
+    "select_initial_map",
 ]

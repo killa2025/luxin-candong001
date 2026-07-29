@@ -19,7 +19,7 @@ class ConfigLoaderTests(unittest.TestCase):
     def test_repository_manifest_loads(self) -> None:
         documents = load_config_tree(self.PROJECT_ROOT / "data")
 
-        self.assertEqual(len(documents), 8)
+        self.assertEqual(len(documents), 9)
         self.assertEqual(
             [item.status for item in documents],
             [
@@ -28,6 +28,7 @@ class ConfigLoaderTests(unittest.TestCase):
                 ConfigStatus.TEST_NUMERIC,
                 ConfigStatus.TEST_NUMERIC,
                 ConfigStatus.FINAL,
+                ConfigStatus.FINAL,
                 ConfigStatus.TEST_NUMERIC,
                 ConfigStatus.FINAL,
                 ConfigStatus.TEST_NUMERIC,
@@ -35,7 +36,7 @@ class ConfigLoaderTests(unittest.TestCase):
         )
         self.assertEqual(
             [item.data["schema_version"] for item in documents],
-            [2, 1, 1, 1, 1, 1, 1, 1],
+            [2, 1, 1, 1, 1, 1, 1, 1, 1],
         )
 
     def test_test_numeric_status_is_explicitly_identifiable(self) -> None:
