@@ -6,11 +6,21 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from furnace_winter.interface.commands import CommandRequest, ErrorCode
-from furnace_winter.interface.feedback import CommandResult, FeedbackItem
+from furnace_winter.interface.commands import (
+    COMMAND_NAME_PATTERN,
+    CommandRequest,
+    ErrorCode,
+)
+from furnace_winter.interface.feedback import (
+    CommandResult,
+    FeedbackItem,
+    FeedbackLevel,
+)
 from furnace_winter.models import (
+    DeterministicRandom,
     GameState,
     RandomState,
+    decode_game_state,
     encode_game_state,
     snapshot_json,
 )
@@ -163,6 +173,238 @@ class ReplayLog:
             initial_state=deepcopy(self._initial_state),
             entries=self.entries(),
         )
+
+
+def _require_fields(
+    value: Any,
+    expected_fields: frozenset[str],
+    name: str,
+) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{name} must be a JSON object")
+    if set(value) != expected_fields:
+        raise ValueError(f"{name} has invalid fields")
+    return value
+
+
+def _decode_random_state(value: Any, name: str) -> RandomState:
+    document = _require_fields(
+        value,
+        frozenset({"seed", "internal_state", "draws", "algorithm"}),
+        name,
+    )
+    state = RandomState(
+        seed=document["seed"],
+        internal_state=document["internal_state"],
+        draws=document["draws"],
+        algorithm=document["algorithm"],
+    )
+    DeterministicRandom.from_state(state)
+    return state
+
+
+def _decode_request(value: Any) -> CommandRequest:
+    document = _require_fields(
+        value,
+        frozenset(
+            {
+                "command_id",
+                "name",
+                "arguments",
+                "expected_state_sequence",
+            }
+        ),
+        "replay request",
+    )
+    command_id = document["command_id"]
+    name = document["name"]
+    expected_state_sequence = document["expected_state_sequence"]
+    if (
+        not isinstance(command_id, str)
+        or not command_id.strip()
+        or command_id != command_id.strip()
+        or not isinstance(name, str)
+        or not COMMAND_NAME_PATTERN.fullmatch(name)
+        or (
+            expected_state_sequence is not None
+            and (
+                not isinstance(expected_state_sequence, int)
+                or isinstance(expected_state_sequence, bool)
+                or expected_state_sequence < 0
+            )
+        )
+    ):
+        raise ValueError("replay request identity is invalid")
+    return CommandRequest(
+        command_id=command_id,
+        name=name,
+        arguments=_snapshot_mapping(
+            document["arguments"],
+            "replay request arguments",
+        ),
+        expected_state_sequence=expected_state_sequence,
+    )
+
+
+def _decode_feedback(value: Any) -> FeedbackItem:
+    document = _require_fields(
+        value,
+        frozenset({"level", "text_id", "data"}),
+        "replay feedback",
+    )
+    text_id = document["text_id"]
+    if text_id is not None and (
+        not isinstance(text_id, str)
+        or not text_id.strip()
+        or text_id != text_id.strip()
+    ):
+        raise ValueError("replay feedback text_id is invalid")
+    return FeedbackItem(
+        level=FeedbackLevel(document["level"]),
+        text_id=text_id,
+        data=_snapshot_mapping(document["data"], "replay feedback data"),
+    )
+
+
+def _decode_result(value: Any) -> CommandResult:
+    document = _require_fields(
+        value,
+        frozenset(
+            {
+                "command_id",
+                "accepted",
+                "code",
+                "state_changed",
+                "state_sequence",
+                "feedback",
+                "data",
+            }
+        ),
+        "replay result",
+    )
+    command_id = document["command_id"]
+    accepted = document["accepted"]
+    state_changed = document["state_changed"]
+    state_sequence = document["state_sequence"]
+    feedback = document["feedback"]
+    if (
+        not isinstance(command_id, str)
+        or not command_id.strip()
+        or command_id != command_id.strip()
+        or not isinstance(accepted, bool)
+        or not isinstance(state_changed, bool)
+        or not isinstance(state_sequence, int)
+        or isinstance(state_sequence, bool)
+        or state_sequence < 0
+        or not isinstance(feedback, list)
+    ):
+        raise ValueError("replay result is invalid")
+    code = ErrorCode(document["code"])
+    if accepted != (code is ErrorCode.OK):
+        raise ValueError("replay result acceptance and code are inconsistent")
+    if not accepted and state_changed:
+        raise ValueError("rejected replay result cannot change state")
+    return CommandResult(
+        command_id=command_id,
+        accepted=accepted,
+        code=code,
+        state_changed=state_changed,
+        state_sequence=state_sequence,
+        feedback=tuple(_decode_feedback(item) for item in feedback),
+        data=_snapshot_mapping(document["data"], "replay result data"),
+    )
+
+
+def _decode_log_entry(value: Any) -> LogEntry:
+    document = _require_fields(
+        value,
+        frozenset({"sequence", "category", "code", "payload"}),
+        "replay log entry",
+    )
+    code = document["code"]
+    if (
+        not isinstance(code, str)
+        or not code.strip()
+        or code != code.strip()
+    ):
+        raise ValueError("replay log code is invalid")
+    return LogEntry(
+        sequence=_validate_sequence(
+            document["sequence"],
+            "replay log sequence",
+        ),
+        category=LogCategory(document["category"]),
+        code=code,
+        payload=_snapshot_mapping(
+            document["payload"],
+            "replay log payload",
+        ),
+    )
+
+
+def _decode_replay_entry(value: Any) -> ReplayEntry:
+    document = _require_fields(
+        value,
+        frozenset(
+            {
+                "sequence",
+                "request",
+                "result",
+                "random_before",
+                "random_after",
+                "logs",
+            }
+        ),
+        "replay entry",
+    )
+    logs = document["logs"]
+    if not isinstance(logs, list):
+        raise TypeError("replay entry logs must be an array")
+    event_log = EventLog()
+    for log_entry in logs:
+        event_log.append(_decode_log_entry(log_entry))
+    return ReplayEntry(
+        sequence=_validate_sequence(
+            document["sequence"],
+            "replay sequence",
+        ),
+        request=_decode_request(document["request"]),
+        result=_decode_result(document["result"]),
+        random_before=_decode_random_state(
+            document["random_before"],
+            "replay random_before",
+        ),
+        random_after=_decode_random_state(
+            document["random_after"],
+            "replay random_after",
+        ),
+        logs=event_log.entries(),
+    )
+
+
+def decode_replay_document(value: Any) -> ReplayDocument:
+    """Strictly decode a persisted replay before allowing replacement."""
+
+    document = _require_fields(
+        value,
+        frozenset({"format_version", "initial_state", "entries"}),
+        "replay document",
+    )
+    format_version = document["format_version"]
+    entries = document["entries"]
+    if (
+        not isinstance(format_version, int)
+        or isinstance(format_version, bool)
+        or format_version != REPLAY_FORMAT_VERSION
+    ):
+        raise ValueError("unsupported replay format_version")
+    if not isinstance(entries, list):
+        raise TypeError("replay entries must be an array")
+    initial_state = decode_game_state(document["initial_state"])
+    replay = ReplayLog(initial_state)
+    for entry in entries:
+        replay.append(_decode_replay_entry(entry))
+    return replay.document()
 
 
 @dataclass(frozen=True, slots=True)

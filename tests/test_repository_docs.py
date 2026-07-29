@@ -19,7 +19,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("`docs/PENDING.md`", index)
         self.assertNotIn("handoff/PENDING 登记.md", index)
 
-    def test_repository_status_text_matches_patch_010_boundary(self) -> None:
+    def test_repository_status_text_matches_patch_011_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
@@ -29,8 +29,9 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("data/oath_order.json", readme)
         self.assertIn("data/final_frost.json", readme)
         self.assertIn("当前存档数据版本为 v12", readme)
-        self.assertIn("Patch 010", readme)
-        self.assertIn("Patch 010", agents)
+        self.assertIn("Patch 011", readme)
+        self.assertIn("GameSession", readme)
+        self.assertIn("Patch 011", agents)
         self.assertNotIn("完整结局报告正文、审问与 UI 仍留给 Patch 010", agents)
 
 
