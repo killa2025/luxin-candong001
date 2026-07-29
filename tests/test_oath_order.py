@@ -488,6 +488,92 @@ class OathOrderPatchTests(unittest.TestCase):
             ],
         )
 
+    def test_countdown_previews_expose_outcomes_without_mutating_state(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=40)
+        self.prepare_countdown(
+            system,
+            state,
+            deadline_day=45,
+            option_id=None,
+        )
+        state.old_city.pending_event_id = "countdown"
+        before = deepcopy(state)
+
+        view = system.old_city_view(state)
+
+        previews = {
+            item["option_id"]: item["preview"]
+            for item in view["option_previews"]
+        }
+        promise = previews["promise_reduce_old_city"]
+        self.assertEqual(promise["countdown_day_after"], 45)
+        self.assertTrue(promise["promise_active_after"])
+        self.assertEqual(
+            promise["promise_target_count"],
+            state.old_city.middle_threshold - 1,
+        )
+        self.assertEqual(promise["promise_deadline_day"], 45)
+        extension = previews["ask_for_time"]
+        self.assertEqual(extension["countdown_day_after"], 47)
+        self.assertFalse(extension["promise_active_after"])
+        self.assertIsNone(extension["promise_target_count"])
+        self.assertIsNone(extension["promise_deadline_day"])
+        self.assertNotIn("hidden_growth_days_remaining", view)
+        for preview in previews.values():
+            self.assertNotIn("hidden_growth_days_remaining", preview)
+        self.assertEqual(state, before)
+
+    def test_old_city_view_exposes_active_and_settled_promise_lifecycle(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=40)
+        self.prepare_countdown(
+            system,
+            state,
+            deadline_day=45,
+            option_id="promise_reduce_old_city",
+        )
+
+        active = system.old_city_view(state)
+        self.assertTrue(active["promise_active"])
+        self.assertEqual(active["promise_created_day"], 40)
+        self.assertEqual(
+            active["promise_target_count"],
+            state.old_city.middle_threshold - 1,
+        )
+        self.assertEqual(active["promise_deadline_day"], 45)
+        self.assertFalse(active["promise_settled"])
+        self.assertIsNone(active["promise_outcome"])
+        self.assertIsNone(active["promise_settled_day"])
+        self.assertNotIn("hidden_growth_days_remaining", active)
+
+        assert state.old_city.promise_target_count is not None
+        state.old_city.member_count = state.old_city.promise_target_count
+        state.calendar.current_day = 41
+        transition = EndDayContext(
+            state=state,
+            random=DeterministicRandom.from_state(state.random),
+            settled_day=40,
+            stage=EndDayStage.ADVANCE_DAY,
+            _emit=lambda _code, _payload: None,
+        )
+        system.resolve_old_city_deadline_transition(transition)
+
+        settled = system.old_city_view(state)
+        self.assertFalse(settled["promise_active"])
+        self.assertTrue(settled["promise_settled"])
+        self.assertEqual(settled["promise_outcome"], "success")
+        self.assertEqual(settled["promise_settled_day"], 41)
+        self.assertEqual(
+            settled["promise_target_count"],
+            active["promise_target_count"],
+        )
+        self.assertEqual(settled["promise_deadline_day"], 45)
+
     def test_pending_old_city_event_blocks_end_day_transactionally(self) -> None:
         system = self.system()
         state = self.make_state(day=24)
