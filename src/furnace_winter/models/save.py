@@ -2978,8 +2978,6 @@ def _validate_state_invariants(
         raise SaveDataError("suppressed event ids must be unique")
     if len(set(events.status_ids)) != len(events.status_ids):
         raise SaveDataError("event status ids must be unique")
-    if set(events.active_events) & set(events.resolved_event_ids):
-        raise SaveDataError("active and resolved events must be disjoint")
     legal_settled_day = max(
         state.calendar.current_day - 1,
         state.daily_survival.settled_day or 0,
@@ -3026,6 +3024,7 @@ def _validate_state_invariants(
     resolution_promise_ids: set[str] = set()
     resolution_instances: dict[str, EventResolutionRecord] = {}
     resolution_occurrences: set[tuple[str, int]] = set()
+    resolutions_by_event_id: dict[str, list[EventResolutionRecord]] = {}
     for resolution in events.resolution_history:
         if resolution.event_id not in events.resolved_event_ids:
             raise SaveDataError("event history must reference a resolved event")
@@ -3057,6 +3056,9 @@ def _validate_state_invariants(
             )
         resolution_instances[resolution.instance_id] = resolution
         resolution_occurrences.add(occurrence_key)
+        resolutions_by_event_id.setdefault(
+            resolution.event_id, []
+        ).append(resolution)
         if set(resolution.resource_changes) != {
             "coal", "wood", "steel", "raw_food", "cooked_food"
         }:
@@ -3080,6 +3082,24 @@ def _validate_state_invariants(
             or event.instance_id in resolution_instances
         ):
             raise SaveDataError("active events must be counted when displayed")
+        # resolved_event_ids is the historical set of event types, so a
+        # repeatable event may legitimately have a later active occurrence.
+        # Every resolved instance must precede it by both identity and day;
+        # ignored occurrences do not need a history record.
+        if event_id in events.resolved_event_ids:
+            prior_resolutions = resolutions_by_event_id.get(event_id, [])
+            if not prior_resolutions:
+                raise SaveDataError(
+                    "active repeat event lacks a prior resolution history"
+                )
+            if any(
+                resolution.occurrence_index >= event.occurrence_index
+                or resolution.resolved_day >= event.trigger_day
+                for resolution in prior_resolutions
+            ):
+                raise SaveDataError(
+                    "active repeat event must follow every prior resolution"
+                )
         if event.event_type not in {"major", "normal"}:
             raise SaveDataError("unsupported active event type")
         if event.trigger_day != state.calendar.current_day:
