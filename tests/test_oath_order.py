@@ -411,6 +411,15 @@ class OathOrderPatchTests(unittest.TestCase):
         system.prepare_new_day(state)
         self.assertTrue(state.old_city.is_unlocked)
         self.assertEqual(state.old_city.pending_event_id, "southern_letter")
+        view = system.old_city_view(state)
+        self.assertEqual(
+            view["available_option_ids"], ["publish", "suppress"]
+        )
+        self.assertEqual(
+            [item["option_id"] for item in view["option_previews"]],
+            ["publish", "suppress"],
+        )
+        self.assertEqual(view["unavailable_options"], [])
         warnings = system.evaluate_risks(state)
         self.assertEqual(warnings[0].level, RiskWarningLevel.C_HARD_BLOCK)
         result = self.execute(
@@ -423,6 +432,147 @@ class OathOrderPatchTests(unittest.TestCase):
         self.assertEqual(result.code, ErrorCode.OK)
         self.assertGreater(state.old_city.member_count, 0)
         self.assertIsNone(state.old_city.pending_event_id)
+
+    def test_old_city_rejection_and_view_expose_event_specific_options(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=24)
+        system.prepare_new_day(state)
+
+        rejected = self.execute(
+            system,
+            state,
+            RESOLVE_OLD_CITY_COMMAND,
+            event_id="southern_letter",
+            option_id="ask_for_time",
+        )
+
+        self.assertEqual(rejected.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(
+            rejected.data["available_option_ids"],
+            ["publish", "suppress"],
+        )
+        self.assertEqual(
+            system.old_city_view(state)["available_option_ids"],
+            ["publish", "suppress"],
+        )
+
+    def test_countdown_view_marks_conditionally_unavailable_options(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=40)
+        self.prepare_countdown(
+            system,
+            state,
+            deadline_day=45,
+            option_id=None,
+        )
+        state.old_city.pending_event_id = "countdown"
+        state.trust_panic.trust = 49
+
+        view = system.old_city_view(state)
+
+        self.assertEqual(
+            view["available_option_ids"],
+            ["promise_reduce_old_city", "do_not_stop"],
+        )
+        self.assertEqual(
+            view["unavailable_options"],
+            [
+                {
+                    "option_id": "ask_for_time",
+                    "reason": "old_city_time_request_unavailable",
+                }
+            ],
+        )
+
+    def test_countdown_previews_expose_outcomes_without_mutating_state(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=40)
+        self.prepare_countdown(
+            system,
+            state,
+            deadline_day=45,
+            option_id=None,
+        )
+        state.old_city.pending_event_id = "countdown"
+        before = deepcopy(state)
+
+        view = system.old_city_view(state)
+
+        previews = {
+            item["option_id"]: item["preview"]
+            for item in view["option_previews"]
+        }
+        promise = previews["promise_reduce_old_city"]
+        self.assertEqual(promise["countdown_day_after"], 45)
+        self.assertTrue(promise["promise_active_after"])
+        self.assertEqual(
+            promise["promise_target_count"],
+            state.old_city.middle_threshold - 1,
+        )
+        self.assertEqual(promise["promise_deadline_day"], 45)
+        extension = previews["ask_for_time"]
+        self.assertEqual(extension["countdown_day_after"], 47)
+        self.assertFalse(extension["promise_active_after"])
+        self.assertIsNone(extension["promise_target_count"])
+        self.assertIsNone(extension["promise_deadline_day"])
+        self.assertNotIn("hidden_growth_days_remaining", view)
+        for preview in previews.values():
+            self.assertNotIn("hidden_growth_days_remaining", preview)
+        self.assertEqual(state, before)
+
+    def test_old_city_view_exposes_active_and_settled_promise_lifecycle(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=40)
+        self.prepare_countdown(
+            system,
+            state,
+            deadline_day=45,
+            option_id="promise_reduce_old_city",
+        )
+
+        active = system.old_city_view(state)
+        self.assertTrue(active["promise_active"])
+        self.assertEqual(active["promise_created_day"], 40)
+        self.assertEqual(
+            active["promise_target_count"],
+            state.old_city.middle_threshold - 1,
+        )
+        self.assertEqual(active["promise_deadline_day"], 45)
+        self.assertFalse(active["promise_settled"])
+        self.assertIsNone(active["promise_outcome"])
+        self.assertIsNone(active["promise_settled_day"])
+        self.assertNotIn("hidden_growth_days_remaining", active)
+
+        assert state.old_city.promise_target_count is not None
+        state.old_city.member_count = state.old_city.promise_target_count
+        state.calendar.current_day = 41
+        transition = EndDayContext(
+            state=state,
+            random=DeterministicRandom.from_state(state.random),
+            settled_day=40,
+            stage=EndDayStage.ADVANCE_DAY,
+            _emit=lambda _code, _payload: None,
+        )
+        system.resolve_old_city_deadline_transition(transition)
+
+        settled = system.old_city_view(state)
+        self.assertFalse(settled["promise_active"])
+        self.assertTrue(settled["promise_settled"])
+        self.assertEqual(settled["promise_outcome"], "success")
+        self.assertEqual(settled["promise_settled_day"], 41)
+        self.assertEqual(
+            settled["promise_target_count"],
+            active["promise_target_count"],
+        )
+        self.assertEqual(settled["promise_deadline_day"], 45)
 
     def test_pending_old_city_event_blocks_end_day_transactionally(self) -> None:
         system = self.system()

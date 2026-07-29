@@ -48,6 +48,31 @@ class CommandInterfaceTests(unittest.TestCase):
         self.assertEqual(valid.code, ErrorCode.OK)
         self.assertEqual(invalid.code, ErrorCode.INVALID_ARGUMENTS)
 
+    def test_command_schema_rejects_values_outside_declared_options(self) -> None:
+        catalog = CommandCatalog()
+        catalog.register(
+            CommandSpec(
+                name="test.mode",
+                required_arguments={"mode": ArgumentKind.STRING},
+                argument_options={"mode": ("normal", "emergency")},
+            )
+        )
+
+        result = CommandValidator(catalog).validate(
+            CommandRequest(
+                "command-options",
+                "test.mode",
+                {"mode": "emergency_ration"},
+            )
+        )
+
+        self.assertEqual(result.code, ErrorCode.INVALID_ARGUMENTS)
+        self.assertEqual(result.details["invalid_options"], ["mode"])
+        self.assertEqual(
+            result.details["allowed_options"],
+            {"mode": ["normal", "emergency"]},
+        )
+
     def test_unknown_commands_are_rejected(self) -> None:
         result = self.validator.validate(CommandRequest("command-1", "game.unknown"))
 

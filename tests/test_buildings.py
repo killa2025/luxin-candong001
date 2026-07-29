@@ -163,7 +163,13 @@ class BuildingPatchTests(unittest.TestCase):
                     {"building_type": building_type, "zone": "inner_ring"},
                 )
                 self.assertEqual(result.code, ErrorCode.INVALID_ARGUMENTS)
-                self.assertEqual(result.data["reason"], "unknown_building_type")
+                self.assertEqual(
+                    result.data["invalid_options"], ["building_type"]
+                )
+                self.assertEqual(
+                    result.data["allowed_options"]["building_type"],
+                    list(advertised_types),
+                )
 
     def test_law_and_tech_prerequisites_are_checked_without_auto_building(self) -> None:
         state = self.make_state()
