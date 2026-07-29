@@ -23,6 +23,7 @@ from furnace_winter.interface.replay import (
     ReplayEntry,
     ReplayLog,
     ReplayVerification,
+    decode_replay_document,
 )
 from furnace_winter.interface.session import GameSession, SessionExecution
 
@@ -50,4 +51,5 @@ __all__ = [
     "ReplayLog",
     "ReplayVerification",
     "SessionExecution",
+    "decode_replay_document",
 ]

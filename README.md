@@ -79,4 +79,4 @@ print(game.command("game.set_furnace", {"level": 2}))
 print(game.command("game.end_day"))
 ```
 
-`play` 使用一行一个 JSON 对象的长连接协议。直接发送结构化命令即可；另支持 `{"type":"observe"}`、`{"type":"rules","section":"buildings"}`、`{"type":"replay"}` 与 `{"type":"quit"}`。成功日结会在主存档之外写入同目录的 `<存档名>.autosave_end_day.json`，其中保留当日日结清理完成、日期推进前的锁定状态、日志与 `resume_stage`；它不会覆盖主会话存档。回放导出默认拒绝覆盖已有文件，并始终禁止指向主存档、自动保存或运行配置。具体边界见 `docs/handoff/PATCH-011：统一游戏会话与沙盒入口实现记录.md`。
+`play` 使用一行一个 JSON 对象的长连接协议。直接发送结构化命令即可；另支持 `{"type":"observe"}`、`{"type":"rules","section":"buildings"}`、`{"type":"replay"}` 与 `{"type":"quit"}`。成功日结会在主存档之外写入同目录的 `<存档名>.autosave_end_day.json`，其中保留当日日结清理完成、日期推进前的锁定状态、日志与 `resume_stage`；它不会覆盖主会话存档。建立新局时主存档与自动保存作为同一个持久化集合检查：默认拒绝任何旧文件，显式覆盖会事务式写入新主存档并清除上一局自动保存。回放导出默认拒绝覆盖已有文件；显式覆盖前会严格解析全部回放条目，并始终禁止指向主存档、自动保存或运行配置。具体边界见 `docs/handoff/PATCH-011：统一游戏会话与沙盒入口实现记录.md`。

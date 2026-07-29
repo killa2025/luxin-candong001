@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from copy import deepcopy
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -251,6 +252,119 @@ class GameSessionTests(unittest.TestCase):
             )
             self.assertEqual(restored.status()["day"], 2)
 
+    def test_overwrite_new_session_clears_previous_autosave(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "game.json"
+            previous = self.new_session(seed=100, save_path=save_path)
+            self.assertEqual(
+                previous.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = previous.autosave_path
+            assert autosave_path is not None
+            previous_autosave = json.loads(
+                autosave_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                previous_autosave["state"]["random"]["seed"],
+                100,
+            )
+
+            replacement = self.new_session(
+                seed=200,
+                save_path=save_path,
+                overwrite=True,
+            )
+            replacement_save = json.loads(
+                save_path.read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(replacement.status()["day"], 1)
+            self.assertEqual(replacement_save["random"]["seed"], 200)
+            self.assertEqual(
+                replacement_save["calendar"]["current_day"],
+                1,
+            )
+            self.assertFalse(autosave_path.exists())
+
+    def test_residual_autosave_blocks_new_session_without_overwrite(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "game.json"
+            previous = self.new_session(seed=100, save_path=save_path)
+            self.assertEqual(
+                previous.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = previous.autosave_path
+            assert autosave_path is not None
+            autosave_bytes = autosave_path.read_bytes()
+            save_path.unlink()
+
+            with self.assertRaises(FileExistsError):
+                self.new_session(seed=200, save_path=save_path)
+
+            self.assertFalse(save_path.exists())
+            self.assertEqual(autosave_path.read_bytes(), autosave_bytes)
+
+            replacement = self.new_session(
+                seed=200,
+                save_path=save_path,
+                overwrite=True,
+            )
+            self.assertEqual(replacement.status()["day"], 1)
+            self.assertTrue(save_path.exists())
+            self.assertFalse(autosave_path.exists())
+
+    def test_new_session_autosave_cleanup_failure_restores_both_files(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "game.json"
+            previous = self.new_session(seed=100, save_path=save_path)
+            self.assertEqual(
+                previous.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = previous.autosave_path
+            assert autosave_path is not None
+            save_bytes = save_path.read_bytes()
+            autosave_bytes = autosave_path.read_bytes()
+
+            def remove_then_fail(session: GameSession) -> None:
+                target = session.autosave_path
+                assert target is not None
+                target.unlink()
+                raise OSError("test-only cleanup failure")
+
+            with patch.object(
+                GameSession,
+                "_remove_end_day_autosave",
+                remove_then_fail,
+            ):
+                with self.assertRaises(OSError):
+                    self.new_session(
+                        seed=200,
+                        save_path=save_path,
+                        overwrite=True,
+                    )
+
+            self.assertEqual(save_path.read_bytes(), save_bytes)
+            self.assertEqual(autosave_path.read_bytes(), autosave_bytes)
+            restored = GameSession.load(
+                save_path,
+                config_dir=ROOT / "data",
+            )
+            self.assertEqual(restored.status()["day"], 2)
+            restored_autosave = json.loads(
+                autosave_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                restored_autosave["state"]["random"]["seed"],
+                100,
+            )
+
     def test_same_seed_and_commands_produce_same_state_and_replay(self) -> None:
         first = self.new_session(seed=1106)
         second = self.new_session(seed=1106)
@@ -423,6 +537,62 @@ class GameSessionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 session.write_replay(ordinary_path, overwrite=True)
             self.assertEqual(ordinary_path.read_bytes(), ordinary_bytes)
+
+    def test_replay_overwrite_rejects_every_malformed_entry_shape(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session = self.new_session(seed=1115)
+            session.command("game.set_furnace", {"level": 2})
+            session.command("game.set_furnace", {"level": 1})
+            path = Path(temp_dir) / "replay.json"
+            session.write_replay(path)
+            valid_document = json.loads(path.read_text(encoding="utf-8"))
+
+            malformed_entry = deepcopy(valid_document)
+            malformed_entry["entries"][0] = 123
+
+            missing_field = deepcopy(valid_document)
+            del missing_field["entries"][0]["result"]
+
+            invalid_random = deepcopy(valid_document)
+            invalid_random["entries"][0]["random_after"][
+                "internal_state"
+            ] = -1
+
+            invalid_sequence = deepcopy(valid_document)
+            invalid_sequence["entries"][1]["sequence"] = (
+                invalid_sequence["entries"][0]["sequence"]
+            )
+
+            mismatched_command = deepcopy(valid_document)
+            mismatched_command["entries"][0]["result"]["command_id"] = (
+                "different-command"
+            )
+
+            invalid_log = deepcopy(valid_document)
+            invalid_log["entries"][0]["logs"][0]["category"] = "UNKNOWN"
+
+            cases = {
+                "malformed_entry": malformed_entry,
+                "missing_field": missing_field,
+                "invalid_random": invalid_random,
+                "invalid_sequence": invalid_sequence,
+                "mismatched_command": mismatched_command,
+                "invalid_log": invalid_log,
+            }
+            for name, document in cases.items():
+                with self.subTest(name=name):
+                    path.write_text(
+                        json.dumps(document, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    malformed_bytes = path.read_bytes()
+
+                    with self.assertRaises(ValueError):
+                        session.write_replay(path, overwrite=True)
+
+                    self.assertEqual(path.read_bytes(), malformed_bytes)
 
 
 class PlayCliTests(unittest.TestCase):

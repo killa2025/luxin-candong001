@@ -46,9 +46,9 @@ from furnace_winter.interface.commands import (
 from furnace_winter.interface.feedback import CommandResult
 from furnace_winter.interface.observation import Observation, PROTOCOL_VERSION
 from furnace_winter.interface.replay import (
+    decode_replay_document,
     LogCategory,
     LogEntry,
-    REPLAY_FORMAT_VERSION,
     ReplayDocument,
     ReplayEntry,
     ReplayLog,
@@ -227,8 +227,17 @@ class GameSession:
         config_path = Path(config_dir)
         target = Path(save_path) if save_path is not None else None
         cls._ensure_save_target_is_not_config(config_path, target)
-        if target is not None and target.exists() and not overwrite:
-            raise FileExistsError(f"save already exists: {target}")
+        if target is not None and not overwrite:
+            existing_paths = tuple(
+                path
+                for path in (target, cls._autosave_path_for(target))
+                if path.exists()
+            )
+            if existing_paths:
+                raise FileExistsError(
+                    "session persistence already exists: "
+                    + ", ".join(str(path) for path in existing_paths)
+                )
         documents = cls._load_rule_documents(config_path)
         survival = load_survival_rules(
             config_path / _CONFIG_FILENAMES["survival"]
@@ -251,7 +260,7 @@ class GameSession:
         session._validate_state()
         session._replay = ReplayLog(session._state)
         if target is not None:
-            session.save()
+            session._write_new_session_persistence()
         return session
 
     @classmethod
@@ -311,13 +320,17 @@ class GameSession:
     def autosave_path(self) -> Path | None:
         if self.save_path is None:
             return None
-        suffix = self.save_path.suffix or ".json"
+        return self._autosave_path_for(self.save_path)
+
+    @staticmethod
+    def _autosave_path_for(save_path: Path) -> Path:
+        suffix = save_path.suffix or ".json"
         stem = (
-            self.save_path.name[: -len(self.save_path.suffix)]
-            if self.save_path.suffix
-            else self.save_path.name
+            save_path.name[: -len(save_path.suffix)]
+            if save_path.suffix
+            else save_path.name
         )
-        return self.save_path.with_name(
+        return save_path.with_name(
             f"{stem}.{AUTOSAVE_END_DAY_SLOT}{suffix}"
         )
 
@@ -699,6 +712,34 @@ class GameSession:
             raise ValueError("this session has no autosave path")
         self._write_document(target, record)
 
+    def _write_new_session_persistence(self) -> None:
+        if self.save_path is None:
+            raise ValueError("this session has no save path")
+        autosave_path = self.autosave_path
+        if autosave_path is None:
+            raise RuntimeError("autosave path is unavailable")
+        snapshots = tuple(
+            self._snapshot_file(path)
+            for path in (self.save_path, autosave_path)
+        )
+        try:
+            self.save()
+            self._remove_end_day_autosave()
+        except Exception as exc:
+            rollback_exception_type = self._restore_files(snapshots)
+            if rollback_exception_type is not None:
+                raise RuntimeError(
+                    "new session persistence rollback failed: "
+                    f"{rollback_exception_type}"
+                ) from exc
+            raise
+
+    def _remove_end_day_autosave(self) -> None:
+        target = self.autosave_path
+        if target is None:
+            raise ValueError("this session has no autosave path")
+        target.unlink(missing_ok=True)
+
     @staticmethod
     def _write_document(path: Path, document: Any) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -771,16 +812,7 @@ class GameSession:
     def _is_replay_document(path: Path) -> bool:
         try:
             document = json.loads(path.read_text(encoding="utf-8-sig"))
-            if (
-                not isinstance(document, Mapping)
-                or set(document)
-                != {"format_version", "initial_state", "entries"}
-                or document["format_version"] != REPLAY_FORMAT_VERSION
-                or not isinstance(document["initial_state"], Mapping)
-                or not isinstance(document["entries"], list)
-            ):
-                return False
-            decode_game_state(document["initial_state"])
+            decode_replay_document(document)
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return False
         return True
