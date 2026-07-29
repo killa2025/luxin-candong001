@@ -407,6 +407,25 @@ class EventPatchTests(unittest.TestCase):
         self.assertEqual(state.trust_panic.trust, 12)
         self.assertIn("promise-0001", state.promises.failed_promise_ids)
         self.assertTrue(state.events.active_events["trust_crack"].is_blocking)
+        self.assertEqual(
+            state.events.active_events["trust_crack"].occurrence_index,
+            2,
+        )
+        self.assertEqual(decode_game_state(encode_game_state(state)), state)
+
+        duplicate_instance = encode_game_state(state)
+        duplicate_instance["events"]["active_events"]["trust_crack"][
+            "instance_id"
+        ] = "trust_crack#0001"
+        duplicate_instance["events"]["active_events"]["trust_crack"][
+            "occurrence_index"
+        ] = 1
+        duplicate_instance["events"]["occurrence_counts"]["trust_crack"] = 1
+        with self.assertRaisesRegex(
+            SaveDataError,
+            "active events must be counted when displayed",
+        ):
+            decode_game_state(duplicate_instance)
 
     def test_late_promise_is_capped_at_day48_and_day49_opens_none(self) -> None:
         state = self.make_state(day=46)
@@ -1430,6 +1449,68 @@ class EventPatchTests(unittest.TestCase):
         self.assertIn("coal_bottom", state.events.active_events)
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0].settled_day, 1)
+
+    def test_repeatable_event_reopens_after_prior_resolved_occurrence(self) -> None:
+        state = self.make_state(day=11)
+        state.resources.coal = 50
+        state.daily_survival.storage_used = storage_used(state.resources)
+        state.events.generated_for_day = 11
+        state.events.resolved_event_ids.append("coal_bottom")
+        state.events.occurrence_counts["coal_bottom"] = 1
+        state.events.cooldown_until_day["coal_bottom"] = 12
+        state.events.resolution_history.append(
+            EventResolutionRecord(
+                event_id="coal_bottom",
+                option_id="maintain",
+                event_type="normal",
+                resolved_day=7,
+                instance_id="coal_bottom#0001",
+                occurrence_index=1,
+                trust_change=-2,
+                panic_change=3,
+                resource_changes={
+                    "coal": 0,
+                    "wood": 0,
+                    "steel": 0,
+                    "raw_food": 0,
+                    "cooked_food": 0,
+                },
+            )
+        )
+        saved = []
+
+        execution = self.settle(self.full_engine(saved.append), state)
+
+        self.assertEqual(execution.result.code, ErrorCode.OK)
+        self.assertEqual(state.calendar.current_day, 12)
+        self.assertIn("coal_bottom", state.events.resolved_event_ids)
+        self.assertIn(
+            "coal_bottom",
+            state.events.active_events,
+            state.events.active_events,
+        )
+        self.assertEqual(
+            state.events.active_events["coal_bottom"].instance_id,
+            "coal_bottom#0002",
+        )
+        self.assertEqual(
+            state.events.occurrence_counts["coal_bottom"],
+            2,
+        )
+        self.assertEqual(decode_game_state(encode_game_state(state)), state)
+        self.assertEqual(len(saved), 1)
+
+        missing_prior_history = encode_game_state(state)
+        missing_prior_history["events"]["resolution_history"] = [
+            item
+            for item in missing_prior_history["events"]["resolution_history"]
+            if item["event_id"] != "coal_bottom"
+        ]
+        with self.assertRaisesRegex(
+            SaveDataError,
+            "active repeat event lacks a prior resolution history",
+        ):
+            decode_game_state(missing_prior_history)
 
 
 if __name__ == "__main__":
