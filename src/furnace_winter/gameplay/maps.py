@@ -5,7 +5,11 @@ from copy import deepcopy
 from typing import Any
 
 from furnace_winter.config.buildings import BuildingRules
-from furnace_winter.config.maps import MapRules, MapTemplateRule
+from furnace_winter.config.maps import (
+    SEALED_MAP_ORDER,
+    MapRules,
+    MapTemplateRule,
+)
 from furnace_winter.gameplay.end_day import EndDayEngine
 from furnace_winter.models import DeterministicRandom, GameState, MapState
 
@@ -43,7 +47,8 @@ def _weighted_map_key(
     total = sum(rules.random_integer_weights.values())
     draw = random.randint(1, total)
     cumulative = 0
-    for map_key, weight in rules.random_integer_weights.items():
+    for map_key in SEALED_MAP_ORDER:
+        weight = rules.random_integer_weights[map_key]
         cumulative += weight
         if draw <= cumulative:
             return map_key

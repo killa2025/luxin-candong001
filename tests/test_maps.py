@@ -107,8 +107,10 @@ class MapPatchTests(unittest.TestCase):
             root = Path(temp_dir)
             for path in self.data_dir.glob("*.json"):
                 document = json.loads(path.read_text(encoding="utf-8"))
-                if path.name == "maps.json":
-                    document["shared"]["small_coal_piles"] = 3
+                if path.name == "buildings.json":
+                    document["surface_resource_points"][
+                        "surface-coal-1"
+                    ]["resource_type"] = "wood"
                 (root / path.name).write_text(
                     json.dumps(document, ensure_ascii=False),
                     encoding="utf-8",
@@ -121,6 +123,203 @@ class MapPatchTests(unittest.TestCase):
                 "地图与建筑跨配置校验失败" in issue.message
                 for issue in report.issues
             )
+        )
+
+    def test_final_map_config_rejects_each_sealed_value_tamper(
+        self,
+    ) -> None:
+        source = json.loads(
+            (self.data_dir / "maps.json").read_text(encoding="utf-8")
+        )
+
+        def replace(
+            path: tuple[str, ...],
+            value,
+        ):
+            def mutate(document) -> None:
+                target = document
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+
+            return mutate
+
+        mutations = [
+            (
+                "schema_version",
+                replace(("schema_version",), 2),
+            ),
+            (
+                "config_status",
+                replace(("config_status",), "USER_OVERRIDE"),
+            ),
+            (
+                "default_mode",
+                replace(("selection", "default_mode"), "manual"),
+            ),
+            (
+                "legacy_default_map_key",
+                replace(
+                    ("selection", "legacy_default_map_key"),
+                    "twin_source_rift",
+                ),
+            ),
+            (
+                "weights_1_98_1",
+                replace(
+                    ("selection", "random_integer_weights"),
+                    {
+                        "rustbone_tundra": 1,
+                        "black_ash_lowland": 98,
+                        "twin_source_rift": 1,
+                    },
+                ),
+            ),
+            (
+                "rustbone_weight",
+                replace(
+                    ("selection", "random_integer_weights"),
+                    {
+                        "rustbone_tundra": 34,
+                        "black_ash_lowland": 33,
+                        "twin_source_rift": 33,
+                    },
+                ),
+            ),
+            (
+                "black_ash_weight",
+                replace(
+                    ("selection", "random_integer_weights"),
+                    {
+                        "rustbone_tundra": 32,
+                        "black_ash_lowland": 35,
+                        "twin_source_rift": 33,
+                    },
+                ),
+            ),
+            (
+                "twin_source_weight",
+                replace(
+                    ("selection", "random_integer_weights"),
+                    {
+                        "rustbone_tundra": 33,
+                        "black_ash_lowland": 33,
+                        "twin_source_rift": 34,
+                    },
+                ),
+            ),
+        ]
+        for key, value in (
+            ("small_coal_piles", 5),
+            ("small_wood_piles", 6),
+            ("small_steel_piles", 4),
+            ("initial_hunting_grounds", 2),
+            ("total_hunting_grounds", 3),
+            ("forest_zones", 3),
+        ):
+            mutations.append(
+                (
+                    f"shared_{key}",
+                    replace(("shared", key), value),
+                )
+            )
+        for map_key in (
+            "rustbone_tundra",
+            "black_ash_lowland",
+            "twin_source_rift",
+        ):
+            template = source["templates"][map_key]
+            mutations.extend(
+                (
+                    (
+                        f"{map_key}_display_name",
+                        replace(
+                            ("templates", map_key, "display_name_zh"),
+                            f"{template['display_name_zh']}改",
+                        ),
+                    ),
+                    (
+                        f"{map_key}_difficulty",
+                        replace(
+                            ("templates", map_key, "difficulty_zh"),
+                            f"{template['difficulty_zh']}改",
+                        ),
+                    ),
+                    (
+                        f"{map_key}_large_coal",
+                        replace(
+                            (
+                                "templates",
+                                map_key,
+                                "large_coal_mine_points",
+                            ),
+                            template["large_coal_mine_points"] + 1,
+                        ),
+                    ),
+                    (
+                        f"{map_key}_large_steel",
+                        replace(
+                            (
+                                "templates",
+                                map_key,
+                                "large_steel_mine_points",
+                            ),
+                            template["large_steel_mine_points"] + 1,
+                        ),
+                    ),
+                )
+            )
+
+        for label, mutate in mutations:
+            with (
+                self.subTest(label=label),
+                tempfile.TemporaryDirectory() as temp_dir,
+            ):
+                document = deepcopy(source)
+                mutate(document)
+                path = Path(temp_dir) / "maps.json"
+                path.write_text(
+                    json.dumps(document, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+
+                with self.assertRaises(ValueError):
+                    load_map_rules(path)
+                self.assertFalse(validate_config_tree(path.parent).is_valid)
+
+    def test_weight_field_order_does_not_change_new_or_saved_random_map(
+        self,
+    ) -> None:
+        source = json.loads(
+            (self.data_dir / "maps.json").read_text(encoding="utf-8")
+        )
+        weights = source["selection"]["random_integer_weights"]
+        source["selection"]["random_integer_weights"] = {
+            key: weights[key]
+            for key in reversed(tuple(weights))
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "maps.json"
+            path.write_text(
+                json.dumps(source, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            reordered_rules = load_map_rules(path)
+
+        original = self.create_state(seed=2)
+        reordered = create_initial_survival_state(
+            self.survival_rules,
+            self.building_rules,
+            random_seed=2,
+            map_rules=reordered_rules,
+        )
+        self.assertEqual(original.map, reordered.map)
+        self.assertEqual(original.random, reordered.random)
+        self.assertEqual(original.map.map_key, "rustbone_tundra")
+
+        restored = decode_game_state(encode_game_state(original))
+        MapSystem(reordered_rules, self.building_rules).validate_state(
+            restored
         )
 
     def test_random_selection_is_seeded_reproducible_and_uses_one_draw(

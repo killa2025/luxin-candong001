@@ -7,10 +7,51 @@ from types import MappingProxyType
 from typing import Any
 
 from furnace_winter.config.loader import load_config_file
+from furnace_winter.config.status import ConfigStatus
 
 
 class MapConfigError(ValueError):
     pass
+
+
+SEALED_MAP_ORDER = (
+    "rustbone_tundra",
+    "black_ash_lowland",
+    "twin_source_rift",
+)
+_SEALED_RANDOM_INTEGER_WEIGHTS = {
+    "rustbone_tundra": 33,
+    "black_ash_lowland": 34,
+    "twin_source_rift": 33,
+}
+_SEALED_SHARED_VALUES = {
+    "small_coal_piles": 4,
+    "small_wood_piles": 5,
+    "small_steel_piles": 3,
+    "initial_hunting_grounds": 1,
+    "total_hunting_grounds": 2,
+    "forest_zones": 2,
+}
+_SEALED_TEMPLATE_VALUES = {
+    "rustbone_tundra": {
+        "display_name_zh": "锈骨冻原",
+        "difficulty_zh": "偏难",
+        "large_coal_mine_points": 1,
+        "large_steel_mine_points": 2,
+    },
+    "black_ash_lowland": {
+        "display_name_zh": "黑烬洼地",
+        "difficulty_zh": "标准",
+        "large_coal_mine_points": 2,
+        "large_steel_mine_points": 1,
+    },
+    "twin_source_rift": {
+        "display_name_zh": "双源裂谷",
+        "difficulty_zh": "偏易",
+        "large_coal_mine_points": 2,
+        "large_steel_mine_points": 2,
+    },
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +132,8 @@ def _string(value: Any, path: str) -> str:
 
 def load_map_rules(path: Path) -> MapRules:
     loaded = load_config_file(path)
+    if loaded.status is not ConfigStatus.FINAL:
+        raise MapConfigError("the sealed V1 map configuration must be FINAL")
     data = dict(loaded.data)
     _exact(
         data,
@@ -171,13 +214,13 @@ def load_map_rules(path: Path) -> MapRules:
         raise MapConfigError(
             "initial hunting grounds cannot exceed total hunting grounds"
         )
+    if shared_data != _SEALED_SHARED_VALUES:
+        raise MapConfigError(
+            "shared map values must match the sealed V1 configuration"
+        )
 
     raw_templates = _object(data["templates"], "$.templates")
-    expected_map_keys = {
-        "rustbone_tundra",
-        "black_ash_lowland",
-        "twin_source_rift",
-    }
+    expected_map_keys = set(SEALED_MAP_ORDER)
     if set(raw_templates) != expected_map_keys:
         raise MapConfigError(
             "templates must define the three sealed V1 map keys"
@@ -214,8 +257,10 @@ def load_map_rules(path: Path) -> MapRules:
                 minimum=1,
             ),
         )
-    if len({item.display_name_zh for item in templates.values()}) != 3:
-        raise MapConfigError("map display names must be unique")
+        if item != _SEALED_TEMPLATE_VALUES[checked_key]:
+            raise MapConfigError(
+                f"template {checked_key!r} must match its sealed V1 values"
+            )
 
     raw_weights = _object(
         selection["random_integer_weights"],
@@ -235,13 +280,19 @@ def load_map_rules(path: Path) -> MapRules:
     }
     if sum(weights.values()) != 100:
         raise MapConfigError("sealed integer map weights must total 100")
+    if weights != _SEALED_RANDOM_INTEGER_WEIGHTS:
+        raise MapConfigError(
+            "random map weights must match the sealed 33/34/33 values"
+        )
 
     legacy_default = _string(
         selection["legacy_default_map_key"],
         "$.selection.legacy_default_map_key",
     )
-    if legacy_default not in templates:
-        raise MapConfigError("legacy default map must reference a template")
+    if legacy_default != "black_ash_lowland":
+        raise MapConfigError(
+            "legacy default map must be the sealed black_ash_lowland"
+        )
 
     return MapRules(
         default_selection_mode=default_mode,
