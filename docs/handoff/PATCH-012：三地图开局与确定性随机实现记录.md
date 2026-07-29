@@ -137,7 +137,7 @@ v12 及更早的旧局没有地图历史，无法证明当时随机到了哪张�
 - 主存档往返、紧凑状态、完整观察、规则查看与回放初态；
 - CLI 自选地图输出。
 
-最终全量结果：333 项 `unittest` 通过；9 份 JSON 配置校验通过；`compileall` 与 `git diff --check` 通过。
+最终全量结果：339 项 `unittest` 通过；9 份 JSON 配置校验通过；`compileall` 与 `git diff --check` 通过。
 
 ## 八、越界自检
 

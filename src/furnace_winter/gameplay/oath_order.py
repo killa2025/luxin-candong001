@@ -221,17 +221,34 @@ class OathOrderSystem:
         event_id = str(request.arguments["event_id"])
         option_id = str(request.arguments["option_id"])
         if state.old_city.pending_event_id != event_id:
-            return self._illegal("old_city_event_not_pending")
+            return self._illegal(
+                "old_city_event_not_pending",
+                pending_event_id=state.old_city.pending_event_id,
+                available_option_ids=list(
+                    self._available_old_city_options(state)
+                ),
+            )
         if option_id not in _OLD_CITY_OPTIONS[event_id]:
-            return self._illegal("old_city_option_unavailable")
-        if option_id == "promise_reduce_old_city" and (
-            state.old_city.promise_active or state.old_city.promise_settled
-        ):
-            return self._illegal("old_city_promise_already_used")
-        if option_id == "ask_for_time":
-            trust = state.trust_panic.trust
-            if (trust is None or trust < 50) and state.oath_order.selected_route is None:
-                return self._illegal("old_city_time_request_unavailable")
+            return self._illegal(
+                "old_city_option_unavailable",
+                event_id=event_id,
+                option_id=option_id,
+                available_option_ids=list(
+                    self._available_old_city_options(state, event_id)
+                ),
+            )
+        unavailable_reason = self._old_city_option_unavailable_reason(
+            state, event_id, option_id
+        )
+        if unavailable_reason is not None:
+            return self._illegal(
+                unavailable_reason,
+                event_id=event_id,
+                option_id=option_id,
+                available_option_ids=list(
+                    self._available_old_city_options(state, event_id)
+                ),
+            )
         return CommandValidation.valid()
 
     def _sign_legality(
@@ -388,6 +405,10 @@ class OathOrderSystem:
             "member_count": old.member_count,
             "trust_change": trust,
             "panic_change": panic,
+            "countdown_day_after": old.countdown_day,
+            "promise_active_after": old.promise_active,
+            "promise_target_count": old.promise_target_count,
+            "promise_deadline_day": old.promise_deadline_day,
             "settlement": settlement,
         }
 
@@ -813,17 +834,58 @@ class OathOrderSystem:
     def old_city_view(self, state: GameState) -> dict[str, Any]:
         self.validate_state(state)
         old = state.old_city
+        pending_event_id = old.pending_event_id
+        available_option_ids = self._available_old_city_options(
+            state, pending_event_id
+        )
+        option_previews = []
+        for option_id in available_option_ids:
+            preview_state = deepcopy(state)
+            preview = self._resolve_old_city(
+                preview_state,
+                CommandRequest(
+                    command_id="old-city-preview",
+                    name=RESOLVE_OLD_CITY_COMMAND,
+                    arguments={
+                        "event_id": pending_event_id,
+                        "option_id": option_id,
+                    },
+                ),
+            )
+            option_previews.append(
+                {"option_id": option_id, "preview": preview}
+            )
+        unavailable_options = []
+        if pending_event_id is not None:
+            for option_id in _OLD_CITY_OPTIONS[pending_event_id]:
+                reason = self._old_city_option_unavailable_reason(
+                    state, pending_event_id, option_id
+                )
+                if reason is not None:
+                    unavailable_options.append(
+                        {"option_id": option_id, "reason": reason}
+                    )
         return {
             "is_unlocked": old.is_unlocked,
             "member_count": old.member_count,
             "active_stage_id": old.active_stage_id,
-            "pending_event_id": old.pending_event_id,
+            "pending_event_id": pending_event_id,
+            "available_option_ids": list(available_option_ids),
+            "option_previews": option_previews,
+            "unavailable_options": unavailable_options,
             "thresholds": {
                 "low": old.low_threshold,
                 "middle": old.middle_threshold,
                 "high": old.high_threshold,
             },
             "countdown_day": old.countdown_day,
+            "promise_active": old.promise_active,
+            "promise_created_day": old.promise_created_day,
+            "promise_target_count": old.promise_target_count,
+            "promise_deadline_day": old.promise_deadline_day,
+            "promise_settled": old.promise_settled,
+            "promise_outcome": old.promise_outcome,
+            "promise_settled_day": old.promise_settled_day,
             "resolved": old.resolved,
             "result_id": old.result_id,
             "theoretical_departures": old.theoretical_departures,
@@ -835,6 +897,51 @@ class OathOrderSystem:
                 old.settlement_resource_losses
             ),
         }
+
+    def _available_old_city_options(
+        self, state: GameState, event_id: str | None = None
+    ) -> tuple[str, ...]:
+        target_event_id = (
+            state.old_city.pending_event_id
+            if event_id is None
+            else event_id
+        )
+        if (
+            target_event_id is None
+            or target_event_id != state.old_city.pending_event_id
+            or target_event_id not in _OLD_CITY_OPTIONS
+        ):
+            return ()
+        return tuple(
+            option_id
+            for option_id in _OLD_CITY_OPTIONS[target_event_id]
+            if self._old_city_option_unavailable_reason(
+                state, target_event_id, option_id
+            )
+            is None
+        )
+
+    @staticmethod
+    def _old_city_option_unavailable_reason(
+        state: GameState, event_id: str, option_id: str
+    ) -> str | None:
+        if (
+            event_id == "countdown"
+            and option_id == "promise_reduce_old_city"
+            and (
+                state.old_city.promise_active
+                or state.old_city.promise_settled
+            )
+        ):
+            return "old_city_promise_already_used"
+        if event_id == "countdown" and option_id == "ask_for_time":
+            trust = state.trust_panic.trust
+            if (
+                (trust is None or trust < 50)
+                and state.oath_order.selected_route is None
+            ):
+                return "old_city_time_request_unavailable"
+        return None
 
     def _activate_old_city(self, state: GameState) -> None:
         old = state.old_city

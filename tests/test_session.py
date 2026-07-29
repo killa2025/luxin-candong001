@@ -117,6 +117,32 @@ class GameSessionTests(unittest.TestCase):
             self.assertEqual(encode_game_state(session.state), before_state)
             self.assertEqual(save_path.read_bytes(), before_save)
 
+    def test_invalid_ration_option_returns_structured_rejection(self) -> None:
+        session = self.new_session(seed=1112)
+        before = encode_game_state(session.state)
+
+        execution = session.command(
+            "game.set_ration",
+            {"mode": "emergency_ration"},
+        )
+
+        self.assertEqual(execution.result.code, ErrorCode.INVALID_ARGUMENTS)
+        self.assertEqual(
+            execution.result.data,
+            {
+                "invalid_options": ["mode"],
+                "allowed_options": {
+                    "mode": [
+                        "coarse_soup",
+                        "emergency",
+                        "normal",
+                        "rice_porridge",
+                    ]
+                },
+            },
+        )
+        self.assertEqual(encode_game_state(session.state), before)
+
     def test_save_failure_rolls_back_command_transaction(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             save_path = Path(temp_dir) / "game.json"
