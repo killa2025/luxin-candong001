@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 12
+CURRENT_SAVE_DATA_VERSION = 13
 FINAL_DAY = 55
 ENDING_TITLE_TEXT_IDS = {
     "hard_fail": "ending.title.hard_fail",
@@ -668,6 +668,24 @@ class FinalResultState:
 
 
 @dataclass(slots=True)
+class MapState:
+    """Persisted map identity and the sealed resource-capacity summary."""
+
+    map_key: str = "black_ash_lowland"
+    selection_mode: str = "legacy_default"
+    display_name_zh: str = "黑烬洼地"
+    difficulty_zh: str = "标准"
+    small_coal_piles: int = 4
+    small_wood_piles: int = 5
+    small_steel_piles: int = 3
+    initial_hunting_grounds: int = 1
+    total_hunting_grounds: int = 2
+    forest_zones: int = 2
+    large_coal_mine_points: int = 2
+    large_steel_mine_points: int = 1
+
+
+@dataclass(slots=True)
 class GameState:
     save_data_version: int = CURRENT_SAVE_DATA_VERSION
     random: RandomState = field(default_factory=lambda: RandomState.initial(0))
@@ -680,6 +698,7 @@ class GameState:
     daily_survival: DailySurvivalState = field(default_factory=DailySurvivalState)
     trust_panic: TrustPanicState = field(default_factory=TrustPanicState)
     furnace: FurnaceState = field(default_factory=FurnaceState)
+    map: MapState = field(default_factory=MapState)
     buildings: dict[str, BuildingState] = field(default_factory=dict)
     surface_resource_points: dict[str, SurfaceResourcePointState] = field(
         default_factory=dict

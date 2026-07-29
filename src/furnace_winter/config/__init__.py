@@ -27,6 +27,13 @@ from furnace_winter.config.laws import (
     WorktimeRules,
     load_law_rules,
 )
+from furnace_winter.config.maps import (
+    MapConfigError,
+    MapRules,
+    MapTemplateRule,
+    SharedMapRules,
+    load_map_rules,
+)
 from furnace_winter.config.status import ConfigStatus
 from furnace_winter.config.survival import (
     FurnaceLevelRule,
@@ -98,6 +105,9 @@ __all__ = [
     "LawConfigError",
     "LawRule",
     "LawRules",
+    "MapConfigError",
+    "MapRules",
+    "MapTemplateRule",
     "OverloadLevelRule",
     "OverloadRules",
     "OathOrderConfigError",
@@ -113,6 +123,7 @@ __all__ = [
     "MedicalActionRules",
     "RationRule",
     "SocialActionRules",
+    "SharedMapRules",
     "StartingPopulationRules",
     "StartingResourceRules",
     "SurfaceResourcePointRule",
@@ -132,6 +143,7 @@ __all__ = [
     "load_final_frost_rules",
     "load_building_rules",
     "load_law_rules",
+    "load_map_rules",
     "load_oath_order_rules",
     "load_technology_rules",
     "load_survival_rules",

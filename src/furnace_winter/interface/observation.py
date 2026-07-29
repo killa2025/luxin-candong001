@@ -19,6 +19,7 @@ class Observation:
     available_commands: tuple[CommandSpec, ...] = ()
     event_views: tuple[dict[str, Any], ...] = ()
     promise_views: tuple[dict[str, Any], ...] = ()
+    map_view: dict[str, Any] | None = None
     old_city_view: dict[str, Any] | None = None
     oath_order_view: dict[str, Any] | None = None
     final_frost_view: dict[str, Any] | None = None
@@ -32,6 +33,7 @@ class Observation:
         *,
         event_views: tuple[dict[str, Any], ...] = (),
         promise_views: tuple[dict[str, Any], ...] = (),
+        map_view: dict[str, Any] | None = None,
         old_city_view: dict[str, Any] | None = None,
         oath_order_view: dict[str, Any] | None = None,
         final_frost_view: dict[str, Any] | None = None,
@@ -43,6 +45,7 @@ class Observation:
             available_commands=available_commands,
             event_views=event_views,
             promise_views=promise_views,
+            map_view=map_view,
             old_city_view=old_city_view,
             oath_order_view=oath_order_view,
             final_frost_view=final_frost_view,

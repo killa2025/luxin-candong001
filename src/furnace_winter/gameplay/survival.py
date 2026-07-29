@@ -3,7 +3,12 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, fields
 
-from furnace_winter.config import BuildingRules, SurvivalRules, TechnologyRules
+from furnace_winter.config import (
+    BuildingRules,
+    MapRules,
+    SurvivalRules,
+    TechnologyRules,
+)
 from furnace_winter.gameplay.end_day import (
     EndDayContext,
     EndDayEngine,
@@ -11,6 +16,7 @@ from furnace_winter.gameplay.end_day import (
     RiskWarning,
     RiskWarningLevel,
 )
+from furnace_winter.gameplay.maps import select_initial_map
 from furnace_winter.interface import (
     ArgumentKind,
     CommandCatalog,
@@ -366,8 +372,18 @@ def create_initial_survival_state(
     building_rules: BuildingRules | None = None,
     *,
     random_seed: int = 0,
+    map_rules: MapRules | None = None,
+    map_selection_mode: str = "random",
+    map_key: str | None = None,
 ) -> GameState:
     state = GameState.initial(random_seed=random_seed)
+    if map_rules is not None:
+        select_initial_map(
+            state,
+            map_rules,
+            selection_mode=map_selection_mode,
+            map_key=map_key,
+        )
     total = rules.population.total
     housing_capacity = rules.starting_housing_capacity
     state.population = PopulationState(

@@ -11,6 +11,7 @@ from furnace_winter.config import (
     load_event_rules,
     load_final_frost_rules,
     load_law_rules,
+    load_map_rules,
     load_oath_order_rules,
     load_survival_rules,
     load_technology_rules,
@@ -23,6 +24,7 @@ from furnace_winter.gameplay import (
     EventSystem,
     FinalFrostSystem,
     LawSystem,
+    MapSystem,
     OathOrderSystem,
     SurvivalSystem,
     TechnologySystem,
@@ -72,6 +74,22 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("data/survival.json"),
         help="Patch 003 生存规则配置，默认 data/survival.json",
+    )
+    state_parser.add_argument(
+        "--maps-config",
+        type=Path,
+        default=Path("data/maps.json"),
+        help="Patch 012 地图规则配置，默认 data/maps.json",
+    )
+    state_parser.add_argument(
+        "--map-mode",
+        choices=("random", "manual"),
+        default="random",
+        help="开局地图模式：random 或 manual",
+    )
+    state_parser.add_argument(
+        "--map-key",
+        help="manual 模式必须指定的地图内部 key",
     )
     state_parser.add_argument(
         "--laws-config",
@@ -134,6 +152,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="仅在新建存档时使用的统一随机种子",
     )
     play_parser.add_argument(
+        "--map-mode",
+        choices=("random", "manual"),
+        default="random",
+        help="仅在新建存档时使用的地图模式",
+    )
+    play_parser.add_argument(
+        "--map-key",
+        help="manual 模式新建存档时使用的地图内部 key",
+    )
+    play_parser.add_argument(
         "--new",
         action="store_true",
         help="明确建立新局；已有存档时默认拒绝覆盖",
@@ -165,16 +193,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         rules = load_survival_rules(args.config)
         building_rules = load_building_rules(args.buildings_config)
         law_rules = load_law_rules(args.laws_config)
+        map_rules = load_map_rules(args.maps_config)
         technology_rules = load_technology_rules(args.technologies_config)
         event_rules = load_event_rules(args.events_config)
         final_frost_rules = load_final_frost_rules(args.final_frost_config)
         oath_order_rules = load_oath_order_rules(args.oath_order_config)
         state = create_initial_survival_state(
-            rules, building_rules, random_seed=args.seed
+            rules,
+            building_rules,
+            random_seed=args.seed,
+            map_rules=map_rules,
+            map_selection_mode=args.map_mode,
+            map_key=args.map_key,
         )
         survival = SurvivalSystem(rules, building_rules, technology_rules)
         buildings = BuildingSystem(building_rules, rules, technology_rules)
         laws = LawSystem(law_rules, building_rules, rules, technology_rules)
+        maps = MapSystem(map_rules, building_rules)
         technologies = TechnologySystem(
             technology_rules,
             building_rules,
@@ -218,6 +253,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     command_specs,
                     event_views=events.active_event_views(state),
                     promise_views=events.active_promise_views(state),
+                    map_view=maps.view(state),
                     old_city_view=oath_order.old_city_view(state),
                     oath_order_view=oath_order.route_view(state),
                     final_frost_view=final_frost.observe(state),
@@ -242,6 +278,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     config_dir=args.data_dir,
                     save_path=args.save_path,
                     seed=args.seed,
+                    map_mode=args.map_mode,
+                    map_key=args.map_key,
                     overwrite=args.overwrite,
                 )
             else:
@@ -249,6 +287,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.save_path,
                     config_dir=args.data_dir,
                     seed=args.seed,
+                    map_mode=args.map_mode,
+                    map_key=args.map_key,
                 )
         except Exception as exc:
             print(

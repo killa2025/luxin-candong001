@@ -231,6 +231,15 @@ def validate_config_tree(root: Path) -> ValidationReport:
                 issues.append(
                     ValidationIssue(path, "$", f"事件规则结构校验失败：{exc}")
                 )
+        elif not file_issues and path.name == "maps.json":
+            try:
+                from furnace_winter.config.maps import load_map_rules
+
+                load_map_rules(path)
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(path, "$", f"地图规则结构校验失败：{exc}")
+                )
 
         if not file_issues and path.name == "oath_order.json":
             try:
@@ -322,10 +331,12 @@ def validate_config_tree(root: Path) -> ValidationReport:
 
     if not manifest_present:
         buildings_path = root / "buildings.json"
+        maps_path = root / "maps.json"
         technologies_path = root / "technologies.json"
         final_frost_path = root / "final_frost.json"
     elif manifest_config_paths is None:
         buildings_path = None
+        maps_path = None
         technologies_path = None
         final_frost_path = None
     else:
@@ -342,16 +353,20 @@ def validate_config_tree(root: Path) -> ValidationReport:
             for path in manifest_config_paths
             if path.name == "final_frost.json"
         ]
+        map_matches = [
+            path for path in manifest_config_paths if path.name == "maps.json"
+        ]
         if (
             len(building_matches) > 1
             or len(technology_matches) > 1
             or len(final_frost_matches) > 1
+            or len(map_matches) > 1
         ):
             issues.append(
                 ValidationIssue(
                     manifest_path,
                     "$.configs",
-                    "manifest 中建筑、科技与终霜配置路径各自最多登记一项",
+                    "manifest 中建筑、地图、科技与终霜配置路径各自最多登记一项",
                 )
             )
         buildings_path = building_matches[0] if len(building_matches) == 1 else None
@@ -363,6 +378,53 @@ def validate_config_tree(root: Path) -> ValidationReport:
             if len(final_frost_matches) == 1
             else None
         )
+        maps_path = map_matches[0] if len(map_matches) == 1 else None
+
+    if buildings_path is not None and maps_path is not None:
+        linked_paths = {buildings_path.resolve(), maps_path.resolve()}
+        available_paths = {path.resolve() for path in config_files}
+        linked_paths_are_valid = not any(
+            issue.path.resolve() in linked_paths for issue in issues
+        )
+        if linked_paths.issubset(available_paths) and linked_paths_are_valid:
+            try:
+                from furnace_winter.config.buildings import load_building_rules
+                from furnace_winter.config.maps import load_map_rules
+
+                building_rules = load_building_rules(buildings_path)
+                map_rules = load_map_rules(maps_path)
+                point_counts = {"coal": 0, "wood": 0, "steel": 0}
+                for point in building_rules.surface_resource_points.values():
+                    point_counts[point.resource_type] += 1
+                expected_counts = {
+                    "coal": map_rules.shared.small_coal_piles,
+                    "wood": map_rules.shared.small_wood_piles,
+                    "steel": map_rules.shared.small_steel_piles,
+                }
+                if point_counts != expected_counts:
+                    raise ValueError(
+                        "surface resource point counts do not match maps.json"
+                    )
+                if len(building_rules.resource_anchors["hunting_area"]) != (
+                    map_rules.shared.total_hunting_grounds
+                ):
+                    raise ValueError(
+                        "hunting area anchors do not match maps.json"
+                    )
+                if len(building_rules.resource_anchors["forest_zone"]) != (
+                    map_rules.shared.forest_zones
+                ):
+                    raise ValueError(
+                        "forest zone anchors do not match maps.json"
+                    )
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(
+                        maps_path,
+                        "$",
+                        f"地图与建筑跨配置校验失败：{exc}",
+                    )
+                )
 
     if buildings_path is not None and technologies_path is not None:
         linked_paths = {buildings_path.resolve(), technologies_path.resolve()}
