@@ -142,6 +142,6 @@
 | PATCH-008：旧城派006C誓言与铁腕实现记录.md | `docs/handoff/PATCH-008：旧城派006C誓言与铁腕实现记录.md` | Patch 008 交付记录 | 登记旧城派生命周期、006C 路线设施与行动、失败轴改写、存档迁移、测试数值与后续边界 | 已完成复审修正、已合并 main |
 | PATCH-009：第七霜落与终局评分实现记录.md | `docs/handoff/PATCH-009：第七霜落与终局评分实现记录.md` | Patch 009 交付记录 | 登记 D49～D55 停工、终霜伤病、每日事实、D55 六系统评分、标签、存档迁移与 Patch 010 边界 | 已完成最终复审修正、已合并 main |
 | PATCH-010：终局报告与主动结束实现记录.md | `docs/handoff/PATCH-010：终局报告与主动结束实现记录.md` | Patch 010 交付记录 | 登记结构化报告、正式 text_id、稳定 PENDING、`game.end_run`、v12 存档、命令行入口与越界边界 | 已完成复审、已合并 main |
-| PATCH-011：统一游戏会话与沙盒入口实现记录.md | `docs/handoff/PATCH-011：统一游戏会话与沙盒入口实现记录.md` | Patch 011 交付记录 | 登记统一会话、原子存档、紧凑状态、配置查看、回放导出与 JSON Lines 沙盒入口 | 已完成实现、待 Draft PR 复审 |
+| PATCH-011：统一游戏会话与沙盒入口实现记录.md | `docs/handoff/PATCH-011：统一游戏会话与沙盒入口实现记录.md` | Patch 011 交付记录 | 登记统一会话、原子存档、紧凑状态、配置查看、回放导出与 JSON Lines 沙盒入口 | 已完成复审修正、已合并 main |
 | 代码窗的.md | `docs/handoff/代码窗的.md` | 代码窗交接资料 | 保存代码 Patch 读取矩阵与施工顺序 | 已归档，代码 Patch 009 已执行 |
 | 第一次给codex指令.md | `docs/handoff/第一次给codex指令.md` | 代码窗交接资料 | 保存首次 Codex 指令作为交接参考 | 已归档，未执行 |

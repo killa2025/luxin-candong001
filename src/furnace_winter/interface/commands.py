@@ -208,6 +208,25 @@ class CommandValidator:
                 {"wrong_types": wrong_types},
             )
 
+        invalid_options = sorted(
+            name
+            for name, options in spec.argument_options.items()
+            if name in request.arguments
+            and request.arguments[name] not in options
+        )
+        if invalid_options:
+            return CommandValidation(
+                False,
+                ErrorCode.INVALID_ARGUMENTS,
+                {
+                    "invalid_options": invalid_options,
+                    "allowed_options": {
+                        name: list(spec.argument_options[name])
+                        for name in invalid_options
+                    },
+                },
+            )
+
         if state is not None and legality_check is not None:
             legality = legality_check(state, request)
             if not legality.is_valid:

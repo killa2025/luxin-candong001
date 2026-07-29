@@ -411,6 +411,15 @@ class OathOrderPatchTests(unittest.TestCase):
         system.prepare_new_day(state)
         self.assertTrue(state.old_city.is_unlocked)
         self.assertEqual(state.old_city.pending_event_id, "southern_letter")
+        view = system.old_city_view(state)
+        self.assertEqual(
+            view["available_option_ids"], ["publish", "suppress"]
+        )
+        self.assertEqual(
+            [item["option_id"] for item in view["option_previews"]],
+            ["publish", "suppress"],
+        )
+        self.assertEqual(view["unavailable_options"], [])
         warnings = system.evaluate_risks(state)
         self.assertEqual(warnings[0].level, RiskWarningLevel.C_HARD_BLOCK)
         result = self.execute(
@@ -423,6 +432,61 @@ class OathOrderPatchTests(unittest.TestCase):
         self.assertEqual(result.code, ErrorCode.OK)
         self.assertGreater(state.old_city.member_count, 0)
         self.assertIsNone(state.old_city.pending_event_id)
+
+    def test_old_city_rejection_and_view_expose_event_specific_options(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=24)
+        system.prepare_new_day(state)
+
+        rejected = self.execute(
+            system,
+            state,
+            RESOLVE_OLD_CITY_COMMAND,
+            event_id="southern_letter",
+            option_id="ask_for_time",
+        )
+
+        self.assertEqual(rejected.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(
+            rejected.data["available_option_ids"],
+            ["publish", "suppress"],
+        )
+        self.assertEqual(
+            system.old_city_view(state)["available_option_ids"],
+            ["publish", "suppress"],
+        )
+
+    def test_countdown_view_marks_conditionally_unavailable_options(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=40)
+        self.prepare_countdown(
+            system,
+            state,
+            deadline_day=45,
+            option_id=None,
+        )
+        state.old_city.pending_event_id = "countdown"
+        state.trust_panic.trust = 49
+
+        view = system.old_city_view(state)
+
+        self.assertEqual(
+            view["available_option_ids"],
+            ["promise_reduce_old_city", "do_not_stop"],
+        )
+        self.assertEqual(
+            view["unavailable_options"],
+            [
+                {
+                    "option_id": "ask_for_time",
+                    "reason": "old_city_time_request_unavailable",
+                }
+            ],
+        )
 
     def test_pending_old_city_event_blocks_end_day_transactionally(self) -> None:
         system = self.system()
