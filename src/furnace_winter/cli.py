@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Sequence
+import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from furnace_winter.config import (
@@ -27,7 +28,7 @@ from furnace_winter.gameplay import (
     TechnologySystem,
     create_initial_survival_state,
 )
-from furnace_winter.interface import Observation
+from furnace_winter.interface import GameSession, Observation
 from furnace_winter.models import decode_game_state, dumps
 
 
@@ -110,6 +111,37 @@ def build_parser() -> argparse.ArgumentParser:
         "save_path",
         type=Path,
         help="需要读取的 JSON 存档路径",
+    )
+    play_parser = subparsers.add_parser(
+        "play",
+        help="启动供沙盒 AI 使用的持久化 JSON Lines 游戏会话",
+    )
+    play_parser.add_argument(
+        "save_path",
+        type=Path,
+        help="会话存档路径；不存在时自动建立新局",
+    )
+    play_parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("data"),
+        help="运行配置目录，默认 data/",
+    )
+    play_parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="仅在新建存档时使用的统一随机种子",
+    )
+    play_parser.add_argument(
+        "--new",
+        action="store_true",
+        help="明确建立新局；已有存档时默认拒绝覆盖",
+    )
+    play_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="与 --new 同用时允许覆盖已有存档",
     )
     return parser
 
@@ -201,6 +233,129 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         state = decode_game_state(document)
         print(dumps(EndingReportSystem().observe(state)))
+        return 0
+
+    if args.command == "play":
+        try:
+            if args.new:
+                session = GameSession.new(
+                    config_dir=args.data_dir,
+                    save_path=args.save_path,
+                    seed=args.seed,
+                    overwrite=args.overwrite,
+                )
+            else:
+                session = GameSession.open(
+                    args.save_path,
+                    config_dir=args.data_dir,
+                    seed=args.seed,
+                )
+        except Exception as exc:
+            print(
+                dumps(
+                    {
+                        "type": "error",
+                        "code": "SESSION_START_FAILED",
+                        "exception_type": type(exc).__name__,
+                    }
+                ),
+                flush=True,
+            )
+            return 1
+
+        print(
+            dumps(
+                {
+                    "type": "observation",
+                    "observation": session.observe(),
+                    "status": session.status(),
+                }
+            ),
+            flush=True,
+        )
+        for raw_line in sys.stdin:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                print(
+                    dumps(
+                        {
+                            "type": "error",
+                            "code": "INVALID_JSON",
+                        }
+                    ),
+                    flush=True,
+                )
+                continue
+            if not isinstance(payload, Mapping):
+                print(
+                    dumps(
+                        {
+                            "type": "error",
+                            "code": "INVALID_ENVELOPE",
+                        }
+                    ),
+                    flush=True,
+                )
+                continue
+            envelope_type = payload.get("type", "command")
+            try:
+                if envelope_type == "observe":
+                    response = {
+                        "type": "observation",
+                        "observation": session.observe(),
+                        "status": session.status(),
+                    }
+                elif envelope_type == "rules":
+                    response = {
+                        "type": "rules",
+                        "rules": session.rules_view(
+                            str(payload.get("section", ""))
+                        ),
+                    }
+                elif envelope_type == "replay":
+                    response = {
+                        "type": "replay",
+                        "replay": session.replay_document(),
+                    }
+                elif envelope_type == "quit":
+                    print(
+                        dumps(
+                            {
+                                "type": "closed",
+                                "status": session.status(),
+                            }
+                        ),
+                        flush=True,
+                    )
+                    return 0
+                elif envelope_type == "command":
+                    request_payload = payload.get("request", payload)
+                    if request_payload is payload:
+                        request_payload = {
+                            key: value
+                            for key, value in payload.items()
+                            if key != "type"
+                        }
+                    response = {
+                        "type": "execution",
+                        "execution": session.execute_payload(request_payload),
+                    }
+                else:
+                    response = {
+                        "type": "error",
+                        "code": "UNKNOWN_ENVELOPE_TYPE",
+                    }
+            except Exception as exc:
+                response = {
+                    "type": "error",
+                    "code": "SESSION_REQUEST_FAILED",
+                    "exception_type": type(exc).__name__,
+                }
+            print(dumps(response), flush=True)
         return 0
 
     parser.print_help()
