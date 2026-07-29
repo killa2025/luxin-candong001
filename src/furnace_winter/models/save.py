@@ -3024,7 +3024,7 @@ def _validate_state_invariants(
     resolution_promise_ids: set[str] = set()
     resolution_instances: dict[str, EventResolutionRecord] = {}
     resolution_occurrences: set[tuple[str, int]] = set()
-    resolution_event_ids: set[str] = set()
+    resolutions_by_event_id: dict[str, list[EventResolutionRecord]] = {}
     for resolution in events.resolution_history:
         if resolution.event_id not in events.resolved_event_ids:
             raise SaveDataError("event history must reference a resolved event")
@@ -3056,7 +3056,9 @@ def _validate_state_invariants(
             )
         resolution_instances[resolution.instance_id] = resolution
         resolution_occurrences.add(occurrence_key)
-        resolution_event_ids.add(resolution.event_id)
+        resolutions_by_event_id.setdefault(
+            resolution.event_id, []
+        ).append(resolution)
         if set(resolution.resource_changes) != {
             "coal", "wood", "steel", "raw_food", "cooked_food"
         }:
@@ -3071,17 +3073,6 @@ def _validate_state_invariants(
     for event_id, event in events.active_events.items():
         if event.event_id != event_id:
             raise SaveDataError("active event id must match its map key")
-        # resolved_event_ids is the historical set of event types, so a
-        # repeatable event may legitimately have a later active occurrence.
-        # The overlap is valid only when an earlier resolved instance exists;
-        # exact instance reuse is rejected by the identity check below.
-        if (
-            event_id in events.resolved_event_ids
-            and event_id not in resolution_event_ids
-        ):
-            raise SaveDataError(
-                "active repeat event lacks a prior resolution history"
-            )
         if (
             events.occurrence_counts.get(event_id, 0) < 1
             or event.occurrence_index
@@ -3091,6 +3082,24 @@ def _validate_state_invariants(
             or event.instance_id in resolution_instances
         ):
             raise SaveDataError("active events must be counted when displayed")
+        # resolved_event_ids is the historical set of event types, so a
+        # repeatable event may legitimately have a later active occurrence.
+        # Every resolved instance must precede it by both identity and day;
+        # ignored occurrences do not need a history record.
+        if event_id in events.resolved_event_ids:
+            prior_resolutions = resolutions_by_event_id.get(event_id, [])
+            if not prior_resolutions:
+                raise SaveDataError(
+                    "active repeat event lacks a prior resolution history"
+                )
+            if any(
+                resolution.occurrence_index >= event.occurrence_index
+                or resolution.resolved_day >= event.trigger_day
+                for resolution in prior_resolutions
+            ):
+                raise SaveDataError(
+                    "active repeat event must follow every prior resolution"
+                )
         if event.event_type not in {"major", "normal"}:
             raise SaveDataError("unsupported active event type")
         if event.trigger_day != state.calendar.current_day:

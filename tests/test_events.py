@@ -210,6 +210,37 @@ class EventPatchTests(unittest.TestCase):
         state.events.metrics["food_warning_streak"] = 1
         return state
 
+    def make_reopened_coal_event_state(self):
+        state = self.make_state(day=11)
+        state.resources.coal = 50
+        state.daily_survival.storage_used = storage_used(state.resources)
+        state.events.generated_for_day = 11
+        state.events.resolved_event_ids.append("coal_bottom")
+        state.events.occurrence_counts["coal_bottom"] = 1
+        state.events.cooldown_until_day["coal_bottom"] = 12
+        state.events.resolution_history.append(
+            EventResolutionRecord(
+                event_id="coal_bottom",
+                option_id="maintain",
+                event_type="normal",
+                resolved_day=7,
+                instance_id="coal_bottom#0001",
+                occurrence_index=1,
+                trust_change=-2,
+                panic_change=3,
+                resource_changes={
+                    "coal": 0,
+                    "wood": 0,
+                    "steel": 0,
+                    "raw_food": 0,
+                    "cooked_food": 0,
+                },
+            )
+        )
+        saved = []
+        execution = self.settle(self.full_engine(saved.append), state)
+        return state, execution, saved
+
     def make_pending_medical_followup_state(self):
         state = self.make_state(day=10)
         state.laws.signed_law_ids = [
@@ -1451,35 +1482,7 @@ class EventPatchTests(unittest.TestCase):
         self.assertEqual(saved[0].settled_day, 1)
 
     def test_repeatable_event_reopens_after_prior_resolved_occurrence(self) -> None:
-        state = self.make_state(day=11)
-        state.resources.coal = 50
-        state.daily_survival.storage_used = storage_used(state.resources)
-        state.events.generated_for_day = 11
-        state.events.resolved_event_ids.append("coal_bottom")
-        state.events.occurrence_counts["coal_bottom"] = 1
-        state.events.cooldown_until_day["coal_bottom"] = 12
-        state.events.resolution_history.append(
-            EventResolutionRecord(
-                event_id="coal_bottom",
-                option_id="maintain",
-                event_type="normal",
-                resolved_day=7,
-                instance_id="coal_bottom#0001",
-                occurrence_index=1,
-                trust_change=-2,
-                panic_change=3,
-                resource_changes={
-                    "coal": 0,
-                    "wood": 0,
-                    "steel": 0,
-                    "raw_food": 0,
-                    "cooked_food": 0,
-                },
-            )
-        )
-        saved = []
-
-        execution = self.settle(self.full_engine(saved.append), state)
+        state, execution, saved = self.make_reopened_coal_event_state()
 
         self.assertEqual(execution.result.code, ErrorCode.OK)
         self.assertEqual(state.calendar.current_day, 12)
@@ -1511,6 +1514,47 @@ class EventPatchTests(unittest.TestCase):
             "active repeat event lacks a prior resolution history",
         ):
             decode_game_state(missing_prior_history)
+
+    def test_repeatable_event_rejects_same_day_prior_resolution(self) -> None:
+        state, execution, _ = self.make_reopened_coal_event_state()
+        self.assertEqual(execution.result.code, ErrorCode.OK)
+        same_day_history = encode_game_state(state)
+        coal_history = next(
+            item
+            for item in same_day_history["events"]["resolution_history"]
+            if item["event_id"] == "coal_bottom"
+        )
+        coal_history["resolved_day"] = 12
+
+        with self.assertRaisesRegex(
+            SaveDataError,
+            "active repeat event must follow every prior resolution",
+        ):
+            decode_game_state(same_day_history)
+
+    def test_repeatable_event_allows_ignored_occurrence_gap(self) -> None:
+        state, execution, _ = self.make_reopened_coal_event_state()
+        self.assertEqual(execution.result.code, ErrorCode.OK)
+        ignored_gap = encode_game_state(state)
+        active = ignored_gap["events"]["active_events"]["coal_bottom"]
+        active["instance_id"] = "coal_bottom#0003"
+        active["occurrence_index"] = 3
+        ignored_gap["events"]["occurrence_counts"]["coal_bottom"] = 3
+
+        restored = decode_game_state(ignored_gap)
+
+        self.assertEqual(
+            restored.events.active_events["coal_bottom"].occurrence_index,
+            3,
+        )
+        self.assertEqual(
+            [
+                item.occurrence_index
+                for item in restored.events.resolution_history
+                if item.event_id == "coal_bottom"
+            ],
+            [1],
+        )
 
 
 if __name__ == "__main__":
