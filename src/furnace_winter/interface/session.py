@@ -19,6 +19,8 @@ from furnace_winter.config import (
     load_technology_rules,
 )
 from furnace_winter.gameplay import (
+    AUTOSAVE_END_DAY_SLOT,
+    AutosaveRecord,
     BuildingSystem,
     EndDayEngine,
     EndDayExecution,
@@ -46,6 +48,7 @@ from furnace_winter.interface.observation import Observation, PROTOCOL_VERSION
 from furnace_winter.interface.replay import (
     LogCategory,
     LogEntry,
+    REPLAY_FORMAT_VERSION,
     ReplayDocument,
     ReplayEntry,
     ReplayLog,
@@ -83,6 +86,13 @@ class SessionExecution:
     save_written: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class _FileSnapshot:
+    path: Path
+    existed: bool
+    content: bytes | None
+
+
 class GameSession:
     """Wire every implemented gameplay system into one persistent AI entrypoint."""
 
@@ -94,8 +104,13 @@ class GameSession:
         save_path: Path | None,
         rule_documents: Mapping[str, Mapping[str, Any]],
     ) -> None:
+        self._ensure_save_target_is_not_config(config_dir, save_path)
         self.config_dir = config_dir
         self.save_path = save_path
+        self._config_source_paths = frozenset(
+            self._path_identity(path)
+            for path in self._runtime_config_paths(config_dir)
+        )
         self._state = state
         self._rule_documents = {
             key: deepcopy(dict(document))
@@ -211,6 +226,7 @@ class GameSession:
     ) -> GameSession:
         config_path = Path(config_dir)
         target = Path(save_path) if save_path is not None else None
+        cls._ensure_save_target_is_not_config(config_path, target)
         if target is not None and target.exists() and not overwrite:
             raise FileExistsError(f"save already exists: {target}")
         documents = cls._load_rule_documents(config_path)
@@ -290,6 +306,20 @@ class GameSession:
     @property
     def state(self) -> GameState:
         return deepcopy(self._state)
+
+    @property
+    def autosave_path(self) -> Path | None:
+        if self.save_path is None:
+            return None
+        suffix = self.save_path.suffix or ".json"
+        stem = (
+            self.save_path.name[: -len(self.save_path.suffix)]
+            if self.save_path.suffix
+            else self.save_path.name
+        )
+        return self.save_path.with_name(
+            f"{stem}.{AUTOSAVE_END_DAY_SLOT}{suffix}"
+        )
 
     def command_specs(self) -> tuple[CommandSpec, ...]:
         return self._catalog.specs()
@@ -458,6 +488,8 @@ class GameSession:
             )
 
         before_document = encode_game_state(self._state)
+        end_day_runtime_before = self.end_day.snapshot_runtime()
+        captured_autosave_before = deepcopy(self._last_end_day_autosave)
         raw_result = self._handlers[request.name](self._state, request)
         if isinstance(raw_result, EndDayExecution):
             result = raw_result.result
@@ -480,24 +512,51 @@ class GameSession:
             )
 
         save_written = False
+        file_snapshots: tuple[_FileSnapshot, ...] = ()
         if result.accepted and result.state_changed:
             try:
                 self._validate_state()
                 if self.save_path is not None:
+                    paths_to_snapshot = [self.save_path]
+                    if (
+                        isinstance(raw_result, EndDayExecution)
+                        and raw_result.autosave is not None
+                    ):
+                        autosave_path = self.autosave_path
+                        if autosave_path is None:
+                            raise RuntimeError("autosave path is unavailable")
+                        paths_to_snapshot.append(autosave_path)
+                    file_snapshots = tuple(
+                        self._snapshot_file(path)
+                        for path in paths_to_snapshot
+                    )
+                    if (
+                        isinstance(raw_result, EndDayExecution)
+                        and raw_result.autosave is not None
+                    ):
+                        self._write_end_day_autosave(raw_result.autosave)
                     self.save()
                     save_written = True
             except Exception as exc:
                 self._state = decode_game_state(before_document)
+                self.end_day.restore_runtime(end_day_runtime_before)
+                self._last_end_day_autosave = captured_autosave_before
+                rollback_exception_type = self._restore_files(file_snapshots)
+                error_data = {
+                    "failed_stage": "session_save",
+                    "exception_type": type(exc).__name__,
+                }
+                if rollback_exception_type is not None:
+                    error_data["rollback_exception_type"] = (
+                        rollback_exception_type
+                    )
                 result = CommandResult(
                     command_id=request.command_id,
                     accepted=False,
                     code=ErrorCode.INTERNAL_ERROR,
                     state_changed=False,
                     state_sequence=self._state.command_sequence,
-                    data={
-                        "failed_stage": "session_save",
-                        "exception_type": type(exc).__name__,
-                    },
+                    data=error_data,
                 )
                 warnings = ()
                 logs = (
@@ -605,14 +664,40 @@ class GameSession:
     def replay_document(self) -> ReplayDocument:
         return self._replay.document()
 
-    def write_replay(self, path: str | Path) -> None:
-        self._write_document(Path(path), self.replay_document())
+    def write_replay(
+        self,
+        path: str | Path,
+        *,
+        overwrite: bool = False,
+    ) -> None:
+        target = Path(path)
+        self._ensure_replay_target_is_safe(target)
+        if target.exists():
+            if not overwrite:
+                raise FileExistsError(f"replay already exists: {target}")
+            if not self._is_replay_document(target):
+                raise ValueError(
+                    "overwrite target is not a valid replay document"
+                )
+        self._write_document(target, self.replay_document())
 
     def save(self) -> None:
         if self.save_path is None:
             raise ValueError("this session has no save path")
+        self._ensure_save_target_is_not_config(
+            self.config_dir,
+            self.save_path,
+        )
         self._validate_state()
         self._write_document(self.save_path, encode_game_state(self._state))
+
+    def _write_end_day_autosave(self, record: AutosaveRecord) -> None:
+        if not isinstance(record, AutosaveRecord):
+            raise TypeError("record must be AutosaveRecord")
+        target = self.autosave_path
+        if target is None:
+            raise ValueError("this session has no autosave path")
+        self._write_document(target, record)
 
     @staticmethod
     def _write_document(path: Path, document: Any) -> None:
@@ -640,6 +725,117 @@ class GameSession:
 
     def _capture_end_day_autosave(self, record: Any) -> None:
         self._last_end_day_autosave = deepcopy(record)
+
+    @staticmethod
+    def _runtime_config_paths(config_dir: Path) -> tuple[Path, ...]:
+        return (
+            config_dir / "manifest.json",
+            *(
+                config_dir / filename
+                for filename in _CONFIG_FILENAMES.values()
+            ),
+        )
+
+    @staticmethod
+    def _path_identity(path: Path) -> str:
+        return os.path.normcase(str(path.resolve(strict=False)))
+
+    @classmethod
+    def _ensure_save_target_is_not_config(
+        cls,
+        config_dir: Path,
+        save_path: Path | None,
+    ) -> None:
+        if save_path is None:
+            return
+        target_identity = cls._path_identity(save_path)
+        if any(
+            target_identity == cls._path_identity(config_path)
+            for config_path in cls._runtime_config_paths(config_dir)
+        ):
+            raise ValueError("save path conflicts with a runtime config file")
+
+    def _ensure_replay_target_is_safe(self, target: Path) -> None:
+        target_identity = self._path_identity(target)
+        protected_paths = set(self._config_source_paths)
+        if self.save_path is not None:
+            protected_paths.add(self._path_identity(self.save_path))
+        if self.autosave_path is not None:
+            protected_paths.add(self._path_identity(self.autosave_path))
+        if target_identity in protected_paths:
+            raise ValueError(
+                "replay path conflicts with a protected session file"
+            )
+
+    @staticmethod
+    def _is_replay_document(path: Path) -> bool:
+        try:
+            document = json.loads(path.read_text(encoding="utf-8-sig"))
+            if (
+                not isinstance(document, Mapping)
+                or set(document)
+                != {"format_version", "initial_state", "entries"}
+                or document["format_version"] != REPLAY_FORMAT_VERSION
+                or not isinstance(document["initial_state"], Mapping)
+                or not isinstance(document["entries"], list)
+            ):
+                return False
+            decode_game_state(document["initial_state"])
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return False
+        return True
+
+    @staticmethod
+    def _snapshot_file(path: Path) -> _FileSnapshot:
+        if not path.exists():
+            return _FileSnapshot(path=path, existed=False, content=None)
+        if not path.is_file():
+            raise ValueError(f"persistence target is not a file: {path}")
+        return _FileSnapshot(
+            path=path,
+            existed=True,
+            content=path.read_bytes(),
+        )
+
+    @classmethod
+    def _restore_files(
+        cls,
+        snapshots: tuple[_FileSnapshot, ...],
+    ) -> str | None:
+        first_exception_type: str | None = None
+        for snapshot in reversed(snapshots):
+            try:
+                if snapshot.existed:
+                    if snapshot.content is None:
+                        raise RuntimeError("file snapshot content is missing")
+                    cls._write_bytes(snapshot.path, snapshot.content)
+                else:
+                    snapshot.path.unlink(missing_ok=True)
+            except Exception as exc:
+                if first_exception_type is None:
+                    first_exception_type = type(exc).__name__
+        return first_exception_type
+
+    @staticmethod
+    def _write_bytes(path: Path, content: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary:
+                temporary_name = temporary.name
+                temporary.write(content)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.replace(temporary_name, path)
+        finally:
+            if temporary_name is not None:
+                Path(temporary_name).unlink(missing_ok=True)
 
     def _validate_state(self) -> None:
         validate_game_state(

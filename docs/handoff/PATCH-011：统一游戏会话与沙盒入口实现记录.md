@@ -52,7 +52,8 @@ game = GameSession.open(
 - `status()`：返回紧凑、无策略含义的当前事实；
 - `observe()`：返回完整 `Observation`；
 - `rules_view(section)`：读取一个已验证配置模块；
-- `replay_document()` / `write_replay(path)`：导出本次进程会话回放。
+- `autosave_path`：读取与主存档隔离的 `autosave_end_day` 磁盘槽路径；
+- `replay_document()` / `write_replay(path, overwrite=False)`：导出本次进程会话回放；已有目标默认拒绝覆盖。
 
 `state` 属性返回深拷贝。外部修改该副本不会污染正式会话状态。
 
@@ -77,10 +78,14 @@ game = GameSession.open(
 - 成功且修改状态的命令自动写入指定存档；
 - 使用同目录临时文件、刷新磁盘并原子替换正式存档；
 - 配置感知的完整状态校验在写入前执行；
-- 写入或最终校验失败时，本次命令回滚，返回 `INTERNAL_ERROR`，正式状态和旧存档保持不变；
+- 日结的 `AutosaveRecord` 会写入同目录的 `<存档名>.autosave_end_day.json`，保留 `settled_day`、日期推进前的锁定 `state`、日结 `logs` 与 `resume_stage`；主存档另行保存日期推进后的可继续游戏状态；
+- 主存档与 `autosave_end_day` 是两个独立槽位，任何一方写入失败时都会恢复两者原有字节；
+- 写入或最终校验失败时，本次命令回滚，返回 `INTERNAL_ERROR`；正式状态、旧存档、日结确认令牌、引擎最近自动保存及会话捕获记录均恢复到命令执行前；
 - 拒绝、警告预览和其他未修改状态的结果不改写存档。
 
 日结强警告的预览与确认必须发生在同一个 `GameSession` 中，这样既有确认令牌生命周期不会被错误绕过。
+
+新局即使显式指定 `overwrite=True`，也不得把主存档指向 `manifest.json` 或任一已加载运行配置文件。
 
 ## 六、紧凑状态与数值查看
 
@@ -148,6 +153,13 @@ python -m furnace_winter play furnace_winter_save.json --data-dir data --seed 20
 
 读取旧存档后，回放从该次打开的存档状态开始。它不是此前整局历史的伪造补录。跨进程整局回放持久化如需成为正式产品要求，应另行给出任务单。
 
+`write_replay(...)` 的目标保护规则：
+
+- 默认拒绝覆盖任何已有路径；
+- 仅在 `overwrite=True` 且已有目标可严格识别为本项目回放文档时允许替换；
+- 无论是否允许覆盖，主存档、`autosave_end_day` 槽和八份运行配置文件均为受保护路径；
+- 路径比较使用解析后的规范路径，不能用相对路径或等价路径绕过保护。
+
 ## 九、测试覆盖
 
 新增测试覆盖：
@@ -157,14 +169,18 @@ python -m furnace_winter play furnace_winter_save.json --data-dir data --seed 20
 - 成功命令自动保存并可严格读回；
 - 拒绝命令不改状态、不改存档；
 - 保存失败完整回滚；
+- 日结主存档写入失败时恢复确认令牌、引擎/会话自动保存和两个磁盘槽，原确认可安全重试；
+- `autosave_end_day` 磁盘槽保持 D1 锁定状态及 `resume_stage=advance_day`，并与推进后的普通会话存档隔离；
 - 日结强警告预览与确认在同一会话中完成；
 - 同种子、同指令得到相同状态和回放；
 - 观察副本不能污染正式状态；
 - 非法参数返回稳定错误；
 - 回放可导出为规范 JSON；
+- 回放默认拒绝覆盖已有文件，显式覆盖仅接受既有回放，并始终保护主存档、自动保存和全部运行配置；
+- 新局显式覆盖也不能把存档写到运行配置路径；
 - JSON Lines 入口可建立存档、执行命令并关闭。
 
-最终全量结果：313 项 `unittest` 通过；8 份 JSON 配置校验通过；`compileall` 与 `git diff --check` 通过。
+最终全量结果：318 项 `unittest` 通过；8 份 JSON 配置校验通过；`compileall` 与 `git diff --check` 通过。
 
 ## 十、越界自检
 

@@ -147,6 +147,14 @@ class EndDayConfirmation:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class EndDayRuntimeSnapshot:
+    """Rollback snapshot for mutable state owned by the end-day engine."""
+
+    last_autosave: AutosaveRecord | None
+    pending_confirmation: EndDayConfirmation | None
+
+
 class EndDayAbort(RuntimeError):
     def __init__(
         self,
@@ -330,6 +338,22 @@ class EndDayEngine:
 
     def last_autosave(self) -> AutosaveRecord | None:
         return deepcopy(self._last_autosave)
+
+    def snapshot_runtime(self) -> EndDayRuntimeSnapshot:
+        """Capture confirmation and autosave state for an outer transaction."""
+
+        return EndDayRuntimeSnapshot(
+            last_autosave=deepcopy(self._last_autosave),
+            pending_confirmation=deepcopy(self._pending_confirmation),
+        )
+
+    def restore_runtime(self, snapshot: EndDayRuntimeSnapshot) -> None:
+        """Restore a snapshot after an outer persistence transaction fails."""
+
+        if not isinstance(snapshot, EndDayRuntimeSnapshot):
+            raise TypeError("snapshot must be EndDayRuntimeSnapshot")
+        self._last_autosave = deepcopy(snapshot.last_autosave)
+        self._pending_confirmation = deepcopy(snapshot.pending_confirmation)
 
     def execute(self, state: GameState, request: CommandRequest) -> EndDayExecution:
         random_before = _safe_random_state(state)

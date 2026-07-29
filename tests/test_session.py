@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -151,6 +152,105 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(settled.status["day"], 2)
         self.assertEqual(settled.result.data["settled_day"], 1)
 
+    def test_end_day_save_failure_restores_confirmation_and_autosaves(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "game.json"
+            session = self.new_session(seed=1110, save_path=save_path)
+            first_day = session.command("game.end_day")
+            self.assertEqual(first_day.result.code, ErrorCode.OK)
+            old_engine_autosave = session.end_day.last_autosave()
+            old_session_autosave = session._last_end_day_autosave
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            old_disk_autosave = autosave_path.read_bytes()
+
+            self.assertEqual(
+                session.command(
+                    "game.set_furnace",
+                    {"level": 0},
+                ).result.code,
+                ErrorCode.OK,
+            )
+            preview = session.command("game.end_day")
+            self.assertEqual(
+                preview.result.code,
+                ErrorCode.END_DAY_CONFIRMATION_REQUIRED,
+            )
+            confirmation = preview.result.data["confirmation"]
+            before_state = encode_game_state(session.state)
+            before_save = save_path.read_bytes()
+
+            original_save = session.save
+
+            def fail_save() -> None:
+                save_path.write_bytes(b"partially-replaced")
+                raise OSError("test-only")
+
+            session.save = fail_save  # type: ignore[method-assign]
+            failed = session.command("game.confirm_end_day", confirmation)
+            session.save = original_save  # type: ignore[method-assign]
+
+            self.assertEqual(failed.result.code, ErrorCode.INTERNAL_ERROR)
+            self.assertEqual(encode_game_state(session.state), before_state)
+            self.assertEqual(save_path.read_bytes(), before_save)
+            self.assertEqual(autosave_path.read_bytes(), old_disk_autosave)
+            self.assertEqual(
+                session.end_day.last_autosave(),
+                old_engine_autosave,
+            )
+            self.assertEqual(
+                session._last_end_day_autosave,
+                old_session_autosave,
+            )
+
+            retried = session.command(
+                "game.confirm_end_day",
+                confirmation,
+            )
+
+            self.assertEqual(retried.result.code, ErrorCode.OK)
+            self.assertEqual(retried.status["day"], 3)
+            self.assertEqual(
+                session.end_day.last_autosave().settled_day,  # type: ignore[union-attr]
+                2,
+            )
+
+    def test_end_day_autosave_persists_pre_advance_boundary_separately(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "game.json"
+            session = self.new_session(seed=1111, save_path=save_path)
+
+            execution = session.command("game.end_day")
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            autosave = json.loads(autosave_path.read_text(encoding="utf-8"))
+            main_save = json.loads(save_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(execution.result.code, ErrorCode.OK)
+            self.assertNotEqual(autosave_path, save_path)
+            self.assertEqual(autosave["slot"], "autosave_end_day")
+            self.assertEqual(autosave["settled_day"], 1)
+            self.assertEqual(autosave["resume_stage"], "advance_day")
+            self.assertEqual(autosave["state"]["calendar"]["current_day"], 1)
+            self.assertTrue(
+                autosave["state"]["calendar"]["is_day_locked"]
+            )
+            self.assertTrue(
+                autosave["state"]["calendar"]["is_end_day_confirmed"]
+            )
+            self.assertEqual(main_save["calendar"]["current_day"], 2)
+            self.assertFalse(main_save["calendar"]["is_day_locked"])
+            self.assertNotIn("resume_stage", main_save)
+            restored = GameSession.load(
+                save_path,
+                config_dir=ROOT / "data",
+            )
+            self.assertEqual(restored.status()["day"], 2)
+
     def test_same_seed_and_commands_produce_same_state_and_replay(self) -> None:
         first = self.new_session(seed=1106)
         second = self.new_session(seed=1106)
@@ -226,6 +326,103 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(document["format_version"], 1)
         self.assertEqual(document["entries"][0]["request"]["name"], "game.set_furnace")
         self.assertEqual(document["entries"][0]["result"]["code"], "OK")
+
+    def test_replay_cannot_overwrite_save_or_autosave(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "game.json"
+            session = self.new_session(seed=1112, save_path=save_path)
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            save_bytes = save_path.read_bytes()
+            autosave_bytes = autosave_path.read_bytes()
+
+            with self.assertRaises(ValueError):
+                session.write_replay(save_path, overwrite=True)
+            with self.assertRaises(ValueError):
+                session.write_replay(autosave_path, overwrite=True)
+
+            self.assertEqual(save_path.read_bytes(), save_bytes)
+            self.assertEqual(autosave_path.read_bytes(), autosave_bytes)
+            restored = GameSession.load(
+                save_path,
+                config_dir=ROOT / "data",
+            )
+            self.assertEqual(restored.status()["day"], 2)
+
+    def test_save_and_replay_cannot_target_runtime_config_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_dir = root / "data"
+            shutil.copytree(ROOT / "data", config_dir)
+            config_paths = sorted(config_dir.glob("*.json"))
+            config_bytes = {
+                config_path: config_path.read_bytes()
+                for config_path in config_paths
+            }
+
+            for config_path in config_paths:
+                with self.subTest(save_path=config_path):
+                    with self.assertRaises(ValueError):
+                        GameSession.new(
+                            config_dir=config_dir,
+                            save_path=config_path,
+                            seed=1113,
+                            overwrite=True,
+                        )
+                    self.assertEqual(
+                        config_path.read_bytes(),
+                        config_bytes[config_path],
+                    )
+
+            save_path = root / "game.json"
+            session = GameSession.new(
+                config_dir=config_dir,
+                save_path=save_path,
+                seed=1113,
+            )
+            for config_path in config_paths:
+                with self.subTest(replay_path=config_path):
+                    with self.assertRaises(ValueError):
+                        session.write_replay(
+                            config_path,
+                            overwrite=True,
+                        )
+                    self.assertEqual(
+                        config_path.read_bytes(),
+                        config_bytes[config_path],
+                    )
+            restored = GameSession.load(
+                save_path,
+                config_dir=config_dir,
+            )
+            self.assertEqual(restored.status()["day"], 1)
+
+    def test_existing_replay_requires_explicit_safe_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session = self.new_session(seed=1114)
+            path = Path(temp_dir) / "replay.json"
+            session.write_replay(path)
+            original_bytes = path.read_bytes()
+            session.command("game.set_furnace", {"level": 2})
+
+            with self.assertRaises(FileExistsError):
+                session.write_replay(path)
+            self.assertEqual(path.read_bytes(), original_bytes)
+
+            session.write_replay(path, overwrite=True)
+            document = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(len(document["entries"]), 1)
+
+            ordinary_path = Path(temp_dir) / "notes.json"
+            ordinary_path.write_bytes(b'{"not":"a replay"}')
+            ordinary_bytes = ordinary_path.read_bytes()
+            with self.assertRaises(ValueError):
+                session.write_replay(ordinary_path, overwrite=True)
+            self.assertEqual(ordinary_path.read_bytes(), ordinary_bytes)
 
 
 class PlayCliTests(unittest.TestCase):
