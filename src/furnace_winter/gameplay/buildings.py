@@ -15,6 +15,7 @@ from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayS
 from furnace_winter.gameplay.survival import (
     furnace_coal_cost,
     furnace_level,
+    is_building_expected_operational,
     is_over_capacity,
     projected_building_insulation_bonus,
     projected_building_temperature,
@@ -734,6 +735,89 @@ class BuildingSystem:
                 point.assigned_engineers = 0
                 point.production_remainder_numerator = 0
                 depleted_points.append(resource_point_id)
+
+        building_production, raw_processed, cooked_produced = (
+            self._resolve_building_production(state)
+        )
+        for resource, output in building_production.items():
+            production[resource] += output
+        state.daily_survival.storage_used = storage_used(state.resources)
+        state.daily_survival.is_over_capacity = is_over_capacity(state.resources)
+        context.emit(
+            "buildings.production.settled",
+            {
+                "production": production,
+                "raw_food_processed": raw_processed,
+                "cooked_food_produced": cooked_produced,
+                "depleted_resource_point_ids": depleted_points,
+                "sheltered_resource_point_ids": sorted(
+                    point_id
+                    for point_id in sheltered_points
+                    if point_id in state.surface_resource_points
+                ),
+                "shelter_removal_suggested_ids": sorted(
+                    set(depleted_points) & sheltered_points
+                ),
+            },
+        )
+
+    def project_food_inventory(self, state: GameState) -> dict[str, int]:
+        """Project today's food inventory through the real production pipeline.
+
+        The projection runs on a private state copy so warning generation cannot
+        consume production remainders or alter resources. Surface resource points
+        are intentionally omitted because the sealed configurations contain no
+        food-producing surface point; all same-day food comes from buildings.
+        """
+
+        working = deepcopy(state)
+        final_frost = 49 <= working.calendar.current_day <= 55
+        frost_shutdown_types = {
+            "hunting_lodge",
+            "logging_camp",
+            "small_coal_miner",
+            "small_steel_miner",
+        }
+        for building in working.buildings.values():
+            building.is_operational = (
+                is_building_expected_operational(
+                    working,
+                    building,
+                    self.rules,
+                    self.survival_rules,
+                    self.technology_rules,
+                )
+                and not (
+                    final_frost
+                    and building.building_type in frost_shutdown_types
+                )
+            )
+
+        production, raw_processed, cooked_produced = (
+            self._resolve_building_production(working)
+        )
+        return {
+            "available_food": (
+                working.resources.cooked_food + working.resources.raw_food
+            ),
+            "projected_raw_food": working.resources.raw_food,
+            "projected_cooked_food": working.resources.cooked_food,
+            "raw_food_produced": production["raw_food"],
+            "raw_food_processed": raw_processed,
+            "cooked_food_produced": cooked_produced,
+        }
+
+    def _resolve_building_production(
+        self, state: GameState
+    ) -> tuple[dict[str, int], int, int]:
+        """Apply deterministic building production and canteen processing."""
+
+        production: dict[str, int] = {
+            "coal": 0,
+            "wood": 0,
+            "steel": 0,
+            "raw_food": 0,
+        }
         canteens: list[tuple[BuildingState, BuildingRule]] = []
         for building in state.buildings.values():
             rule = self.rules.buildings.get(building.building_type)
@@ -784,25 +868,7 @@ class BuildingSystem:
             state.resources.cooked_food += cooked
             raw_processed += processed
             cooked_produced += cooked
-        state.daily_survival.storage_used = storage_used(state.resources)
-        state.daily_survival.is_over_capacity = is_over_capacity(state.resources)
-        context.emit(
-            "buildings.production.settled",
-            {
-                "production": production,
-                "raw_food_processed": raw_processed,
-                "cooked_food_produced": cooked_produced,
-                "depleted_resource_point_ids": depleted_points,
-                "sheltered_resource_point_ids": sorted(
-                    point_id
-                    for point_id in sheltered_points
-                    if point_id in state.surface_resource_points
-                ),
-                "shelter_removal_suggested_ids": sorted(
-                    set(depleted_points) & sheltered_points
-                ),
-            },
-        )
+        return production, raw_processed, cooked_produced
 
     @staticmethod
     def close_daily_effects(context: EndDayContext) -> None:

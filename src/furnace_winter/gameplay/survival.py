@@ -765,7 +765,8 @@ class SurvivalSystem:
             ration_numerator,
             ration_denominator,
         )
-        available_food = state.resources.cooked_food + state.resources.raw_food
+        food_projection = self._projected_food_inventory(state)
+        available_food = food_projection["available_food"]
         if available_food < food_required:
             food_eaten = max(available_food, 0)
             warnings.append(
@@ -774,6 +775,24 @@ class SurvivalSystem:
                     RiskWarningLevel.B_STRONG,
                     {
                         "available_food": available_food,
+                        "current_available_food": (
+                            state.resources.cooked_food + state.resources.raw_food
+                        ),
+                        "projected_raw_food": food_projection[
+                            "projected_raw_food"
+                        ],
+                        "projected_cooked_food": food_projection[
+                            "projected_cooked_food"
+                        ],
+                        "raw_food_produced_today": food_projection[
+                            "raw_food_produced"
+                        ],
+                        "raw_food_processed_today": food_projection[
+                            "raw_food_processed"
+                        ],
+                        "cooked_food_produced_today": food_projection[
+                            "cooked_food_produced"
+                        ],
                         "required_food": food_required,
                         "ration_mode_used": ration_mode,
                         "food_shortfall": food_required - food_eaten,
@@ -812,6 +831,29 @@ class SurvivalSystem:
                 )
             )
         return tuple(warnings)
+
+    def _projected_food_inventory(self, state: GameState) -> dict[str, int]:
+        if self.building_rules is None:
+            return {
+                "available_food": (
+                    state.resources.cooked_food + state.resources.raw_food
+                ),
+                "projected_raw_food": state.resources.raw_food,
+                "projected_cooked_food": state.resources.cooked_food,
+                "raw_food_produced": 0,
+                "raw_food_processed": 0,
+                "cooked_food_produced": 0,
+            }
+
+        # Imported lazily because the building module reuses survival projection
+        # helpers. At runtime both modules are fully initialized.
+        from furnace_winter.gameplay.buildings import BuildingSystem
+
+        return BuildingSystem(
+            self.building_rules,
+            self.rules,
+            self.technology_rules,
+        ).project_food_inventory(state)
 
     def _affordable_level(self, target_level: int, state: GameState) -> int:
         projected = projected_furnace_level(
@@ -1045,7 +1087,11 @@ class SurvivalSystem:
             building.building_type == "canteen"
             and (
                 is_building_expected_operational(
-                    state, building, self.building_rules, self.rules
+                    state,
+                    building,
+                    self.building_rules,
+                    self.rules,
+                    self.technology_rules,
                 )
                 if self.building_rules is not None
                 else building.is_operational
