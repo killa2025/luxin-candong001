@@ -73,6 +73,32 @@ def seed_final_frost_history(state, through_day: int | None = None) -> None:
             applied_natural_death_cap=base_cap,
         )
         previous_population = state.population.population_alive
+    records = list(frost.daily_records.values())
+    frost.frost_hunger_days = sum(
+        record.unfed_population > 0 for record in records
+    )
+    frost.frost_unfed_person_days = sum(
+        record.unfed_population for record in records
+    )
+    frost.frost_population_person_days = sum(
+        record.population_start for record in records
+    )
+    frost.frost_hunger_deaths = sum(record.food_deaths for record in records)
+    peak = None
+    for candidate in records:
+        if candidate.unfed_population == 0:
+            continue
+        if peak is None or (
+            candidate.unfed_population * peak.population_start
+            > peak.unfed_population * candidate.population_start
+        ) or (
+            candidate.unfed_population * peak.population_start
+            == peak.unfed_population * candidate.population_start
+            and candidate.unfed_population > peak.unfed_population
+        ):
+            peak = candidate
+    frost.frost_peak_unfed_count = peak.unfed_population if peak else 0
+    frost.frost_peak_population_start = peak.population_start if peak else 0
 
 
 def install_final_frost_history_stub(engine) -> None:

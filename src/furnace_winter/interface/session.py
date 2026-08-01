@@ -400,6 +400,24 @@ class GameSession:
                 "housed": population.housed_population,
                 "homeless": population.homeless_population,
             },
+            "hunger": {
+                "none": state.hunger.none_population,
+                "light": state.hunger.light_population,
+                "severe": state.hunger.severe_population,
+                "starving": state.hunger.starving_population,
+                "total_hunger_days": state.hunger.total_hunger_days,
+                "total_unfed_person_days": (
+                    state.hunger.total_unfed_person_days
+                ),
+                "peak_unfed_count": state.hunger.peak_unfed_count,
+                "peak_unfed_ratio": {
+                    "numerator": state.hunger.peak_unfed_count,
+                    "denominator": (
+                        state.hunger.peak_unfed_population_start
+                    ),
+                },
+                "hunger_deaths_total": state.hunger.hunger_deaths_total,
+            },
             "resources": {
                 "coal": resources.coal,
                 "wood": resources.wood,

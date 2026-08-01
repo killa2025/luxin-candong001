@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 13
+CURRENT_SAVE_DATA_VERSION = 14
 FINAL_DAY = 55
 ENDING_TITLE_TEXT_IDS = {
     "hard_fail": "ending.title.hard_fail",
@@ -172,15 +172,34 @@ class HousingState:
 
 @dataclass(slots=True)
 class HungerState:
-    """Population-pool hunger tiers.
+    """Patch 013 deterministic hunger overlay and integer remainders."""
 
-    Patch 003 establishes the machine-readable pools. Their day-to-day
-    progression and recovery timing remain pending balance rules.
-    """
-
-    mild_population: int = 0
+    none_population: int = 0
+    light_population: int = 0
     severe_population: int = 0
     starving_population: int = 0
+    illness_remainder: int = 0
+    severe_remainder: int = 0
+    death_remainder: int = 0
+    trust_remainder: int = 0
+    panic_remainder: int = 0
+    total_hunger_days: int = 0
+    total_unfed_person_days: int = 0
+    peak_unfed_count: int = 0
+    peak_unfed_population_start: int = 0
+    hunger_deaths_total: int = 0
+
+
+@dataclass(slots=True)
+class ColdExposureState:
+    """Saved integer remainders for deterministic repeated cold exposure."""
+
+    housed_disability_remainders: dict[str, int] = field(default_factory=dict)
+    homeless_disability_remainders: dict[str, int] = field(default_factory=dict)
+    housed_death_remainders: dict[str, int] = field(default_factory=dict)
+    homeless_death_remainders: dict[str, int] = field(default_factory=dict)
+    housed_level_streaks: dict[str, int] = field(default_factory=dict)
+    homeless_level_streaks: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -571,6 +590,7 @@ class FrostDayRecord:
     mass_cold_exposure_day: bool = False
     food_shortage: bool = False
     starvation: bool = False
+    unfed_population: int = 0
     medical_gap: int = 0
     medical_overflow: bool = False
     medical_collapse: bool = False
@@ -588,6 +608,8 @@ class FrostDayRecord:
     raw_disease_deaths: int = 0
     actual_disease_deaths: int = 0
     disease_death_overflow: int = 0
+    raw_hunger_deaths: int = 0
+    hunger_death_overflow: int = 0
     raw_cold_deaths: int = 0
     actual_cold_deaths: int = 0
     cold_death_overflow: int = 0
@@ -615,9 +637,23 @@ class FinalFrostState:
     prepared_item_count: int = 0
     unprepared_item_count: int = 0
     preparation_tags: list[str] = field(default_factory=list)
+    wood_supply_check_day: int | None = None
+    wood_supply_surface_exhausted: bool = False
+    wood_supply_logging_camp_available: bool = False
+    wood_supply_wood_stock: int = 0
+    wood_supply_logging_cost: int = 0
+    wood_supply_alternative_available: bool = False
+    wood_supply_legacy_exempt: bool = False
+    wood_supply_locked: bool = False
     pending_extreme_crisis_conditions: list[str] = field(default_factory=list)
     daily_records: dict[str, FrostDayRecord] = field(default_factory=dict)
     frost_deaths: int = 0
+    frost_hunger_days: int = 0
+    frost_unfed_person_days: int = 0
+    frost_population_person_days: int = 0
+    frost_peak_unfed_count: int = 0
+    frost_peak_population_start: int = 0
+    frost_hunger_deaths: int = 0
     final_score_day: int | None = None
 
 
@@ -633,6 +669,7 @@ class EndingReportState:
     body_text_ids: list[str] = field(default_factory=list)
     pending_text_ids: list[str] = field(default_factory=list)
     hidden_achievement_ids: list[str] = field(default_factory=list)
+    limiting_factor_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -695,6 +732,7 @@ class GameState:
     resources: ResourceState = field(default_factory=ResourceState)
     housing: HousingState = field(default_factory=HousingState)
     hunger: HungerState = field(default_factory=HungerState)
+    cold_exposure: ColdExposureState = field(default_factory=ColdExposureState)
     daily_survival: DailySurvivalState = field(default_factory=DailySurvivalState)
     trust_panic: TrustPanicState = field(default_factory=TrustPanicState)
     furnace: FurnaceState = field(default_factory=FurnaceState)

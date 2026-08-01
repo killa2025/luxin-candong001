@@ -49,11 +49,31 @@
     "homeless_cold_death_divisor": 40,
     "housed_cold_death_divisor": 60,
     "frost_extra_cold_death_divisor": 50,
+    "d1_cold_death_cap": 1,
     "medical_buffer_per_prevented_disability": 5,
     "natural_death_cap_base": 12,
     "natural_death_cap_maximum": 22,
     "natural_death_cap_population_baseline": 80,
     "natural_death_cap_population_divisor": 35
+  },
+  "hunger": {
+    "illness_divisor": 5,
+    "severe_divisor": 6,
+    "death_divisor": 8,
+    "trust_divisor": 20,
+    "trust_daily_cap": 6,
+    "panic_divisor": 15,
+    "panic_daily_cap": 8,
+    "score_hunger_days_three_max": 1,
+    "score_hunger_days_two_max": 2,
+    "score_hunger_days_one_max": 4,
+    "score_peak_three_percent": 10,
+    "score_peak_two_percent": 25,
+    "score_peak_one_percent": 50,
+    "score_cumulative_three_percent": 5,
+    "score_cumulative_two_percent": 15,
+    "score_cumulative_one_percent": 30,
+    "score_frost_death_cap": 1
   },
   "daily_thresholds": {
     "overload_redline": 90,
@@ -144,6 +164,7 @@
     "medical_promise_failed": "major",
     "food_promise_failed": "major",
     "children_promise_failed": "major",
-    "old_city_promise_failed": "defining"
+    "old_city_promise_failed": "defining",
+    "wood_supply_locked": "defining"
   }
 }

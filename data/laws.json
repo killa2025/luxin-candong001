@@ -174,9 +174,9 @@
   "medical": {
     "temporary_capacity_through_day": 3,
     "temporary_capacity": 5,
-    "medical_ration_food_per_patient": 3,
-    "medical_ration_max_patients": 20,
-    "medical_ration_cooldown_days": 4,
+    "medical_ration_food_per_patient": 5,
+    "medical_ration_max_patients": 10,
+    "medical_ration_cooldown_days": 5,
     "triage_cooldown_days": null
   },
   "actions": {

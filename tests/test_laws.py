@@ -881,12 +881,12 @@ class LawPatchTests(unittest.TestCase):
         cooked_before = state.resources.cooked_food
         result = self.execute_law(state, MEDICAL_RATION_COMMAND, {"confirm": True})
         self.assertTrue(result.accepted)
-        self.assertEqual(result.data["affected_patients"], 20)
-        self.assertEqual(result.data["cooked_food_paid"], 60)
-        self.assertEqual(state.resources.cooked_food, cooked_before - 60)
-        self.assertEqual(state.population.sick_population, 0)
+        self.assertEqual(result.data["affected_patients"], 10)
+        self.assertEqual(result.data["cooked_food_paid"], 50)
+        self.assertEqual(state.resources.cooked_food, cooked_before - 50)
+        self.assertEqual(state.population.sick_population, 5)
         self.assertEqual(state.population.critical_population, 5)
-        self.assertEqual(state.medical.critical_treatment_progress, 5)
+        self.assertEqual(state.medical.critical_treatment_progress, 0)
         self.assertEqual(result.data["balance_status"], "TEST_NUMERIC")
 
     def test_medical_planning_uses_today_expected_operation(self) -> None:
@@ -1034,6 +1034,7 @@ class LawPatchTests(unittest.TestCase):
         state.population.healthy_population = 77
         state.population.housed_population = 40
         state.population.homeless_population = 37
+        state.hunger.none_population = 77
         self.assertTrue(self.settle(self.engine(), state).result.accepted)
         self.assertEqual(state.population.population_dead, 3)
         self.assertEqual(state.social_policy.unhandled_bodies, 0)

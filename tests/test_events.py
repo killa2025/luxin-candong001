@@ -1069,6 +1069,7 @@ class EventPatchTests(unittest.TestCase):
         memorial.population.healthy_population = 70
         memorial.population.housed_population = 40
         memorial.population.homeless_population = 30
+        memorial.hunger.none_population = 70
         memorial.social_policy.unhandled_bodies = 10
         memorial.events.resolved_event_ids.append("first_body")
         memorial.events.occurrence_counts["first_body"] = 1

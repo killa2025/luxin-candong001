@@ -89,6 +89,10 @@ def _pending_text_ids(state: GameState) -> list[str]:
     return sorted(pending)
 
 
+def _limiting_factor_ids(state: GameState) -> list[str]:
+    return ["wood_supply_locked"] if state.final_frost.wood_supply_locked else []
+
+
 class EndingReportSystem:
     """Patch 010 deterministic report selection and run termination."""
 
@@ -144,6 +148,7 @@ class EndingReportSystem:
         report.hidden_achievement_ids = sorted(
             set(state.events.hidden_achievements_unlocked)
         )
+        report.limiting_factor_ids = _limiting_factor_ids(state)
 
     def execute(self, state: GameState, request: CommandRequest) -> CommandResult:
         command_id = (
@@ -264,6 +269,7 @@ class EndingReportSystem:
             "hidden_achievement_ids": list(
                 report.hidden_achievement_ids
             ),
+            "limiting_factor_ids": list(report.limiting_factor_ids),
         }
 
     @staticmethod

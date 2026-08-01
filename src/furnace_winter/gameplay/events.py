@@ -13,6 +13,7 @@ from furnace_winter.gameplay.end_day import (
     RiskWarning,
     RiskWarningLevel,
 )
+from furnace_winter.gameplay.hunger import add_population_to_hunger_none
 from furnace_winter.interface import (
     ArgumentKind,
     CommandCatalog,
@@ -1057,6 +1058,7 @@ class EventSystem:
         population.population_total += effect.total
         population.population_total_ever += effect.total
         population.population_alive += effect.total
+        add_population_to_hunger_none(state, effect.total)
         population.workers += effect.workers
         population.engineers += effect.engineers
         population.children += effect.children

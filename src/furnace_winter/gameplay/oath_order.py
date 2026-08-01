@@ -18,6 +18,9 @@ from furnace_winter.gameplay.end_day import (
     RiskWarning,
     RiskWarningLevel,
 )
+from furnace_winter.gameplay.hunger import (
+    remove_non_hunger_deaths_or_departures,
+)
 from furnace_winter.gameplay.survival import medical_building_capacity
 from furnace_winter.interface import (
     ArgumentKind,
@@ -1217,6 +1220,7 @@ class OathOrderSystem:
             remaining -= removed
 
         actual = requested - remaining
+        remove_non_hunger_deaths_or_departures(state, actual)
         health_remaining = actual
         for name in (
             "healthy_population", "sick_population",
@@ -1233,19 +1237,6 @@ class OathOrderSystem:
         )
         population.homeless_population = (
             population.population_alive - population.housed_population
-        )
-        state.hunger.mild_population = min(
-            state.hunger.mild_population, population.population_alive
-        )
-        state.hunger.severe_population = min(
-            state.hunger.severe_population,
-            population.population_alive - state.hunger.mild_population,
-        )
-        state.hunger.starving_population = min(
-            state.hunger.starving_population,
-            population.population_alive
-            - state.hunger.mild_population
-            - state.hunger.severe_population,
         )
         state.medical.medical_pressure = max(
             population.sick_population
