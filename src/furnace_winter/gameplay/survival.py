@@ -243,31 +243,33 @@ def projected_building_temperature(
     building: BuildingState,
     building_rules: BuildingRules,
     survival_rules: SurvivalRules,
-    effective_furnace_level: int,
+    heating: HeatingProjection,
     technology_rules: TechnologyRules | None = None,
     *,
     include_heat: bool,
 ) -> int:
     zone = "outer_ring" if building.zone == "storage_outer" else building.zone
     overload_bonus = (
-        technology_rules.overload.levels[state.furnace.overload_level].temperature_bonus
+        technology_rules.overload.levels[
+            heating.effective_overload_level
+        ].temperature_bonus
         if technology_rules is not None
-        and effective_furnace_level > 0
-        and state.resources.coal
-        >= technology_rules.overload.levels[state.furnace.overload_level].coal_cost
+        and heating.effective_furnace_level > 0
         else 0
     )
     final_bonus = (
         3
         if 49 <= state.calendar.current_day <= 55
-        and effective_furnace_level > 0
+        and heating.effective_furnace_level > 0
         and "tech_final_furnace_stability"
         in state.technologies.researched_tech_ids
         else 0
     )
     return (
         survival_rules.weather_for_day(state.calendar.current_day)
-        + survival_rules.furnace_levels[effective_furnace_level].heating
+        + survival_rules.furnace_levels[
+            heating.effective_furnace_level
+        ].heating
         + survival_rules.zone_modifiers[zone]
         + overload_bonus
         + final_bonus
@@ -282,6 +284,8 @@ def is_building_expected_operational(
     building_rules: BuildingRules,
     survival_rules: SurvivalRules,
     technology_rules: TechnologyRules | None = None,
+    *,
+    heating: HeatingProjection | None = None,
 ) -> bool:
     """Return whether a built and staffed building is expected to run today."""
 
@@ -301,15 +305,16 @@ def is_building_expected_operational(
         return False
     if rule.min_operating_temperature is None:
         return True
-    effective_level = projected_furnace_level(
-        state, survival_rules, building_rules, technology_rules
-    )
+    if heating is None:
+        heating = projected_heating(
+            state, survival_rules, building_rules, technology_rules
+        )
     temperature = projected_building_temperature(
         state,
         building,
         building_rules,
         survival_rules,
-        effective_level,
+        heating,
         technology_rules,
         include_heat=building.heated_today,
     )
@@ -765,7 +770,8 @@ class SurvivalSystem:
             ration_numerator,
             ration_denominator,
         )
-        available_food = state.resources.cooked_food + state.resources.raw_food
+        food_projection = self._projected_food_inventory(state)
+        available_food = food_projection["available_food"]
         if available_food < food_required:
             food_eaten = max(available_food, 0)
             warnings.append(
@@ -774,6 +780,24 @@ class SurvivalSystem:
                     RiskWarningLevel.B_STRONG,
                     {
                         "available_food": available_food,
+                        "current_available_food": (
+                            state.resources.cooked_food + state.resources.raw_food
+                        ),
+                        "projected_raw_food": food_projection[
+                            "projected_raw_food"
+                        ],
+                        "projected_cooked_food": food_projection[
+                            "projected_cooked_food"
+                        ],
+                        "raw_food_produced_today": food_projection[
+                            "raw_food_produced"
+                        ],
+                        "raw_food_processed_today": food_projection[
+                            "raw_food_processed"
+                        ],
+                        "cooked_food_produced_today": food_projection[
+                            "cooked_food_produced"
+                        ],
                         "required_food": food_required,
                         "ration_mode_used": ration_mode,
                         "food_shortfall": food_required - food_eaten,
@@ -812,6 +836,29 @@ class SurvivalSystem:
                 )
             )
         return tuple(warnings)
+
+    def _projected_food_inventory(self, state: GameState) -> dict[str, int]:
+        if self.building_rules is None:
+            return {
+                "available_food": (
+                    state.resources.cooked_food + state.resources.raw_food
+                ),
+                "projected_raw_food": state.resources.raw_food,
+                "projected_cooked_food": state.resources.cooked_food,
+                "raw_food_produced": 0,
+                "raw_food_processed": 0,
+                "cooked_food_produced": 0,
+            }
+
+        # Imported lazily because the building module reuses survival projection
+        # helpers. At runtime both modules are fully initialized.
+        from furnace_winter.gameplay.buildings import BuildingSystem
+
+        return BuildingSystem(
+            self.building_rules,
+            self.rules,
+            self.technology_rules,
+        ).project_food_inventory(state)
 
     def _affordable_level(self, target_level: int, state: GameState) -> int:
         projected = projected_furnace_level(
@@ -1045,7 +1092,11 @@ class SurvivalSystem:
             building.building_type == "canteen"
             and (
                 is_building_expected_operational(
-                    state, building, self.building_rules, self.rules
+                    state,
+                    building,
+                    self.building_rules,
+                    self.rules,
+                    self.technology_rules,
                 )
                 if self.building_rules is not None
                 else building.is_operational
