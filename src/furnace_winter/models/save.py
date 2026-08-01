@@ -15,6 +15,7 @@ from furnace_winter.models.state import (
     BuildingManagementState,
     BuildingState,
     CalendarState,
+    ColdExposureState,
     DailySurvivalState,
     EventRecord,
     EventFollowupRecord,
@@ -207,6 +208,110 @@ class SaveMigrationRegistry:
             raise SaveDataError("save_data_version must be an integer")
         if version > self.current_version:
             raise SaveDataError(f"save version {version} is newer than supported version")
+        if version < 14:
+            if "cold_exposure" in migrated:
+                if migrated["cold_exposure"] != to_primitive(ColdExposureState()):
+                    raise SaveDataError(
+                        "pre-v14 save cannot contain non-default cold-exposure state"
+                    )
+                migrated.pop("cold_exposure")
+            if isinstance(migrated.get("hunger"), Mapping):
+                raw_hunger = dict(migrated["hunger"])
+                if "none_population" in raw_hunger:
+                    population = migrated.get("population")
+                    alive = (
+                        population.get("population_alive")
+                        if isinstance(population, Mapping)
+                        else None
+                    )
+                    expected_defaults = to_primitive(HungerState())
+                    safe = (
+                        isinstance(alive, int)
+                        and not isinstance(alive, bool)
+                        and raw_hunger.get("none_population") == alive
+                        and all(
+                            raw_hunger.get(name) == expected_defaults[name]
+                            for name in expected_defaults
+                            if name != "none_population"
+                        )
+                    )
+                    if not safe:
+                        raise SaveDataError(
+                            "pre-v14 save cannot contain Patch 013 hunger values"
+                        )
+                    raw_hunger = {
+                        "mild_population": 0,
+                        "severe_population": 0,
+                        "starving_population": 0,
+                    }
+                migrated["hunger"] = raw_hunger
+            if isinstance(migrated.get("final_frost"), Mapping):
+                raw_final_frost = dict(migrated["final_frost"])
+                defaults = to_primitive(FinalFrostState())
+                for name in (
+                    "wood_supply_check_day",
+                    "wood_supply_surface_exhausted",
+                    "wood_supply_logging_camp_available",
+                    "wood_supply_wood_stock",
+                    "wood_supply_logging_cost",
+                    "wood_supply_alternative_available",
+                    "wood_supply_legacy_exempt",
+                    "wood_supply_locked",
+                    "legacy_hunger_history_unknown",
+                    "legacy_hunger_record_days",
+                    "frost_hunger_days",
+                    "frost_unfed_person_days",
+                    "frost_population_person_days",
+                    "frost_peak_unfed_count",
+                    "frost_peak_population_start",
+                    "frost_hunger_deaths",
+                ):
+                    if name in raw_final_frost:
+                        if raw_final_frost[name] != defaults[name]:
+                            raise SaveDataError(
+                                "pre-v14 save cannot contain Patch 013 wood-supply values"
+                            )
+                        raw_final_frost.pop(name)
+                raw_daily_records = raw_final_frost.get("daily_records")
+                if isinstance(raw_daily_records, Mapping):
+                    cleaned_records: dict[str, Any] = {}
+                    for day_key, raw_record in raw_daily_records.items():
+                        if not isinstance(raw_record, Mapping):
+                            cleaned_records[str(day_key)] = raw_record
+                            continue
+                        record = dict(raw_record)
+                        if "unfed_population" in record:
+                            if record["unfed_population"] != 0:
+                                raise SaveDataError(
+                                    "pre-v14 save cannot contain Patch 013 frost hunger values"
+                                )
+                            record.pop("unfed_population")
+                        for name in (
+                            "raw_hunger_deaths",
+                            "hunger_death_overflow",
+                        ):
+                            if name in record:
+                                if record[name] != 0:
+                                    raise SaveDataError(
+                                        "pre-v14 save cannot contain Patch 013 frost hunger values"
+                                    )
+                                record.pop(name)
+                        cleaned_records[str(day_key)] = record
+                    raw_final_frost["daily_records"] = cleaned_records
+                migrated["final_frost"] = raw_final_frost
+            if isinstance(migrated.get("final_result"), Mapping):
+                raw_final_result = dict(migrated["final_result"])
+                raw_report = raw_final_result.get("report")
+                if isinstance(raw_report, Mapping):
+                    report = dict(raw_report)
+                    if "limiting_factor_ids" in report:
+                        if report["limiting_factor_ids"] != []:
+                            raise SaveDataError(
+                                "pre-v14 save cannot contain Patch 013 report values"
+                            )
+                        report.pop("limiting_factor_ids")
+                    raw_final_result["report"] = report
+                    migrated["final_result"] = raw_final_result
         if version < 13 and "map" in migrated:
             if migrated["map"] != to_primitive(MapState()):
                 raise SaveDataError(
@@ -214,7 +319,27 @@ class SaveMigrationRegistry:
                 )
             migrated.pop("map")
         if version < 11 and "final_frost" in migrated:
-            if migrated["final_frost"] != to_primitive(FinalFrostState()):
+            legacy_final_frost_default = to_primitive(FinalFrostState())
+            for name in (
+                "wood_supply_check_day",
+                "wood_supply_surface_exhausted",
+                "wood_supply_logging_camp_available",
+                "wood_supply_wood_stock",
+                "wood_supply_logging_cost",
+                "wood_supply_alternative_available",
+                "wood_supply_legacy_exempt",
+                "wood_supply_locked",
+                "legacy_hunger_history_unknown",
+                "legacy_hunger_record_days",
+                "frost_hunger_days",
+                "frost_unfed_person_days",
+                "frost_population_person_days",
+                "frost_peak_unfed_count",
+                "frost_peak_population_start",
+                "frost_hunger_deaths",
+            ):
+                legacy_final_frost_default.pop(name)
+            if migrated["final_frost"] != legacy_final_frost_default:
                 raise SaveDataError(
                     "pre-v11 save cannot contain non-default final-frost state"
                 )
@@ -235,7 +360,11 @@ class SaveMigrationRegistry:
             ):
                 defaults = to_primitive(FinalResultState())
                 for name in patch_010_fields:
-                    if raw_final_result[name] != defaults[name]:
+                    expected = defaults[name]
+                    if name == "report" and isinstance(expected, dict):
+                        expected = dict(expected)
+                        expected.pop("limiting_factor_ids", None)
+                    if raw_final_result[name] != expected:
                         raise SaveDataError(
                             "pre-v12 save cannot contain Patch 010 final values"
                         )
@@ -313,8 +442,11 @@ def _field_names(model: type[Any]) -> tuple[str, ...]:
     return tuple(item.name for item in fields(model))
 
 
+_V13_GAME_STATE_FIELDS = tuple(
+    name for name in _field_names(GameState) if name != "cold_exposure"
+)
 _V12_GAME_STATE_FIELDS = tuple(
-    name for name in _field_names(GameState) if name != "map"
+    name for name in _V13_GAME_STATE_FIELDS if name != "map"
 )
 _V10_GAME_STATE_FIELDS = tuple(
     name for name in _V12_GAME_STATE_FIELDS if name != "final_frost"
@@ -336,6 +468,39 @@ _V11_FINAL_RESULT_FIELDS = (
     "total_score",
     "major_tags",
     "defining_tags",
+)
+_PATCH_013_FINAL_FROST_FIELDS = {
+    "wood_supply_check_day",
+    "wood_supply_surface_exhausted",
+    "wood_supply_logging_camp_available",
+    "wood_supply_wood_stock",
+    "wood_supply_logging_cost",
+    "wood_supply_alternative_available",
+    "wood_supply_legacy_exempt",
+    "wood_supply_locked",
+    "legacy_hunger_history_unknown",
+    "legacy_hunger_record_days",
+    "frost_hunger_days",
+    "frost_unfed_person_days",
+    "frost_population_person_days",
+    "frost_peak_unfed_count",
+    "frost_peak_population_start",
+    "frost_hunger_deaths",
+}
+_V13_FINAL_FROST_FIELDS = tuple(
+    name
+    for name in _field_names(FinalFrostState)
+    if name not in _PATCH_013_FINAL_FROST_FIELDS
+)
+_PATCH_013_FROST_DAY_FIELDS = {
+    "unfed_population",
+    "raw_hunger_deaths",
+    "hunger_death_overflow",
+}
+_V13_FROST_DAY_FIELDS = tuple(
+    name
+    for name in _field_names(FrostDayRecord)
+    if name not in _PATCH_013_FROST_DAY_FIELDS
 )
 _V10_MEDICAL_FIELDS = tuple(
     name
@@ -677,16 +842,21 @@ def _decode_housing(value: Any) -> HousingState:
 
 def _decode_hunger(value: Any) -> HungerState:
     data = _object(value, "hunger", _field_names(HungerState))
-    return HungerState(
-        mild_population=_integer(
-            data["mild_population"], "hunger.mild_population", minimum=0
-        ),
-        severe_population=_integer(
-            data["severe_population"], "hunger.severe_population", minimum=0
-        ),
-        starving_population=_integer(
-            data["starving_population"], "hunger.starving_population", minimum=0
-        ),
+    return HungerState(**{
+        name: _integer(data[name], f"hunger.{name}", minimum=0)
+        for name in _field_names(HungerState)
+    })
+
+
+def _decode_cold_exposure(value: Any) -> ColdExposureState:
+    data = _object(value, "cold_exposure", _field_names(ColdExposureState))
+    return ColdExposureState(
+        **{
+            name: _nonnegative_int_object(
+                data[name], f"cold_exposure.{name}"
+            )
+            for name in _field_names(ColdExposureState)
+        }
     )
 
 
@@ -1641,6 +1811,10 @@ def _decode_ending_report(value: Any) -> EndingReportState:
             data["hidden_achievement_ids"],
             "final_result.report.hidden_achievement_ids",
         ),
+        limiting_factor_ids=_string_list(
+            data["limiting_factor_ids"],
+            "final_result.report.limiting_factor_ids",
+        ),
     )
 
 
@@ -1807,6 +1981,50 @@ def _decode_final_frost(value: Any) -> FinalFrostState:
         preparation_tags=_string_list(
             data["preparation_tags"], "final_frost.preparation_tags"
         ),
+        wood_supply_check_day=_optional_integer(
+            data["wood_supply_check_day"],
+            "final_frost.wood_supply_check_day",
+            minimum=1,
+        ),
+        wood_supply_surface_exhausted=_boolean(
+            data["wood_supply_surface_exhausted"],
+            "final_frost.wood_supply_surface_exhausted",
+        ),
+        wood_supply_logging_camp_available=_boolean(
+            data["wood_supply_logging_camp_available"],
+            "final_frost.wood_supply_logging_camp_available",
+        ),
+        wood_supply_wood_stock=_integer(
+            data["wood_supply_wood_stock"],
+            "final_frost.wood_supply_wood_stock",
+            minimum=0,
+        ),
+        wood_supply_logging_cost=_integer(
+            data["wood_supply_logging_cost"],
+            "final_frost.wood_supply_logging_cost",
+            minimum=0,
+        ),
+        wood_supply_alternative_available=_boolean(
+            data["wood_supply_alternative_available"],
+            "final_frost.wood_supply_alternative_available",
+        ),
+        wood_supply_legacy_exempt=_boolean(
+            data["wood_supply_legacy_exempt"],
+            "final_frost.wood_supply_legacy_exempt",
+        ),
+        wood_supply_locked=_boolean(
+            data["wood_supply_locked"], "final_frost.wood_supply_locked"
+        ),
+        legacy_hunger_history_unknown=_boolean(
+            data["legacy_hunger_history_unknown"],
+            "final_frost.legacy_hunger_history_unknown",
+        ),
+        legacy_hunger_record_days=_integer_list(
+            data["legacy_hunger_record_days"],
+            "final_frost.legacy_hunger_record_days",
+            minimum=49,
+            maximum=55,
+        ),
         pending_extreme_crisis_conditions=_string_list(
             data["pending_extreme_crisis_conditions"],
             "final_frost.pending_extreme_crisis_conditions",
@@ -1814,6 +2032,36 @@ def _decode_final_frost(value: Any) -> FinalFrostState:
         daily_records=records,
         frost_deaths=_integer(
             data["frost_deaths"], "final_frost.frost_deaths", minimum=0
+        ),
+        frost_hunger_days=_integer(
+            data["frost_hunger_days"],
+            "final_frost.frost_hunger_days",
+            minimum=0,
+        ),
+        frost_unfed_person_days=_integer(
+            data["frost_unfed_person_days"],
+            "final_frost.frost_unfed_person_days",
+            minimum=0,
+        ),
+        frost_population_person_days=_integer(
+            data["frost_population_person_days"],
+            "final_frost.frost_population_person_days",
+            minimum=0,
+        ),
+        frost_peak_unfed_count=_integer(
+            data["frost_peak_unfed_count"],
+            "final_frost.frost_peak_unfed_count",
+            minimum=0,
+        ),
+        frost_peak_population_start=_integer(
+            data["frost_peak_population_start"],
+            "final_frost.frost_peak_population_start",
+            minimum=0,
+        ),
+        frost_hunger_deaths=_integer(
+            data["frost_hunger_deaths"],
+            "final_frost.frost_hunger_deaths",
+            minimum=0,
         ),
         final_score_day=_optional_integer(
             data["final_score_day"], "final_frost.final_score_day", minimum=1
@@ -1850,6 +2098,7 @@ def _decode_game_state(
         migrations.register(10, _migrate_v10_to_v11)
         migrations.register(11, _migrate_v11_to_v12)
         migrations.register(12, _migrate_v12_to_v13)
+        migrations.register(13, _migrate_v13_to_v14)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -1875,6 +2124,7 @@ def _decode_game_state(
             ),
             housing=_decode_housing(data["housing"]),
             hunger=_decode_hunger(data["hunger"]),
+            cold_exposure=_decode_cold_exposure(data["cold_exposure"]),
             daily_survival=_decode_daily_survival(data["daily_survival"]),
             trust_panic=_decode_trust_panic(data["trust_panic"]),
             furnace=_decode_furnace(data["furnace"]),
@@ -2827,7 +3077,11 @@ def _migrate_v10_to_v11(document: dict[str, Any]) -> dict[str, Any]:
         "major_tags": [],
         "defining_tags": [],
     }
-    migrated["final_frost"] = to_primitive(FinalFrostState())
+    current_frost_default = to_primitive(FinalFrostState())
+    migrated["final_frost"] = {
+        name: current_frost_default[name]
+        for name in _V13_FINAL_FROST_FIELDS
+    }
     migrated["save_data_version"] = 11
     return migrated
 
@@ -2887,7 +3141,7 @@ def _migrate_v11_to_v12(document: dict[str, Any]) -> dict[str, Any]:
         frost = _object(
             migrated["final_frost"],
             "final_frost",
-            _field_names(FinalFrostState),
+            _V13_FINAL_FROST_FIELDS,
         )
         frost_deaths = _integer(
             frost["frost_deaths"],
@@ -2946,6 +3200,175 @@ def _migrate_v12_to_v13(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v13_to_v14(document: dict[str, Any]) -> dict[str, Any]:
+    legacy = _object(document, "$", _V13_GAME_STATE_FIELDS)
+    migrated = deepcopy(legacy)
+    legacy_hunger = _object(
+        migrated["hunger"],
+        "hunger",
+        ("mild_population", "severe_population", "starving_population"),
+    )
+    legacy_population = _object(
+        migrated["population"], "population", _field_names(PopulationState)
+    )
+    legacy_daily = _object(
+        migrated["daily_survival"],
+        "daily_survival",
+        _field_names(DailySurvivalState),
+    )
+    legacy_resources = _object(
+        migrated["resources"], "resources", _field_names(ResourceState)
+    )
+    alive = _integer(
+        legacy_population["population_alive"],
+        "population.population_alive",
+        minimum=0,
+    )
+    last_unfed = _integer(
+        legacy_daily["unfed_population"],
+        "daily_survival.unfed_population",
+        minimum=0,
+    )
+    light = _integer(
+        legacy_hunger["mild_population"],
+        "hunger.mild_population",
+        minimum=0,
+    )
+    severe = _integer(
+        legacy_hunger["severe_population"],
+        "hunger.severe_population",
+        minimum=0,
+    )
+    starving = _integer(
+        legacy_hunger["starving_population"],
+        "hunger.starving_population",
+        minimum=0,
+    )
+    if light + severe + starving == 0 and last_unfed > 0:
+        light = min(last_unfed, alive)
+    migrated["cold_exposure"] = to_primitive(ColdExposureState())
+    frost = dict(
+        _object(
+            migrated["final_frost"],
+            "final_frost",
+            _V13_FINAL_FROST_FIELDS,
+        )
+    )
+    legacy_frost_entered = _boolean(
+        frost["entered"], "final_frost.entered"
+    )
+    frost["wood_supply_check_day"] = 49 if legacy_frost_entered else None
+    frost["wood_supply_surface_exhausted"] = False
+    frost["wood_supply_logging_camp_available"] = False
+    frost["wood_supply_wood_stock"] = (
+        _integer(legacy_resources["wood"], "resources.wood", minimum=0)
+        if legacy_frost_entered
+        else 0
+    )
+    frost["wood_supply_logging_cost"] = 35 if legacy_frost_entered else 0
+    frost["wood_supply_alternative_available"] = False
+    frost["wood_supply_legacy_exempt"] = legacy_frost_entered
+    frost["wood_supply_locked"] = False
+    raw_records = frost["daily_records"]
+    if not isinstance(raw_records, Mapping):
+        raise SaveDataError("final_frost.daily_records must be an object")
+    records = dict(raw_records)
+    if any(
+        not isinstance(day, str)
+        or not day.isdigit()
+        or str(int(day)) != day
+        for day in records
+    ):
+        raise SaveDataError(
+            "final_frost.daily_records keys must be canonical days"
+        )
+    legacy_record_days = sorted(int(day) for day in records)
+    frost["legacy_hunger_history_unknown"] = bool(legacy_record_days)
+    frost["legacy_hunger_record_days"] = legacy_record_days
+    migrated_records: dict[str, Any] = {}
+    for day, raw_record in records.items():
+        path = f"final_frost.daily_records.{day}"
+        legacy_record = dict(
+            _object(raw_record, path, _V13_FROST_DAY_FIELDS)
+        )
+        record = to_primitive(
+            _decode_frost_day_record(
+                {
+                    **legacy_record,
+                    "unfed_population": 0,
+                    "raw_hunger_deaths": 0,
+                    "hunger_death_overflow": 0,
+                },
+                path,
+            )
+        )
+        # v13 food deaths were settled outside the natural-death cap. Preserve
+        # them as exact history without pretending they used the v14 slot.
+        record["raw_hunger_deaths"] = 0
+        record["hunger_death_overflow"] = 0
+        migrated_records[day] = record
+    frost["daily_records"] = migrated_records
+    frost_records = list(migrated_records.values())
+    frost["frost_hunger_days"] = 0
+    frost["frost_unfed_person_days"] = 0
+    frost["frost_population_person_days"] = sum(
+        record["population_start"] for record in frost_records
+    )
+    frost["frost_peak_unfed_count"] = 0
+    frost["frost_peak_population_start"] = 0
+    frost["frost_hunger_deaths"] = sum(
+        record["food_deaths"] for record in frost_records
+    )
+    migrated["final_frost"] = frost
+    global_unfed_days = frost["frost_hunger_days"]
+    global_unfed_person_days = frost["frost_unfed_person_days"]
+    peak_unfed = frost["frost_peak_unfed_count"]
+    peak_population = frost["frost_peak_population_start"]
+    if not frost_records and last_unfed > 0:
+        global_unfed_days = 1
+        global_unfed_person_days = last_unfed
+        peak_unfed = last_unfed
+        peak_population = alive
+    migrated["hunger"] = {
+        "none_population": max(alive - light - severe - starving, 0),
+        "light_population": light,
+        "severe_population": severe,
+        "starving_population": starving,
+        "illness_remainder": 0,
+        "severe_remainder": 0,
+        "death_remainder": 0,
+        "trust_remainder": 0,
+        "panic_remainder": 0,
+        "total_hunger_days": global_unfed_days,
+        "total_unfed_person_days": global_unfed_person_days,
+        "peak_unfed_count": peak_unfed,
+        "peak_unfed_population_start": peak_population,
+        "hunger_deaths_total": frost["frost_hunger_deaths"],
+    }
+    legacy_events = migrated.get("events")
+    if isinstance(legacy_events, Mapping):
+        migrated_events = dict(legacy_events)
+        legacy_metrics = migrated_events.get("metrics")
+        if isinstance(legacy_metrics, Mapping):
+            migrated_metrics = dict(legacy_metrics)
+            for name in (
+                "cold_exposure_snapshot_day",
+                "homeless_population",
+                "cold_exposure_level",
+            ):
+                migrated_metrics.pop(name, None)
+            migrated_metrics["cold_exposure_warning_streak"] = 0
+            migrated_events["metrics"] = migrated_metrics
+            migrated["events"] = migrated_events
+    final_result = dict(migrated["final_result"])
+    report = dict(final_result["report"])
+    report["limiting_factor_ids"] = []
+    final_result["report"] = report
+    migrated["final_result"] = final_result
+    migrated["save_data_version"] = 14
+    return migrated
+
+
 def _validate_state_invariants(
     state: GameState, *, strict_event_timeline: bool = True
 ) -> None:
@@ -2982,6 +3405,40 @@ def _validate_state_invariants(
         state.calendar.current_day - 1,
         state.daily_survival.settled_day or 0,
     )
+    exposure_snapshot_fields = {
+        "cold_exposure_snapshot_day",
+        "homeless_population",
+        "cold_exposure_level",
+    }
+    present_exposure_snapshot_fields = exposure_snapshot_fields & set(
+        events.metrics
+    )
+    if present_exposure_snapshot_fields and (
+        present_exposure_snapshot_fields != exposure_snapshot_fields
+    ):
+        raise SaveDataError(
+            "cold exposure snapshot must retain day, population, and level"
+        )
+    if present_exposure_snapshot_fields:
+        exposure_snapshot_day = events.metrics[
+            "cold_exposure_snapshot_day"
+        ]
+        homeless_snapshot = events.metrics["homeless_population"]
+        exposure_level = events.metrics["cold_exposure_level"]
+        if exposure_snapshot_day != legal_settled_day:
+            raise SaveDataError(
+                "cold exposure snapshot must describe the latest settled day"
+            )
+        if (
+            homeless_snapshot < 0
+            or homeless_snapshot > population.population_total_ever
+            or not 0 <= exposure_level <= 5
+        ):
+            raise SaveDataError("cold exposure snapshot is outside its range")
+        if (homeless_snapshot == 0) != (exposure_level == 0):
+            raise SaveDataError(
+                "cold exposure level must match whether homelessness exists"
+            )
     for name, days in (
         ("recent_raw_food_days", events.recent_raw_food_days),
         ("recent_canteen_outage_days", events.recent_canteen_outage_days),
@@ -3783,12 +4240,80 @@ def _validate_state_invariants(
         raise SaveDataError("homeless_population must match aggregate housing capacity")
 
     hunger_total = (
-        state.hunger.mild_population
+        state.hunger.none_population
+        + state.hunger.light_population
         + state.hunger.severe_population
         + state.hunger.starving_population
     )
-    if hunger_total > population.population_alive:
-        raise SaveDataError("hunger pools must not exceed living population")
+    if hunger_total != population.population_alive:
+        raise SaveDataError("hunger pools must equal living population")
+    for name, maximum in (
+        ("illness_remainder", 4),
+        ("severe_remainder", 5),
+        ("death_remainder", 7),
+        ("trust_remainder", 19),
+        ("panic_remainder", 14),
+    ):
+        if getattr(state.hunger, name) > maximum:
+            raise SaveDataError(f"hunger.{name} exceeds its integer range")
+    if state.hunger.total_hunger_days > FINAL_DAY:
+        raise SaveDataError("total hunger days cannot exceed the campaign")
+    if (
+        state.hunger.peak_unfed_count
+        > state.hunger.peak_unfed_population_start
+        or (
+            state.hunger.peak_unfed_count == 0
+            and state.hunger.peak_unfed_population_start != 0
+        )
+    ):
+        raise SaveDataError("global hunger peak ratio is inconsistent")
+    if (
+        (state.hunger.total_hunger_days == 0)
+        != (state.hunger.total_unfed_person_days == 0)
+        or (
+            state.hunger.total_hunger_days == 0
+            and state.hunger.peak_unfed_count != 0
+        )
+        or state.hunger.peak_unfed_count
+        > state.hunger.total_unfed_person_days
+        or state.hunger.hunger_deaths_total > population.population_dead
+    ):
+        raise SaveDataError("global hunger statistics are inconsistent")
+    if (
+        state.hunger.light_population
+        + state.hunger.severe_population
+        + state.hunger.starving_population
+        == 0
+        and any(
+            (
+                state.hunger.illness_remainder,
+                state.hunger.severe_remainder,
+                state.hunger.death_remainder,
+                state.hunger.trust_remainder,
+                state.hunger.panic_remainder,
+            )
+        )
+    ):
+        raise SaveDataError("inactive hunger pools cannot retain remainders")
+    if (
+        state.hunger.severe_population
+        + state.hunger.starving_population
+        == 0
+        and state.hunger.severe_remainder != 0
+    ):
+        raise SaveDataError("inactive severe hunger cannot retain a remainder")
+    if (
+        state.hunger.starving_population == 0
+        and state.hunger.death_remainder != 0
+    ):
+        raise SaveDataError("inactive starvation cannot retain a death remainder")
+    exposure_key = re.compile(
+        r"^(?:[0-5]|level_[0-5]_(?:base|consecutive|frost_extra))$"
+    )
+    for name in _field_names(ColdExposureState):
+        values = getattr(state.cold_exposure, name)
+        if any(not exposure_key.fullmatch(key) for key in values):
+            raise SaveDataError(f"cold_exposure.{name} contains an invalid key")
 
     social = state.social_policy
     if social.current_ration_mode not in {
@@ -4007,6 +4532,17 @@ def _validate_state_invariants(
             raise SaveDataError("depleted surface resource points cannot retain staff")
 
     frost = state.final_frost
+    all_record_days = sorted(int(key) for key in frost.daily_records)
+    legacy_record_days = frost.legacy_hunger_record_days
+    if (
+        frost.legacy_hunger_history_unknown != bool(legacy_record_days)
+        or legacy_record_days != sorted(set(legacy_record_days))
+        or legacy_record_days != all_record_days[: len(legacy_record_days)]
+        or (legacy_record_days and not frost.wood_supply_legacy_exempt)
+    ):
+        raise SaveDataError(
+            "legacy hunger compatibility requires migrated frost history"
+        )
     if frost.entered != (frost.baseline_day is not None):
         raise SaveDataError("final frost entry and baseline day must agree")
     if frost.entered and frost.baseline_day != 49:
@@ -4051,7 +4587,7 @@ def _validate_state_invariants(
         raise SaveDataError("D49+ state must retain its final frost baseline")
     if frost.entered and state.calendar.current_day < 49:
         raise SaveDataError("final frost baseline cannot exist before D49")
-    record_days = sorted(int(key) for key in frost.daily_records)
+    record_days = all_record_days
     latest_required_day = min(55, legal_settled_day)
     expected_record_days = (
         list(range(49, latest_required_day + 1))
@@ -4077,6 +4613,13 @@ def _validate_state_invariants(
             raise SaveDataError("final frost daily population chain is discontinuous")
         if record.population_end > record.population_start:
             raise SaveDataError("final frost daily population cannot increase during settlement")
+        is_legacy_record = record.day in legacy_record_days
+        if not is_legacy_record and record.starvation != (
+            record.unfed_population > 0
+        ):
+            raise SaveDataError(
+                "final frost starvation flag must match the unfed population"
+            )
         if (
             record.food_deaths
             + record.disease_deaths
@@ -4135,21 +4678,49 @@ def _validate_state_invariants(
         expected_disease_deaths = min(
             record.raw_disease_deaths, expected_applied_cap
         )
+        expected_hunger_deaths = (
+            record.food_deaths
+            if is_legacy_record
+            else min(
+                record.raw_hunger_deaths,
+                expected_applied_cap - expected_disease_deaths,
+            )
+        )
         expected_cold_deaths = min(
             record.raw_cold_deaths,
-            expected_applied_cap - expected_disease_deaths,
+            expected_applied_cap
+            - expected_disease_deaths
+            - (
+                0
+                if is_legacy_record
+                else expected_hunger_deaths
+            ),
         )
         if (
             record.actual_disease_deaths != expected_disease_deaths
             or record.disease_deaths != expected_disease_deaths
             or record.disease_death_overflow
             != record.raw_disease_deaths - expected_disease_deaths
+            or record.food_deaths != expected_hunger_deaths
+            or (
+                is_legacy_record
+                and (
+                    record.raw_hunger_deaths != 0
+                    or record.hunger_death_overflow != 0
+                )
+            )
+            or (
+                not is_legacy_record
+                and record.hunger_death_overflow
+                != record.raw_hunger_deaths - expected_hunger_deaths
+            )
             or record.actual_cold_deaths != expected_cold_deaths
             or record.cold_deaths != expected_cold_deaths
             or record.cold_death_overflow
             != record.raw_cold_deaths - expected_cold_deaths
             or record.natural_death_overflow_pressure
             != record.disease_death_overflow
+            + record.hunger_death_overflow
             + record.cold_death_overflow
         ):
             raise SaveDataError(
@@ -4174,6 +4745,43 @@ def _validate_state_invariants(
         )
     if frost.frost_deaths != total_recorded_deaths:
         raise SaveDataError("final frost death total must match daily records")
+    records = list(frost.daily_records.values())
+    expected_hunger_days = sum(
+        record.unfed_population > 0 for record in records
+    )
+    expected_unfed_person_days = sum(
+        record.unfed_population for record in records
+    )
+    expected_population_person_days = sum(
+        record.population_start for record in records
+    )
+    expected_hunger_deaths = sum(record.food_deaths for record in records)
+    peak_record: FrostDayRecord | None = None
+    for candidate in records:
+        if candidate.unfed_population == 0:
+            continue
+        if peak_record is None or (
+            candidate.unfed_population * peak_record.population_start
+            > peak_record.unfed_population * candidate.population_start
+        ) or (
+            candidate.unfed_population * peak_record.population_start
+            == peak_record.unfed_population * candidate.population_start
+            and candidate.unfed_population > peak_record.unfed_population
+        ):
+            peak_record = candidate
+    expected_peak_count = peak_record.unfed_population if peak_record else 0
+    expected_peak_population = (
+        peak_record.population_start if peak_record else 0
+    )
+    if (
+        frost.frost_hunger_days != expected_hunger_days
+        or frost.frost_unfed_person_days != expected_unfed_person_days
+        or frost.frost_population_person_days != expected_population_person_days
+        or frost.frost_peak_unfed_count != expected_peak_count
+        or frost.frost_peak_population_start != expected_peak_population
+        or frost.frost_hunger_deaths != expected_hunger_deaths
+    ):
+        raise SaveDataError("final frost hunger statistics are inconsistent")
     if frost.final_score_day is not None and frost.final_score_day != 55:
         raise SaveDataError("final frost score may only be finalized on day 55")
 
@@ -4280,6 +4888,7 @@ def _validate_state_invariants(
         ("body_text_ids", report.body_text_ids),
         ("pending_text_ids", report.pending_text_ids),
         ("hidden_achievement_ids", report.hidden_achievement_ids),
+        ("limiting_factor_ids", report.limiting_factor_ids),
     ):
         if len(values) != len(set(values)):
             raise SaveDataError(f"ending report {name} must be unique")
@@ -4292,6 +4901,10 @@ def _validate_state_invariants(
     ):
         raise SaveDataError(
             "ending report hidden achievement ids must be sorted"
+        )
+    if report.limiting_factor_ids != sorted(report.limiting_factor_ids):
+        raise SaveDataError(
+            "ending report limiting factor ids must be sorted"
         )
     if not report.is_generated:
         if report != EndingReportState():
@@ -4351,6 +4964,13 @@ def _validate_state_invariants(
         ):
             raise SaveDataError(
                 "ending report hidden achievements are inconsistent"
+            )
+        expected_limiting_factors = (
+            ["wood_supply_locked"] if frost.wood_supply_locked else []
+        )
+        if report.limiting_factor_ids != expected_limiting_factors:
+            raise SaveDataError(
+                "ending report limiting factors are not canonical"
             )
         if (
             final.hard_fail_type is None

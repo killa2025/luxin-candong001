@@ -133,6 +133,7 @@ class EndingReportPatchTests(unittest.TestCase):
             )
             for day in range(49, 56)
         }
+        state.final_frost.frost_population_person_days = population * 7
         return state
 
     def completed_state(self):
@@ -184,6 +185,9 @@ class EndingReportPatchTests(unittest.TestCase):
         }
         del d54.final_frost.daily_records["54"]
         del d54.final_frost.daily_records["55"]
+        d54.final_frost.frost_population_person_days = (
+            d54.population.population_alive * 5
+        )
         before = deepcopy(d54)
         rejected = self.execute(system, d54, "d54-end", {"confirm": True})
         self.assertEqual(rejected.code, ErrorCode.ILLEGAL_COMMAND)
@@ -343,6 +347,7 @@ class EndingReportPatchTests(unittest.TestCase):
             "body_text_ids": [],
             "pending_text_ids": [],
             "hidden_achievement_ids": [],
+            "limiting_factor_ids": [],
         }
         with self.assertRaisesRegex(
             SaveDataError,
@@ -377,12 +382,39 @@ class EndingReportPatchTests(unittest.TestCase):
         ):
             del legacy["final_result"][field]
         migrated = decode_game_state(legacy)
-        self.assertEqual(migrated.save_data_version, 13)
+        self.assertEqual(migrated.save_data_version, 14)
         self.assertIs(migrated.final_result.run_state, RunState.ACTIVE)
         self.assertFalse(migrated.final_result.report.is_generated)
 
         terminal_legacy = encode_game_state(self.completed_state())
         terminal_legacy["save_data_version"] = 11
+        terminal_legacy["hunger"] = {
+            "mild_population": 0,
+            "severe_population": 0,
+            "starving_population": 0,
+        }
+        del terminal_legacy["cold_exposure"]
+        for field in (
+            "wood_supply_check_day",
+            "wood_supply_surface_exhausted",
+            "wood_supply_logging_camp_available",
+            "wood_supply_wood_stock",
+            "wood_supply_logging_cost",
+            "wood_supply_alternative_available",
+            "wood_supply_legacy_exempt",
+            "wood_supply_locked",
+            "frost_hunger_days",
+            "frost_unfed_person_days",
+            "frost_population_person_days",
+            "frost_peak_unfed_count",
+            "frost_peak_population_start",
+            "frost_hunger_deaths",
+        ):
+            del terminal_legacy["final_frost"][field]
+        for record in terminal_legacy["final_frost"]["daily_records"].values():
+            del record["unfed_population"]
+            del record["raw_hunger_deaths"]
+            del record["hunger_death_overflow"]
         for field in (
             "run_state",
             "termination_reason",

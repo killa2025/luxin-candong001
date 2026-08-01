@@ -413,6 +413,7 @@ def create_initial_survival_state(
         basic_residences=rules.basic_residences,
         capacity=housing_capacity,
     )
+    state.hunger.none_population = total
     if building_rules is not None:
         state.building_management.zone_slot_capacity = dict(
             building_rules.zone_slot_capacity
@@ -790,7 +791,13 @@ class SurvivalSystem:
                 RiskWarning(
                     "survival.housing_shortfall",
                     RiskWarningLevel.A_INFO,
-                    {"homeless_population": state.population.homeless_population},
+                    {
+                        "homeless_population": state.population.homeless_population,
+                        "cold_health_resolution_active": True,
+                        "d1_normal_exposure_death_protected": (
+                            state.calendar.current_day == 1
+                        ),
+                    },
                 )
             )
         if is_over_capacity(state.resources):

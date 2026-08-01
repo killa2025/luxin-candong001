@@ -280,6 +280,10 @@ class FinalFrostPatchTests(unittest.TestCase):
         population.homeless_population = (
             alive - population.housed_population
         )
+        state.hunger.none_population = alive
+        state.hunger.light_population = 0
+        state.hunger.severe_population = 0
+        state.hunger.starving_population = 0
 
     def frost_record(
         self,
@@ -371,6 +375,12 @@ class FinalFrostPatchTests(unittest.TestCase):
             ),
             "natural death cap": lambda item: item["damage"].update(
                 {"natural_death_cap_base": 11}
+            ),
+            "Patch 013 hunger divisor": lambda item: item["hunger"].update(
+                {"death_divisor": 7}
+            ),
+            "Patch 013 food score ratio": lambda item: item["hunger"].update(
+                {"score_peak_two_percent": 24}
             ),
         }
         for name, mutate in mutations.items():
@@ -858,6 +868,7 @@ class FinalFrostPatchTests(unittest.TestCase):
         system.prepare_new_day(state)
         for day in range(49, 56):
             state.final_frost.daily_records[str(day)] = self.frost_record(day)
+        state.final_frost.frost_population_person_days = 80 * 7
         state.calendar.current_day = 55
         state.daily_survival.settled_day = 55
         state.daily_survival.base_temperature = -76
@@ -1031,6 +1042,7 @@ class FinalFrostPatchTests(unittest.TestCase):
             "outer_ring": -66,
         }
         state.final_frost.daily_records["49"] = self.frost_record(49)
+        state.final_frost.frost_population_person_days = 80
         document = encode_game_state(state)
         self.assertEqual(decode_game_state(document), state)
 

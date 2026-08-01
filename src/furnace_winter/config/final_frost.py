@@ -40,6 +40,7 @@ class FinalFrostRules:
     shutdown_building_types: frozenset[str]
     shutdown_surface_collection: bool
     damage: Mapping[str, int]
+    hunger: Mapping[str, int]
     daily_thresholds: Mapping[str, int]
     preparation: Mapping[str, Any]
     scoring: Mapping[str, Any]
@@ -50,6 +51,7 @@ class FinalFrostRules:
             self, "temperatures", MappingProxyType(dict(self.temperatures))
         )
         object.__setattr__(self, "damage", MappingProxyType(dict(self.damage)))
+        object.__setattr__(self, "hunger", MappingProxyType(dict(self.hunger)))
         object.__setattr__(
             self,
             "daily_thresholds",
@@ -92,11 +94,31 @@ _DAMAGE_FIELDS = {
     "homeless_cold_death_divisor",
     "housed_cold_death_divisor",
     "frost_extra_cold_death_divisor",
+    "d1_cold_death_cap",
     "medical_buffer_per_prevented_disability",
     "natural_death_cap_base",
     "natural_death_cap_maximum",
     "natural_death_cap_population_baseline",
     "natural_death_cap_population_divisor",
+}
+_HUNGER_FIELDS = {
+    "illness_divisor",
+    "severe_divisor",
+    "death_divisor",
+    "trust_divisor",
+    "trust_daily_cap",
+    "panic_divisor",
+    "panic_daily_cap",
+    "score_hunger_days_three_max",
+    "score_hunger_days_two_max",
+    "score_hunger_days_one_max",
+    "score_peak_three_percent",
+    "score_peak_two_percent",
+    "score_peak_one_percent",
+    "score_cumulative_three_percent",
+    "score_cumulative_two_percent",
+    "score_cumulative_one_percent",
+    "score_frost_death_cap",
 }
 _DAILY_THRESHOLD_FIELDS = {
     "overload_redline",
@@ -191,6 +213,7 @@ _EXPECTED_TAG_SEVERITY = {
     "food_promise_failed": "major",
     "children_promise_failed": "major",
     "old_city_promise_failed": "defining",
+    "wood_supply_locked": "defining",
 }
 
 
@@ -253,6 +276,7 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
             "calendar",
             "restrictions",
             "damage",
+            "hunger",
             "daily_thresholds",
             "preparation",
             "scoring",
@@ -389,6 +413,7 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
         "natural_death_cap_maximum": 22,
         "natural_death_cap_population_baseline": 80,
         "natural_death_cap_population_divisor": 35,
+        "d1_cold_death_cap": 1,
     }
     if any(
         damage[name] != expected
@@ -402,6 +427,31 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
         _DAILY_THRESHOLD_FIELDS,
         "$.daily_thresholds",
     )
+    hunger = _positive_integer_object(
+        data["hunger"], _HUNGER_FIELDS, "$.hunger"
+    )
+    if hunger != {
+        "illness_divisor": 5,
+        "severe_divisor": 6,
+        "death_divisor": 8,
+        "trust_divisor": 20,
+        "trust_daily_cap": 6,
+        "panic_divisor": 15,
+        "panic_daily_cap": 8,
+        "score_hunger_days_three_max": 1,
+        "score_hunger_days_two_max": 2,
+        "score_hunger_days_one_max": 4,
+        "score_peak_three_percent": 10,
+        "score_peak_two_percent": 25,
+        "score_peak_one_percent": 50,
+        "score_cumulative_three_percent": 5,
+        "score_cumulative_two_percent": 15,
+        "score_cumulative_one_percent": 30,
+        "score_frost_death_cap": 1,
+    }:
+        raise FinalFrostConfigError(
+            "the confirmed Patch 013 hunger progression changed"
+        )
 
     preparation = _object(data["preparation"], "$.preparation")
     _exact(preparation, _PREPARATION_FIELDS, "$.preparation")
@@ -498,6 +548,7 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
             "$.restrictions.shutdown_surface_collection",
         ),
         damage=damage,
+        hunger=hunger,
         daily_thresholds=daily_thresholds,
         preparation=normalized_preparation,
         scoring=normalized_scoring,

@@ -270,6 +270,7 @@ class SurvivalPatchTests(unittest.TestCase):
         state.population.engineers = 0
         state.population.children = 0
         state.population.healthy_population = 3
+        state.hunger.none_population = 3
         state.population.housed_population = 3
         state.population.homeless_population = 0
         state.resources.cooked_food = 1
@@ -285,7 +286,7 @@ class SurvivalPatchTests(unittest.TestCase):
         self.assertEqual(state.daily_survival.cooked_food_eaten, 1)
         self.assertEqual(state.daily_survival.raw_food_eaten, 1)
         self.assertEqual(state.daily_survival.unfed_population, 1)
-        self.assertEqual(state.hunger.mild_population, 0)
+        self.assertEqual(state.hunger.light_population, 0)
         self.assertEqual(state.hunger.severe_population, 0)
         self.assertEqual(state.hunger.starving_population, 0)
 
@@ -374,7 +375,7 @@ class SurvivalPatchTests(unittest.TestCase):
         for mutate in (
             lambda state: setattr(state.population, "population_alive", 79),
             lambda state: setattr(state.population, "homeless_population", 39),
-            lambda state: setattr(state.hunger, "mild_population", 81),
+            lambda state: setattr(state.hunger, "light_population", 81),
             lambda state: setattr(state.furnace, "mode_id", "level_4"),
         ):
             state = self.make_state()
