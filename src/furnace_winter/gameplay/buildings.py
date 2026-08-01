@@ -13,13 +13,14 @@ from furnace_winter.config import (
 )
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage
 from furnace_winter.gameplay.survival import (
+    HeatingProjection,
     furnace_coal_cost,
     furnace_level,
     is_building_expected_operational,
     is_over_capacity,
     projected_building_insulation_bonus,
     projected_building_temperature,
-    projected_furnace_level,
+    projected_heating,
     projected_heat_bonus,
     projected_woodfuel_available,
     storage_used,
@@ -453,9 +454,10 @@ class BuildingSystem:
                 ErrorCode.ILLEGAL_COMMAND,
                 {"reason": "daily_heat_limit_reached", "limit": self.rules.heat.daily_city_limit},
             )
-        effective_level = self._projected_furnace_level(state)
+        heating = self._projected_heating(state)
+        effective_level = heating.effective_furnace_level
         temperature = self._projected_building_temperature(
-            state, building, effective_level, include_heat=False
+            state, building, heating, include_heat=False
         )
         assert rule.min_operating_temperature is not None
         if temperature >= rule.min_operating_temperature:
@@ -778,6 +780,12 @@ class BuildingSystem:
             "small_coal_miner",
             "small_steel_miner",
         }
+        heating = projected_heating(
+            working,
+            self.survival_rules,
+            self.rules,
+            self.technology_rules,
+        )
         for building in working.buildings.values():
             building.is_operational = (
                 is_building_expected_operational(
@@ -786,6 +794,7 @@ class BuildingSystem:
                     self.rules,
                     self.survival_rules,
                     self.technology_rules,
+                    heating=heating,
                 )
                 and not (
                     final_frost
@@ -891,8 +900,8 @@ class BuildingSystem:
     def _heat_bonus(self, state: GameState) -> int:
         return projected_heat_bonus(state, self.rules)
 
-    def _projected_furnace_level(self, state: GameState) -> int:
-        return projected_furnace_level(
+    def _projected_heating(self, state: GameState) -> HeatingProjection:
+        return projected_heating(
             state,
             self.survival_rules,
             self.rules,
@@ -937,7 +946,7 @@ class BuildingSystem:
         self,
         state: GameState,
         building: BuildingState,
-        effective_furnace_level: int,
+        heating: HeatingProjection,
         *,
         include_heat: bool,
     ) -> int:
@@ -946,7 +955,7 @@ class BuildingSystem:
             building,
             self.rules,
             self.survival_rules,
-            effective_furnace_level,
+            heating,
             self.technology_rules,
             include_heat=include_heat,
         )

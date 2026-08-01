@@ -10,6 +10,7 @@ from furnace_winter.config import (
     BuildingConfigError,
     load_building_rules,
     load_survival_rules,
+    load_technology_rules,
 )
 from furnace_winter.gameplay import (
     ASSIGN_COMMAND,
@@ -51,29 +52,55 @@ class BuildingPatchTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.survival_rules = load_survival_rules(REPOSITORY_ROOT / "data" / "survival.json")
         cls.building_rules = load_building_rules(REPOSITORY_ROOT / "data" / "buildings.json")
+        cls.technology_rules = load_technology_rules(
+            REPOSITORY_ROOT / "data" / "technologies.json"
+        )
 
     def make_state(self):
         return create_initial_survival_state(
             self.survival_rules, self.building_rules, random_seed=4004
         )
 
-    def make_system(self) -> BuildingSystem:
-        return BuildingSystem(self.building_rules, self.survival_rules)
+    def make_system(self, *, with_technology_rules: bool = False) -> BuildingSystem:
+        return BuildingSystem(
+            self.building_rules,
+            self.survival_rules,
+            self.technology_rules if with_technology_rules else None,
+        )
 
-    def make_engine(self, autosave_sink=None) -> EndDayEngine:
+    def make_engine(
+        self, autosave_sink=None, *, with_technology_rules: bool = False
+    ) -> EndDayEngine:
         engine = EndDayEngine(autosave_sink=autosave_sink)
-        SurvivalSystem(self.survival_rules, self.building_rules).install(engine)
-        self.make_system().install(engine)
+        technology_rules = (
+            self.technology_rules if with_technology_rules else None
+        )
+        SurvivalSystem(
+            self.survival_rules,
+            self.building_rules,
+            technology_rules,
+        ).install(engine)
+        self.make_system(
+            with_technology_rules=with_technology_rules
+        ).install(engine)
         install_final_frost_history_stub(engine)
         return engine
 
-    def make_final_frost_food_state(self):
+    def make_final_frost_food_state(self, *, insulated: bool = True):
         state = self.make_state()
         state.resources.wood = 200
         state.resources.steel = 100
-        state.technologies.researched_tech_ids.extend(
-            ["tech_greenhouse_cultivation", "tech_building_insulation_2"]
-        )
+        completed = [
+            "tech_drawing_board",
+            "tech_drafting_instrument",
+            "tech_mechanical_calculator",
+            "tech_greenhouse_cultivation",
+        ]
+        if insulated:
+            completed.extend(
+                ["tech_building_insulation_1", "tech_building_insulation_2"]
+            )
+        state.technologies.researched_tech_ids.extend(completed)
         canteen = self.execute(
             state,
             BUILD_COMMAND,
@@ -435,12 +462,16 @@ class BuildingPatchTests(unittest.TestCase):
         )
         before = deepcopy(state)
 
-        projection = self.make_system().project_food_inventory(state)
+        projection = self.make_system(
+            with_technology_rules=True
+        ).project_food_inventory(state)
         warnings = SurvivalSystem(
-            self.survival_rules, self.building_rules
+            self.survival_rules,
+            self.building_rules,
+            self.technology_rules,
         ).evaluate_risks(state)
         self.assertEqual(state, before)
-        execution = self.make_engine().execute(
+        execution = self.make_engine(with_technology_rules=True).execute(
             state, CommandRequest("end", END_DAY_COMMAND)
         )
 
@@ -462,12 +493,16 @@ class BuildingPatchTests(unittest.TestCase):
         operating.furnace.is_active = True
         before_projection = deepcopy(operating)
 
-        projection = self.make_system().project_food_inventory(operating)
+        projection = self.make_system(
+            with_technology_rules=True
+        ).project_food_inventory(operating)
         warnings = SurvivalSystem(
-            self.survival_rules, self.building_rules
+            self.survival_rules,
+            self.building_rules,
+            self.technology_rules,
         ).evaluate_risks(operating)
         self.assertEqual(operating, before_projection)
-        execution = self.make_engine().execute(
+        execution = self.make_engine(with_technology_rules=True).execute(
             operating, CommandRequest("end-operating", END_DAY_COMMAND)
         )
 
@@ -488,7 +523,9 @@ class BuildingPatchTests(unittest.TestCase):
         shutdown.furnace.is_active = False
         before_projection = deepcopy(shutdown)
         warnings = SurvivalSystem(
-            self.survival_rules, self.building_rules
+            self.survival_rules,
+            self.building_rules,
+            self.technology_rules,
         ).evaluate_risks(shutdown)
         food_warning = next(
             warning
@@ -502,7 +539,7 @@ class BuildingPatchTests(unittest.TestCase):
         self.assertEqual(food_warning.details["raw_food_produced_today"], 0)
         self.assertEqual(food_warning.details["cooked_food_produced_today"], 0)
         self.assertEqual(food_warning.details["food_shortfall"], 80)
-        engine = self.make_engine()
+        engine = self.make_engine(with_technology_rules=True)
         preview = engine.execute(
             shutdown, CommandRequest("end-shutdown", END_DAY_COMMAND)
         )
@@ -525,7 +562,9 @@ class BuildingPatchTests(unittest.TestCase):
         before_projection = deepcopy(state)
 
         warnings = SurvivalSystem(
-            self.survival_rules, self.building_rules
+            self.survival_rules,
+            self.building_rules,
+            self.technology_rules,
         ).evaluate_risks(state)
         food_warning = next(
             warning
@@ -542,12 +581,148 @@ class BuildingPatchTests(unittest.TestCase):
         self.assertEqual(food_warning.details["food_shortfall"], 10)
         self.assertEqual(food_warning.details["unfed_population"], 10)
 
-        engine = self.make_engine()
+        engine = self.make_engine(with_technology_rules=True)
         preview = engine.execute(state, CommandRequest("end-partial", END_DAY_COMMAND))
         execution = self.confirm(engine, state, preview, "confirm-partial")
         self.assertTrue(execution.result.accepted)
         self.assertEqual(state.daily_survival.food_shortfall, 10)
         self.assertEqual(state.daily_survival.unfed_population, 10)
+
+    def test_unaffordable_overload_cannot_hide_greenhouse_shortfall(self) -> None:
+        state = self.make_final_frost_food_state(insulated=False)
+        state.technologies.researched_tech_ids.extend(
+            ["tech_furnace_power_stability_1", "tech_overload_tuning"]
+        )
+        state.furnace.mode_id = "level_2"
+        state.furnace.is_active = True
+        state.furnace.overload_level = 1
+        state.resources.coal = 100
+        state.daily_survival.storage_used = (
+            state.resources.coal
+            + state.resources.wood
+            + state.resources.steel
+        )
+        before_projection = deepcopy(state)
+        system = self.make_system(with_technology_rules=True)
+
+        projection = system.project_food_inventory(state)
+        warnings = SurvivalSystem(
+            self.survival_rules,
+            self.building_rules,
+            self.technology_rules,
+        ).evaluate_risks(state)
+        food_warning = next(
+            warning
+            for warning in warnings
+            if warning.warning_id == "survival.food_shortfall"
+        )
+
+        self.assertEqual(state, before_projection)
+        self.assertEqual(projection["available_food"], 0)
+        self.assertEqual(projection["raw_food_produced"], 0)
+        self.assertEqual(food_warning.details["food_shortfall"], 80)
+        self.assertIn(
+            "survival.overload_fuel_shortfall",
+            {warning.warning_id for warning in warnings},
+        )
+
+        engine = self.make_engine(with_technology_rules=True)
+        preview = engine.execute(state, CommandRequest("end-overload", END_DAY_COMMAND))
+        execution = self.confirm(engine, state, preview, "confirm-overload")
+        self.assertTrue(execution.result.accepted)
+        self.assertEqual(state.daily_survival.coal_paid, 85)
+        self.assertEqual(state.daily_survival.effective_overload_level, 0)
+        self.assertEqual(state.daily_survival.food_shortfall, 80)
+        self.assertEqual(state.daily_survival.unfed_population, 80)
+
+    def test_woodfuel_base_payment_does_not_reserve_coal_for_overload(self) -> None:
+        state = self.make_final_frost_food_state(insulated=False)
+        state.technologies.researched_tech_ids.extend(
+            ["tech_furnace_power_stability_1", "tech_overload_tuning"]
+        )
+        state.furnace.mode_id = "level_2"
+        state.furnace.is_active = True
+        state.furnace.overload_level = 1
+        state.resources.coal = 70
+        state.building_management.woodfuel_confirmed_today = True
+        state.daily_survival.storage_used = (
+            state.resources.coal
+            + state.resources.wood
+            + state.resources.steel
+        )
+
+        projection = self.make_system(
+            with_technology_rules=True
+        ).project_food_inventory(state)
+        food_warning = next(
+            warning
+            for warning in SurvivalSystem(
+                self.survival_rules,
+                self.building_rules,
+                self.technology_rules,
+            ).evaluate_risks(state)
+            if warning.warning_id == "survival.food_shortfall"
+        )
+
+        self.assertEqual(projection["available_food"], 0)
+        self.assertEqual(food_warning.details["food_shortfall"], 80)
+        engine = self.make_engine(with_technology_rules=True)
+        preview = engine.execute(state, CommandRequest("end-woodfuel", END_DAY_COMMAND))
+        execution = self.confirm(engine, state, preview, "confirm-woodfuel")
+        self.assertTrue(execution.result.accepted)
+        self.assertEqual(state.daily_survival.coal_paid, 70)
+        self.assertEqual(state.daily_survival.woodfuel_contribution, 15)
+        self.assertEqual(state.daily_survival.effective_overload_level, 0)
+        self.assertEqual(state.daily_survival.food_shortfall, 80)
+
+    def test_unaffordable_overload_cannot_keep_canteen_running(self) -> None:
+        state = self.make_final_frost_food_state(insulated=False)
+        state.technologies.researched_tech_ids.extend(
+            ["tech_furnace_power_stability_1", "tech_overload_tuning"]
+        )
+        state.calendar.current_day = 55
+        seed_final_frost_history(state, through_day=54)
+        state.furnace.mode_id = "level_2"
+        state.furnace.is_active = True
+        state.furnace.overload_level = 1
+        state.resources.coal = 100
+        state.resources.raw_food = 40
+        for building in state.buildings.values():
+            if building.building_type == "greenhouse":
+                building.assigned_workers = 0
+        state.daily_survival.storage_used = (
+            state.resources.coal
+            + state.resources.wood
+            + state.resources.steel
+            + state.resources.raw_food
+        )
+        before_projection = deepcopy(state)
+
+        projection = self.make_system(
+            with_technology_rules=True
+        ).project_food_inventory(state)
+        food_warning = next(
+            warning
+            for warning in SurvivalSystem(
+                self.survival_rules,
+                self.building_rules,
+                self.technology_rules,
+            ).evaluate_risks(state)
+            if warning.warning_id == "survival.food_shortfall"
+        )
+
+        self.assertEqual(state, before_projection)
+        self.assertEqual(projection["available_food"], 40)
+        self.assertEqual(projection["raw_food_processed"], 0)
+        self.assertEqual(projection["cooked_food_produced"], 0)
+        self.assertEqual(food_warning.details["food_shortfall"], 40)
+        engine = self.make_engine(with_technology_rules=True)
+        preview = engine.execute(state, CommandRequest("end-canteen", END_DAY_COMMAND))
+        execution = self.confirm(engine, state, preview, "confirm-canteen")
+        self.assertTrue(execution.result.accepted)
+        self.assertEqual(state.daily_survival.effective_overload_level, 0)
+        self.assertEqual(state.daily_survival.raw_food_eaten, 40)
+        self.assertEqual(state.daily_survival.food_shortfall, 40)
 
     def test_woodfuel_is_manual_day_only_and_only_fills_base_heating_gap(self) -> None:
         state = self.make_state()
