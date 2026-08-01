@@ -700,10 +700,20 @@ class EventSystem:
         pressure = state.furnace.pressure
         if pressure >= thresholds["furnace_pressure_event"]:
             candidates.append(("furnace_redline", "major"))
+        snapshot_day = state.events.metrics.get(
+            "cold_exposure_snapshot_day"
+        )
+        snapshot_is_previous_day = (
+            snapshot_day == state.calendar.current_day - 1
+        )
+        homeless_population = state.events.metrics.get(
+            "homeless_population", 0
+        )
         exposure_level = state.events.metrics.get("cold_exposure_level", 0)
         if (
             state.calendar.current_day >= thresholds["cold_house_day_min"]
-            and state.population.homeless_population >= thresholds["homeless_event"]
+            and snapshot_is_previous_day
+            and homeless_population >= thresholds["homeless_event"]
             and exposure_level >= thresholds["cold_exposure_event_level"]
             and (
                 state.calendar.current_day >= 34
@@ -712,7 +722,7 @@ class EventSystem:
             )
         ):
             major = (
-                state.population.homeless_population >= thresholds["homeless_major"]
+                homeless_population >= thresholds["homeless_major"]
                 or exposure_level >= thresholds["cold_exposure_major_level"]
             )
             candidates.append(("cold_house_night", "major" if major else "normal"))
@@ -1185,8 +1195,12 @@ class EventSystem:
             state.events.metrics["food_warning_streak"] = state.events.metrics.get("food_warning_streak", 0) + 1
         else:
             state.events.metrics["food_warning_streak"] = 0
+        snapshot_day = state.events.metrics.get(
+            "cold_exposure_snapshot_day"
+        )
         if (
-            state.population.homeless_population
+            snapshot_day == day
+            and state.events.metrics.get("homeless_population", 0)
             >= self.rules.thresholds["homeless_event"]
             and state.events.metrics.get("cold_exposure_level", 0)
             >= self.rules.thresholds["cold_exposure_event_level"]
@@ -1576,6 +1590,12 @@ class EventSystem:
             "unhandled_bodies": state.social_policy.unhandled_bodies,
             "unprotected_children": self._unprotected_children(state),
             "homeless_population": state.population.homeless_population,
+            "cold_exposure_snapshot_day": state.events.metrics.get(
+                "cold_exposure_snapshot_day"
+            ),
+            "cold_exposure_homeless_population": state.events.metrics.get(
+                "homeless_population", 0
+            ),
             "cold_exposure_level": state.events.metrics.get(
                 "cold_exposure_level", 0
             ),

@@ -111,6 +111,12 @@ class FinalFrostSystem:
             ):
                 raise ValueError("wood-supply lock summary is inconsistent")
         record_days = sorted(int(day) for day in frost.daily_records)
+        if frost.legacy_hunger_history_unknown and (
+            not record_days or not frost.wood_supply_legacy_exempt
+        ):
+            raise ValueError(
+                "legacy hunger-history compatibility requires migrated frost records"
+            )
         if record_days and record_days != list(
             range(self.rules.start_day, record_days[-1] + 1)
         ):
@@ -408,7 +414,7 @@ class FinalFrostSystem:
                 if level == 3
                 else damage["cold_disability_level_2_divisor"]
             )
-            if level >= 3 or (is_frost_day and level >= 2):
+            if level >= 2:
                 disability = self._fractional_exposure_amount(
                     state,
                     people=people,
@@ -637,6 +643,12 @@ class FinalFrostSystem:
         )
 
         metrics = state.events.metrics
+        self._write_cold_exposure_snapshot(
+            state,
+            settled_day=context.settled_day,
+            is_frost_day=is_frost_day,
+            exposure=exposure,
+        )
         metrics[f"{_FROST_METRIC_PREFIX}population_start"] = population_start
         metrics[f"{_FROST_METRIC_PREFIX}new_sick"] = new_sick
         metrics[f"{_FROST_METRIC_PREFIX}new_critical"] = new_critical
@@ -1181,6 +1193,9 @@ class FinalFrostSystem:
                 "wood_supply_locked": state.final_frost.wood_supply_locked,
             },
             "hunger_statistics": {
+                "legacy_history_unknown": (
+                    state.final_frost.legacy_hunger_history_unknown
+                ),
                 "frost_hunger_days": state.final_frost.frost_hunger_days,
                 "frost_unfed_person_days": (
                     state.final_frost.frost_unfed_person_days
@@ -1470,6 +1485,34 @@ class FinalFrostSystem:
         if is_frost_day:
             level += 1
         return min(level, self.rules.damage["exposure_level_cap"])
+
+    def _write_cold_exposure_snapshot(
+        self,
+        state: GameState,
+        *,
+        settled_day: int,
+        is_frost_day: bool,
+        exposure: list[tuple[int, int, bool]] | None = None,
+    ) -> None:
+        homeless_population = state.population.homeless_population
+        state.events.metrics["cold_exposure_snapshot_day"] = settled_day
+        state.events.metrics["homeless_population"] = homeless_population
+        if homeless_population == 0:
+            level = 0
+        elif exposure is not None:
+            level = max(
+                (
+                    exposure_level
+                    for exposure_level, people, homeless in exposure
+                    if homeless and people > 0
+                ),
+                default=0,
+            )
+        else:
+            level = self._homeless_exposure_level(
+                state, is_frost_day=is_frost_day
+            )
+        state.events.metrics["cold_exposure_level"] = level
 
     @staticmethod
     def _update_exposure_streaks(
@@ -1806,57 +1849,76 @@ class FinalFrostSystem:
             coal = 1
 
         frost = state.final_frost
-        hunger_rules = self.rules.hunger
-        hunger_days = frost.frost_hunger_days
-        hunger_day_score = (
-            4
-            if hunger_days == 0
-            else 3
-            if hunger_days <= hunger_rules["score_hunger_days_three_max"]
-            else 2
-            if hunger_days <= hunger_rules["score_hunger_days_two_max"]
-            else 1
-            if hunger_days <= hunger_rules["score_hunger_days_one_max"]
-            else 0
-        )
-        peak_count = frost.frost_peak_unfed_count
-        peak_population = frost.frost_peak_population_start
-        peak_score = (
-            4
-            if peak_count == 0
-            else 3
-            if peak_count * 100
-            < peak_population * hunger_rules["score_peak_three_percent"]
-            else 2
-            if peak_count * 100
-            < peak_population * hunger_rules["score_peak_two_percent"]
-            else 1
-            if peak_count * 100
-            < peak_population * hunger_rules["score_peak_one_percent"]
-            else 0
-        )
-        unfed_person_days = frost.frost_unfed_person_days
-        population_person_days = frost.frost_population_person_days
-        cumulative_score = (
-            4
-            if unfed_person_days == 0
-            else 3
-            if unfed_person_days * 100
-            < population_person_days
-            * hunger_rules["score_cumulative_three_percent"]
-            else 2
-            if unfed_person_days * 100
-            < population_person_days
-            * hunger_rules["score_cumulative_two_percent"]
-            else 1
-            if unfed_person_days * 100
-            < population_person_days
-            * hunger_rules["score_cumulative_one_percent"]
-            else 0
-        )
-        food = min(hunger_day_score, peak_score, cumulative_score)
-        if frost.frost_hunger_deaths > 0:
-            food = min(food, hunger_rules["score_frost_death_cap"])
+        if frost.legacy_hunger_history_unknown:
+            shortage = count("food_shortage")
+            starvation = count("starvation")
+            edible_x100 = (
+                (state.resources.cooked_food + state.resources.raw_food) * 100
+                // max(state.population.population_alive, 1)
+            )
+            food_deaths = sum(record.food_deaths for record in records)
+            if starvation == 0 and shortage <= 1 and edible_x100 >= 200:
+                food = 4
+            elif starvation == 0 and shortage <= 2 and edible_x100 >= 100:
+                food = 3
+            elif starvation <= 1 and shortage <= 4 and food_deaths == 0:
+                food = 2
+            elif starvation >= 4 or food_deaths >= 5:
+                food = 0
+            else:
+                food = 1
+        else:
+            hunger_rules = self.rules.hunger
+            hunger_days = frost.frost_hunger_days
+            hunger_day_score = (
+                4
+                if hunger_days == 0
+                else 3
+                if hunger_days <= hunger_rules["score_hunger_days_three_max"]
+                else 2
+                if hunger_days <= hunger_rules["score_hunger_days_two_max"]
+                else 1
+                if hunger_days <= hunger_rules["score_hunger_days_one_max"]
+                else 0
+            )
+            peak_count = frost.frost_peak_unfed_count
+            peak_population = frost.frost_peak_population_start
+            peak_score = (
+                4
+                if peak_count == 0
+                else 3
+                if peak_count * 100
+                < peak_population * hunger_rules["score_peak_three_percent"]
+                else 2
+                if peak_count * 100
+                < peak_population * hunger_rules["score_peak_two_percent"]
+                else 1
+                if peak_count * 100
+                < peak_population * hunger_rules["score_peak_one_percent"]
+                else 0
+            )
+            unfed_person_days = frost.frost_unfed_person_days
+            population_person_days = frost.frost_population_person_days
+            cumulative_score = (
+                4
+                if unfed_person_days == 0
+                else 3
+                if unfed_person_days * 100
+                < population_person_days
+                * hunger_rules["score_cumulative_three_percent"]
+                else 2
+                if unfed_person_days * 100
+                < population_person_days
+                * hunger_rules["score_cumulative_two_percent"]
+                else 1
+                if unfed_person_days * 100
+                < population_person_days
+                * hunger_rules["score_cumulative_one_percent"]
+                else 0
+            )
+            food = min(hunger_day_score, peak_score, cumulative_score)
+            if frost.frost_hunger_deaths > 0:
+                food = min(food, hunger_rules["score_frost_death_cap"])
 
         alive = max(state.population.population_alive, 1)
         cover = state.housing.capacity * 100 // alive

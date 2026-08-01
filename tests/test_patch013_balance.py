@@ -7,11 +7,12 @@ from unittest.mock import patch
 
 from furnace_winter.config import (
     load_building_rules,
+    load_event_rules,
     load_final_frost_rules,
     load_survival_rules,
     load_technology_rules,
 )
-from furnace_winter.gameplay import EndDayStage, FinalFrostSystem
+from furnace_winter.gameplay import EndDayStage, EventSystem, FinalFrostSystem
 from furnace_winter.gameplay.end_day import EndDayContext
 from furnace_winter.gameplay.hunger import (
     remove_non_hunger_deaths_or_departures,
@@ -20,11 +21,13 @@ from furnace_winter.gameplay.hunger import (
 from furnace_winter.models import (
     BuildingState,
     DeterministicRandom,
+    EventResolutionRecord,
     FrostDayRecord,
     SaveDataError,
     decode_game_state,
     encode_game_state,
 )
+from furnace_winter.interface import ReplayLog
 from furnace_winter.gameplay.survival import create_initial_survival_state
 
 
@@ -40,6 +43,7 @@ class Patch013BalanceTests(unittest.TestCase):
             ROOT / "data" / "technologies.json"
         )
         cls.rules = load_final_frost_rules(ROOT / "data" / "final_frost.json")
+        cls.events = load_event_rules(ROOT / "data" / "events.json")
 
     def system(self) -> FinalFrostSystem:
         return FinalFrostSystem(
@@ -55,6 +59,14 @@ class Patch013BalanceTests(unittest.TestCase):
         )
         state.calendar.current_day = day
         return state
+
+    def event_system(self) -> EventSystem:
+        return EventSystem(
+            self.events,
+            self.buildings,
+            self.survival,
+            self.technology,
+        )
 
     @staticmethod
     def context(state, day: int, stage: EndDayStage) -> EndDayContext:
@@ -86,6 +98,69 @@ class Patch013BalanceTests(unittest.TestCase):
         state.hunger.light_population = 0
         state.hunger.severe_population = 0
         state.hunger.starving_population = 0
+
+    @staticmethod
+    def downgrade_v14_to_v13(document: dict) -> dict:
+        document["save_data_version"] = 13
+        del document["cold_exposure"]
+        document["hunger"] = {
+            "mild_population": document["hunger"]["light_population"],
+            "severe_population": document["hunger"]["severe_population"],
+            "starving_population": document["hunger"]["starving_population"],
+        }
+        for field in (
+            "wood_supply_check_day",
+            "wood_supply_surface_exhausted",
+            "wood_supply_logging_camp_available",
+            "wood_supply_wood_stock",
+            "wood_supply_logging_cost",
+            "wood_supply_alternative_available",
+            "wood_supply_legacy_exempt",
+            "wood_supply_locked",
+            "legacy_hunger_history_unknown",
+            "frost_hunger_days",
+            "frost_unfed_person_days",
+            "frost_population_person_days",
+            "frost_peak_unfed_count",
+            "frost_peak_population_start",
+            "frost_hunger_deaths",
+        ):
+            del document["final_frost"][field]
+        for record in document["final_frost"]["daily_records"].values():
+            for field in (
+                "unfed_population",
+                "raw_hunger_deaths",
+                "hunger_death_overflow",
+            ):
+                del record[field]
+        del document["final_result"]["report"]["limiting_factor_ids"]
+        return document
+
+    def seed_fixed_arrival_rejections(self, state) -> None:
+        for event_id, rule in self.events.fixed_arrivals.items():
+            effect = rule.options["reject"]
+            state.events.fixed_arrival_choices[event_id] = "reject"
+            state.events.resolved_event_ids.append(event_id)
+            state.events.occurrence_counts[event_id] = 1
+            state.events.resolution_history.append(
+                EventResolutionRecord(
+                    event_id=event_id,
+                    option_id="reject",
+                    event_type="major",
+                    resolved_day=rule.day,
+                    instance_id=f"{event_id}#0001",
+                    occurrence_index=1,
+                    trust_change=effect.trust,
+                    panic_change=effect.panic,
+                    resource_changes={
+                        "coal": 0,
+                        "wood": 0,
+                        "steel": 0,
+                        "raw_food": 0,
+                        "cooked_food": 0,
+                    },
+                )
+            )
 
     def test_hunger_feeds_deepest_pool_and_moves_all_pools_once(self) -> None:
         state = self.state()
@@ -330,6 +405,202 @@ class Patch013BalanceTests(unittest.TestCase):
             before,
         )
 
+    def test_level_two_cold_disability_remainder_accumulates_before_frost(self) -> None:
+        state = self.state(day=2)
+        self.set_alive(state, 8)
+        state.medical.effective_capacity = 100
+        system = self.system()
+        with (
+            patch.object(
+                FinalFrostSystem,
+                "_exposure",
+                return_value=[(2, 8, True)],
+            ),
+            patch.object(
+                FinalFrostSystem,
+                "_homeless_exposure_level",
+                return_value=2,
+            ),
+        ):
+            for day in range(2, 10):
+                system.resolve_frost_health(
+                    self.context(
+                        state,
+                        day,
+                        EndDayStage.RESOLVE_HOUSING_COLD_AND_HUNGER,
+                    )
+                )
+
+        self.assertEqual(
+            state.cold_exposure.homeless_disability_remainders["2"],
+            4,
+        )
+
+    def test_cold_snapshot_resets_and_excludes_housed_exposure(self) -> None:
+        state = self.state(day=4)
+        self.set_alive(state, 40, housed=40)
+        state.events.metrics["cold_exposure_level"] = 5
+        system = self.system()
+        system._write_cold_exposure_snapshot(
+            state, settled_day=3, is_frost_day=False
+        )
+        self.assertEqual(
+            {
+                name: state.events.metrics[name]
+                for name in (
+                    "cold_exposure_snapshot_day",
+                    "homeless_population",
+                    "cold_exposure_level",
+                )
+            },
+            {
+                "cold_exposure_snapshot_day": 3,
+                "homeless_population": 0,
+                "cold_exposure_level": 0,
+            },
+        )
+
+        self.set_alive(state, 60, housed=40)
+        for building in state.buildings.values():
+            if building.building_type == "residence":
+                building.effective_temperature = -99
+        with patch.object(
+            FinalFrostSystem,
+            "_homeless_exposure_level",
+            return_value=2,
+        ):
+            system._write_cold_exposure_snapshot(
+                state, settled_day=3, is_frost_day=False
+            )
+        state.events.metrics["cold_exposure_warning_streak"] = 1
+        self.assertNotIn(
+            "cold_house_night",
+            {
+                event_id
+                for event_id, _event_type in self.event_system()._condition_candidates(
+                    state
+                )
+            },
+        )
+
+        system._write_cold_exposure_snapshot(
+            state,
+            settled_day=3,
+            is_frost_day=False,
+            exposure=[(2, 8, True), (4, 12, True), (5, 40, False)],
+        )
+        self.assertEqual(state.events.metrics["cold_exposure_level"], 4)
+
+    def test_cold_house_uses_one_previous_day_snapshot_for_both_thresholds(self) -> None:
+        system = self.system()
+        events = self.event_system()
+
+        qualifying = self.state(day=4)
+        self.set_alive(qualifying, 60, housed=40)
+        with patch.object(
+            FinalFrostSystem,
+            "_homeless_exposure_level",
+            return_value=3,
+        ):
+            system._write_cold_exposure_snapshot(
+                qualifying, settled_day=3, is_frost_day=False
+            )
+        qualifying.events.metrics["cold_exposure_warning_streak"] = 1
+        self.assertIn(
+            "cold_house_night",
+            {event_id for event_id, _kind in events._condition_candidates(qualifying)},
+        )
+        activated = deepcopy(qualifying)
+        events.initialize_day(activated)
+        self.assertIn("cold_house_night", activated.events.active_events)
+        snapshot = next(
+            view["status_summary"]
+            for view in events.active_event_views(activated)
+            if view["event_id"] == "cold_house_night"
+        )
+        self.assertEqual(snapshot["cold_exposure_snapshot_day"], 3)
+        self.assertEqual(snapshot["cold_exposure_homeless_population"], 20)
+        self.assertEqual(snapshot["cold_exposure_level"], 3)
+
+        too_few = self.state(day=4)
+        self.set_alive(too_few, 50, housed=40)
+        with patch.object(
+            FinalFrostSystem,
+            "_homeless_exposure_level",
+            return_value=4,
+        ):
+            system._write_cold_exposure_snapshot(
+                too_few, settled_day=3, is_frost_day=False
+            )
+        too_few.events.metrics["cold_exposure_warning_streak"] = 1
+        self.assertNotIn(
+            "cold_house_night",
+            {event_id for event_id, _kind in events._condition_candidates(too_few)},
+        )
+
+        # Current-day housing changes cannot be mixed with yesterday's level.
+        self.set_alive(qualifying, 40, housed=40)
+        self.assertIn(
+            "cold_house_night",
+            {event_id for event_id, _kind in events._condition_candidates(qualifying)},
+        )
+        qualifying.events.metrics["cold_exposure_snapshot_day"] = 2
+        self.assertNotIn(
+            "cold_house_night",
+            {event_id for event_id, _kind in events._condition_candidates(qualifying)},
+        )
+
+    def test_cold_snapshot_save_and_replay_preserve_event_result(self) -> None:
+        state = self.state(day=4)
+        self.set_alive(state, 60, housed=40)
+        with patch.object(
+            FinalFrostSystem,
+            "_homeless_exposure_level",
+            return_value=3,
+        ):
+            self.system()._write_cold_exposure_snapshot(
+                state, settled_day=3, is_frost_day=False
+            )
+        state.events.metrics["cold_exposure_warning_streak"] = 1
+        expected = self.event_system()._condition_candidates(state)
+
+        restored = decode_game_state(encode_game_state(state))
+        replay_state = decode_game_state(ReplayLog(state).document().initial_state)
+
+        for candidate in (restored, replay_state):
+            event_system = self.event_system()
+            self.assertEqual(event_system._condition_candidates(candidate), expected)
+            event_system.initialize_day(candidate)
+            self.assertIn("cold_house_night", candidate.events.active_events)
+
+    def test_cold_snapshot_strict_save_validation_rejects_mixed_facts(self) -> None:
+        state = self.state(day=4)
+        self.set_alive(state, 60, housed=40)
+        with patch.object(
+            FinalFrostSystem,
+            "_homeless_exposure_level",
+            return_value=3,
+        ):
+            self.system()._write_cold_exposure_snapshot(
+                state, settled_day=3, is_frost_day=False
+            )
+        document = encode_game_state(state)
+
+        missing_population = deepcopy(document)
+        del missing_population["events"]["metrics"]["homeless_population"]
+        with self.assertRaisesRegex(SaveDataError, "must retain"):
+            decode_game_state(missing_population)
+
+        wrong_day = deepcopy(document)
+        wrong_day["events"]["metrics"]["cold_exposure_snapshot_day"] = 2
+        with self.assertRaisesRegex(SaveDataError, "latest settled day"):
+            decode_game_state(wrong_day)
+
+        stale_level = deepcopy(document)
+        stale_level["events"]["metrics"]["homeless_population"] = 0
+        with self.assertRaisesRegex(SaveDataError, "must match"):
+            decode_game_state(stale_level)
+
     def test_food_score_uses_exact_ratio_boundaries(self) -> None:
         state = self.state(day=55)
         state.final_frost.daily_records = {
@@ -405,32 +676,7 @@ class Patch013BalanceTests(unittest.TestCase):
 
     def test_v13_migration_builds_four_pools_and_strict_remainder_ranges(self) -> None:
         state = self.state()
-        document = encode_game_state(state)
-        document["save_data_version"] = 13
-        del document["cold_exposure"]
-        document["hunger"] = {
-            "mild_population": 0,
-            "severe_population": 0,
-            "starving_population": 0,
-        }
-        for field in (
-            "wood_supply_check_day",
-            "wood_supply_surface_exhausted",
-            "wood_supply_logging_camp_available",
-            "wood_supply_wood_stock",
-            "wood_supply_logging_cost",
-            "wood_supply_alternative_available",
-            "wood_supply_legacy_exempt",
-            "wood_supply_locked",
-            "frost_hunger_days",
-            "frost_unfed_person_days",
-            "frost_population_person_days",
-            "frost_peak_unfed_count",
-            "frost_peak_population_start",
-            "frost_hunger_deaths",
-        ):
-            del document["final_frost"][field]
-        del document["final_result"]["report"]["limiting_factor_ids"]
+        document = self.downgrade_v14_to_v13(encode_game_state(state))
 
         migrated = decode_game_state(document)
         self.assertEqual(migrated.save_data_version, 14)
@@ -442,6 +688,110 @@ class Patch013BalanceTests(unittest.TestCase):
         invalid["hunger"]["illness_remainder"] = 5
         with self.assertRaisesRegex(SaveDataError, "integer range"):
             decode_game_state(invalid)
+
+    def test_v13_completed_starvation_history_keeps_legacy_score(self) -> None:
+        state = self.state(day=49)
+        system = self.system()
+        system.prepare_new_day(state)
+        state.final_frost.wood_supply_legacy_exempt = True
+        state.final_frost.legacy_hunger_history_unknown = True
+        population = state.population.population_alive
+        base_cap = min(22, 12 + max(0, population - 80) // 35)
+        state.final_frost.daily_records = {
+            str(day): FrostDayRecord(
+                day=day,
+                real_temperature=self.rules.temperatures[day].real,
+                display_label=self.rules.temperatures[day].display_label,
+                population_start=population,
+                population_end=population,
+                food_shortage=day == 50,
+                starvation=day == 50,
+                base_natural_death_cap=base_cap,
+                applied_natural_death_cap=base_cap,
+            )
+            for day in range(49, 56)
+        }
+        state.final_frost.frost_population_person_days = population * 7
+        state.calendar.current_day = 55
+        state.daily_survival.settled_day = 55
+        state.daily_survival.base_temperature = self.rules.temperatures[55].real
+        state.daily_survival.zone_temperatures = {
+            "inner_ring": self.rules.temperatures[55].real,
+            "middle_ring": self.rules.temperatures[55].real,
+            "outer_ring": self.rules.temperatures[55].real,
+        }
+        self.seed_fixed_arrival_rejections(state)
+        system.finalize_day_55(
+            self.context(
+                state, 55, EndDayStage.RECORD_DAILY_LOG_AND_ENDING_TAGS
+            )
+        )
+        self.assertEqual(state.final_result.system_scores["food"], 2)
+        original_result = deepcopy(state.final_result)
+
+        legacy = self.downgrade_v14_to_v13(encode_game_state(state))
+        migrated = decode_game_state(legacy)
+
+        self.assertTrue(migrated.final_frost.legacy_hunger_history_unknown)
+        self.assertEqual(
+            migrated.final_frost.daily_records["50"].unfed_population, 0
+        )
+        self.assertEqual(migrated.final_result, original_result)
+        system.validate_state(migrated)
+
+    def test_v13_migration_rejects_coerced_scalar_types(self) -> None:
+        base = self.downgrade_v14_to_v13(
+            encode_game_state(self.state())
+        )
+        for path, value in (
+            (("hunger", "mild_population"), True),
+            (("hunger", "severe_population"), "0"),
+            (("population", "population_alive"), "80"),
+            (("daily_survival", "unfed_population"), True),
+            (("resources", "wood"), "200"),
+            (("final_frost", "entered"), 0),
+        ):
+            with self.subTest(path=path, value=value):
+                invalid = deepcopy(base)
+                invalid[path[0]][path[1]] = value
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(invalid)
+
+    def test_v13_migration_rejects_coerced_frost_record_types(self) -> None:
+        state = self.state(day=49)
+        system = self.system()
+        system.prepare_new_day(state)
+        population = state.population.population_alive
+        base_cap = min(22, 12 + max(0, population - 80) // 35)
+        state.final_frost.daily_records["49"] = FrostDayRecord(
+            day=49,
+            real_temperature=self.rules.temperatures[49].real,
+            display_label=self.rules.temperatures[49].display_label,
+            population_start=population,
+            population_end=population,
+            base_natural_death_cap=base_cap,
+            applied_natural_death_cap=base_cap,
+        )
+        state.final_frost.frost_population_person_days = population
+        state.daily_survival.settled_day = 49
+        state.daily_survival.base_temperature = self.rules.temperatures[49].real
+        state.daily_survival.zone_temperatures = {
+            "inner_ring": self.rules.temperatures[49].real,
+            "middle_ring": self.rules.temperatures[49].real,
+            "outer_ring": self.rules.temperatures[49].real,
+        }
+        base = self.downgrade_v14_to_v13(encode_game_state(state))
+        for field, value in (
+            ("day", "49"),
+            ("population_start", True),
+            ("food_deaths", "0"),
+            ("starvation", 0),
+        ):
+            with self.subTest(field=field, value=value):
+                invalid = deepcopy(base)
+                invalid["final_frost"]["daily_records"]["49"][field] = value
+                with self.assertRaises(SaveDataError):
+                    decode_game_state(invalid)
 
 
 if __name__ == "__main__":

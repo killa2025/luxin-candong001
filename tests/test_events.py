@@ -537,6 +537,8 @@ class EventPatchTests(unittest.TestCase):
 
     def test_cold_house_requires_exposure_and_normal_phase_warning_delay(self) -> None:
         state = self.make_state(day=4)
+        state.events.metrics["cold_exposure_snapshot_day"] = 3
+        state.events.metrics["homeless_population"] = 40
         state.events.metrics["cold_exposure_level"] = 3
         system = self.event_system()
 
@@ -544,12 +546,15 @@ class EventPatchTests(unittest.TestCase):
         self.assertNotIn("cold_house_night", state.events.active_events)
 
         state.events.metrics["cold_exposure_warning_streak"] = 1
+        state.events.metrics["cold_exposure_snapshot_day"] = 4
         state.calendar.current_day = 5
         system.begin_new_day(state)
         self.assertIn("cold_house_night", state.events.active_events)
 
     def test_cold_house_furnace_prompt_has_no_event_effect_or_fuel_gate(self) -> None:
         state = self.make_state(day=5)
+        state.events.metrics["cold_exposure_snapshot_day"] = 4
+        state.events.metrics["homeless_population"] = 40
         state.events.metrics["cold_exposure_level"] = 3
         state.events.metrics["cold_exposure_warning_streak"] = 1
         system = self.event_system()
