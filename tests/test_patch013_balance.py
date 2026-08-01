@@ -9,10 +9,24 @@ from furnace_winter.config import (
     load_building_rules,
     load_event_rules,
     load_final_frost_rules,
+    load_law_rules,
+    load_oath_order_rules,
     load_survival_rules,
     load_technology_rules,
 )
-from furnace_winter.gameplay import EndDayStage, EventSystem, FinalFrostSystem
+from furnace_winter.gameplay import (
+    BuildingSystem,
+    CONFIRM_END_DAY_COMMAND,
+    END_DAY_COMMAND,
+    EndDayEngine,
+    EndDayStage,
+    EventSystem,
+    FinalFrostSystem,
+    LawSystem,
+    OathOrderSystem,
+    SurvivalSystem,
+    TechnologySystem,
+)
 from furnace_winter.gameplay.end_day import EndDayContext
 from furnace_winter.gameplay.hunger import (
     remove_non_hunger_deaths_or_departures,
@@ -27,7 +41,14 @@ from furnace_winter.models import (
     decode_game_state,
     encode_game_state,
 )
-from furnace_winter.interface import ReplayLog
+from furnace_winter.interface import (
+    CommandRequest,
+    ErrorCode,
+    ReplayEntry,
+    ReplayLog,
+    decode_replay_document,
+)
+from furnace_winter.models import to_primitive
 from furnace_winter.gameplay.survival import create_initial_survival_state
 
 
@@ -44,6 +65,10 @@ class Patch013BalanceTests(unittest.TestCase):
         )
         cls.rules = load_final_frost_rules(ROOT / "data" / "final_frost.json")
         cls.events = load_event_rules(ROOT / "data" / "events.json")
+        cls.laws = load_law_rules(ROOT / "data" / "laws.json")
+        cls.oath_order = load_oath_order_rules(
+            ROOT / "data" / "oath_order.json"
+        )
 
     def system(self) -> FinalFrostSystem:
         return FinalFrostSystem(
@@ -67,6 +92,36 @@ class Patch013BalanceTests(unittest.TestCase):
             self.survival,
             self.technology,
         )
+
+    def full_engine(self) -> EndDayEngine:
+        engine = EndDayEngine()
+        SurvivalSystem(
+            self.survival, self.buildings, self.technology
+        ).install(engine)
+        BuildingSystem(
+            self.buildings, self.survival, self.technology
+        ).install(engine)
+        LawSystem(
+            self.laws,
+            self.buildings,
+            self.survival,
+            self.technology,
+        ).install(engine)
+        TechnologySystem(
+            self.technology,
+            self.buildings,
+            self.survival,
+            self.laws,
+        ).install(engine)
+        self.event_system().install(engine)
+        OathOrderSystem(
+            self.oath_order,
+            self.buildings,
+            self.survival,
+            self.technology,
+        ).install(engine)
+        self.system().install(engine)
+        return engine
 
     @staticmethod
     def context(state, day: int, stage: EndDayStage) -> EndDayContext:
@@ -118,6 +173,7 @@ class Patch013BalanceTests(unittest.TestCase):
             "wood_supply_legacy_exempt",
             "wood_supply_locked",
             "legacy_hunger_history_unknown",
+            "legacy_hunger_record_days",
             "frost_hunger_days",
             "frost_unfed_person_days",
             "frost_population_person_days",
@@ -627,6 +683,33 @@ class Patch013BalanceTests(unittest.TestCase):
         state.final_frost.frost_peak_unfed_count = 50
         self.assertEqual(self.system()._score(state)["food"], 0)
 
+    def test_mixed_legacy_frost_uses_v13_food_score_for_entire_period(self) -> None:
+        state = self.state(day=55)
+        state.final_frost.daily_records = {
+            str(day): FrostDayRecord(
+                day=day,
+                real_temperature=self.rules.temperatures[day].real,
+                display_label=self.rules.temperatures[day].display_label,
+                population_start=80,
+                population_end=80,
+                food_shortage=day == 55,
+                starvation=day == 55,
+                unfed_population=1 if day == 55 else 0,
+            )
+            for day in range(49, 56)
+        }
+        state.final_frost.frost_hunger_days = 1
+        state.final_frost.frost_unfed_person_days = 1
+        state.final_frost.frost_population_person_days = 560
+        state.final_frost.frost_peak_unfed_count = 1
+        state.final_frost.frost_peak_population_start = 80
+
+        self.assertEqual(self.system()._score(state)["food"], 3)
+
+        state.final_frost.legacy_hunger_history_unknown = True
+        state.final_frost.legacy_hunger_record_days = list(range(49, 55))
+        self.assertEqual(self.system()._score(state)["food"], 2)
+
     def test_d49_wood_supply_lock_is_machine_readable_and_caps_result(self) -> None:
         state = self.state(day=49)
         for point in state.surface_resource_points.values():
@@ -712,6 +795,7 @@ class Patch013BalanceTests(unittest.TestCase):
             for day in range(49, 56)
         }
         state.final_frost.frost_population_person_days = population * 7
+        state.final_frost.legacy_hunger_record_days = list(range(49, 56))
         state.calendar.current_day = 55
         state.daily_survival.settled_day = 55
         state.daily_survival.base_temperature = self.rules.temperatures[55].real
@@ -738,6 +822,135 @@ class Patch013BalanceTests(unittest.TestCase):
         )
         self.assertEqual(migrated.final_result, original_result)
         system.validate_state(migrated)
+
+    def test_v13_in_progress_frost_uses_v14_allocation_on_next_day(self) -> None:
+        legacy_source = self.state(day=49)
+        system = self.system()
+        system.prepare_new_day(legacy_source)
+        legacy_source.final_frost.wood_supply_legacy_exempt = True
+        legacy_source.final_frost.legacy_hunger_history_unknown = True
+        legacy_source.final_frost.legacy_hunger_record_days = list(
+            range(49, 55)
+        )
+        population = legacy_source.population.population_alive
+        base_cap = min(22, 12 + max(0, population - 80) // 35)
+        legacy_source.final_frost.daily_records = {
+            str(day): FrostDayRecord(
+                day=day,
+                real_temperature=self.rules.temperatures[day].real,
+                display_label=self.rules.temperatures[day].display_label,
+                population_start=population,
+                population_end=population,
+                base_natural_death_cap=base_cap,
+                applied_natural_death_cap=base_cap,
+            )
+            for day in range(49, 55)
+        }
+        legacy_source.final_frost.frost_population_person_days = population * 6
+        legacy_source.calendar.current_day = 55
+        legacy_source.daily_survival.settled_day = 54
+        legacy_source.daily_survival.base_temperature = (
+            self.rules.temperatures[54].real
+        )
+        legacy_source.daily_survival.zone_temperatures = {
+            "inner_ring": self.rules.temperatures[54].real,
+            "middle_ring": self.rules.temperatures[54].real,
+            "outer_ring": self.rules.temperatures[54].real,
+        }
+        self.seed_fixed_arrival_rejections(legacy_source)
+        legacy_source.resources.cooked_food = 0
+        legacy_source.resources.raw_food = 0
+        legacy_source.hunger.none_population = 0
+        legacy_source.hunger.starving_population = population
+        legacy_source.population.healthy_population = population - 20
+        legacy_source.population.critical_population = 20
+        legacy_source.medical.medical_pressure = 15
+        legacy_source.furnace.mode_id = "off"
+        legacy_source.furnace.is_active = False
+        legacy_source.furnace.overload_level = 0
+
+        legacy_document = self.downgrade_v14_to_v13(
+            encode_game_state(legacy_source)
+        )
+        migrated = decode_game_state(legacy_document)
+        self.assertEqual(
+            migrated.final_frost.legacy_hunger_record_days,
+            list(range(49, 55)),
+        )
+
+        def settle_with_replay(state, command_id: str):
+            initial = deepcopy(state)
+            engine = self.full_engine()
+            request = CommandRequest(
+                command_id,
+                END_DAY_COMMAND,
+                {},
+                state.command_sequence,
+            )
+            execution = engine.execute(state, request)
+            if execution.result.code is ErrorCode.END_DAY_CONFIRMATION_REQUIRED:
+                request = CommandRequest(
+                    f"confirm-{command_id}",
+                    CONFIRM_END_DAY_COMMAND,
+                    execution.result.data["confirmation"],
+                    state.command_sequence,
+                )
+                execution = engine.execute(state, request)
+            replay = ReplayLog(initial)
+            replay.append(
+                ReplayEntry(
+                    sequence=1,
+                    request=request,
+                    result=execution.result,
+                    random_before=execution.random_before,
+                    random_after=execution.random_after,
+                    logs=execution.logs,
+                )
+            )
+            return execution, replay.document()
+
+        first = deepcopy(migrated)
+        second = deepcopy(migrated)
+        first_execution, first_replay = settle_with_replay(first, "mixed-1")
+        second_execution, second_replay = settle_with_replay(second, "mixed-1")
+
+        self.assertEqual(first_execution.result.code, ErrorCode.OK)
+        self.assertEqual(second_execution.result.code, ErrorCode.OK)
+        self.assertEqual(encode_game_state(first), encode_game_state(second))
+        self.assertEqual(to_primitive(first_replay), to_primitive(second_replay))
+        self.assertEqual(
+            decode_game_state(encode_game_state(first)), first
+        )
+        self.assertEqual(
+            decode_replay_document(to_primitive(first_replay)),
+            first_replay,
+        )
+
+        record = first.final_frost.daily_records["55"]
+        self.assertGreater(record.raw_disease_deaths, 0)
+        self.assertGreater(record.raw_hunger_deaths, 0)
+        self.assertGreater(record.raw_cold_deaths, 0)
+        self.assertGreater(
+            record.raw_disease_deaths
+            + record.raw_hunger_deaths
+            + record.raw_cold_deaths,
+            record.applied_natural_death_cap,
+        )
+        self.assertEqual(
+            record.actual_disease_deaths
+            + record.food_deaths
+            + record.actual_cold_deaths,
+            record.applied_natural_death_cap,
+        )
+        self.assertEqual(
+            first.final_frost.legacy_hunger_record_days,
+            list(range(49, 55)),
+        )
+        self.assertTrue(first.final_frost.legacy_hunger_history_unknown)
+        self.assertEqual(
+            first.final_result.system_scores["food"],
+            system._score(first)["food"],
+        )
 
     def test_v13_migration_rejects_coerced_scalar_types(self) -> None:
         base = self.downgrade_v14_to_v13(

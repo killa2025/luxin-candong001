@@ -111,8 +111,15 @@ class FinalFrostSystem:
             ):
                 raise ValueError("wood-supply lock summary is inconsistent")
         record_days = sorted(int(day) for day in frost.daily_records)
-        if frost.legacy_hunger_history_unknown and (
-            not record_days or not frost.wood_supply_legacy_exempt
+        legacy_record_days = frost.legacy_hunger_record_days
+        if (
+            frost.legacy_hunger_history_unknown != bool(legacy_record_days)
+            or legacy_record_days != sorted(set(legacy_record_days))
+            or legacy_record_days != record_days[: len(legacy_record_days)]
+            or (
+                legacy_record_days
+                and not frost.wood_supply_legacy_exempt
+            )
         ):
             raise ValueError(
                 "legacy hunger-history compatibility requires migrated frost records"
@@ -1195,6 +1202,9 @@ class FinalFrostSystem:
             "hunger_statistics": {
                 "legacy_history_unknown": (
                     state.final_frost.legacy_hunger_history_unknown
+                ),
+                "legacy_record_days": list(
+                    state.final_frost.legacy_hunger_record_days
                 ),
                 "frost_hunger_days": state.final_frost.frost_hunger_days,
                 "frost_unfed_person_days": (

@@ -646,6 +646,7 @@ class FinalFrostState:
     wood_supply_legacy_exempt: bool = False
     wood_supply_locked: bool = False
     legacy_hunger_history_unknown: bool = False
+    legacy_hunger_record_days: list[int] = field(default_factory=list)
     pending_extreme_crisis_conditions: list[str] = field(default_factory=list)
     daily_records: dict[str, FrostDayRecord] = field(default_factory=dict)
     frost_deaths: int = 0

@@ -258,6 +258,7 @@ class SaveMigrationRegistry:
                     "wood_supply_legacy_exempt",
                     "wood_supply_locked",
                     "legacy_hunger_history_unknown",
+                    "legacy_hunger_record_days",
                     "frost_hunger_days",
                     "frost_unfed_person_days",
                     "frost_population_person_days",
@@ -329,6 +330,7 @@ class SaveMigrationRegistry:
                 "wood_supply_legacy_exempt",
                 "wood_supply_locked",
                 "legacy_hunger_history_unknown",
+                "legacy_hunger_record_days",
                 "frost_hunger_days",
                 "frost_unfed_person_days",
                 "frost_population_person_days",
@@ -477,6 +479,7 @@ _PATCH_013_FINAL_FROST_FIELDS = {
     "wood_supply_legacy_exempt",
     "wood_supply_locked",
     "legacy_hunger_history_unknown",
+    "legacy_hunger_record_days",
     "frost_hunger_days",
     "frost_unfed_person_days",
     "frost_population_person_days",
@@ -2016,6 +2019,12 @@ def _decode_final_frost(value: Any) -> FinalFrostState:
             data["legacy_hunger_history_unknown"],
             "final_frost.legacy_hunger_history_unknown",
         ),
+        legacy_hunger_record_days=_integer_list(
+            data["legacy_hunger_record_days"],
+            "final_frost.legacy_hunger_record_days",
+            minimum=49,
+            maximum=55,
+        ),
         pending_extreme_crisis_conditions=_string_list(
             data["pending_extreme_crisis_conditions"],
             "final_frost.pending_extreme_crisis_conditions",
@@ -3264,7 +3273,18 @@ def _migrate_v13_to_v14(document: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw_records, Mapping):
         raise SaveDataError("final_frost.daily_records must be an object")
     records = dict(raw_records)
-    frost["legacy_hunger_history_unknown"] = bool(records)
+    if any(
+        not isinstance(day, str)
+        or not day.isdigit()
+        or str(int(day)) != day
+        for day in records
+    ):
+        raise SaveDataError(
+            "final_frost.daily_records keys must be canonical days"
+        )
+    legacy_record_days = sorted(int(day) for day in records)
+    frost["legacy_hunger_history_unknown"] = bool(legacy_record_days)
+    frost["legacy_hunger_record_days"] = legacy_record_days
     migrated_records: dict[str, Any] = {}
     for day, raw_record in records.items():
         path = f"final_frost.daily_records.{day}"
@@ -4512,8 +4532,13 @@ def _validate_state_invariants(
             raise SaveDataError("depleted surface resource points cannot retain staff")
 
     frost = state.final_frost
-    if frost.legacy_hunger_history_unknown and (
-        not frost.daily_records or not frost.wood_supply_legacy_exempt
+    all_record_days = sorted(int(key) for key in frost.daily_records)
+    legacy_record_days = frost.legacy_hunger_record_days
+    if (
+        frost.legacy_hunger_history_unknown != bool(legacy_record_days)
+        or legacy_record_days != sorted(set(legacy_record_days))
+        or legacy_record_days != all_record_days[: len(legacy_record_days)]
+        or (legacy_record_days and not frost.wood_supply_legacy_exempt)
     ):
         raise SaveDataError(
             "legacy hunger compatibility requires migrated frost history"
@@ -4562,7 +4587,7 @@ def _validate_state_invariants(
         raise SaveDataError("D49+ state must retain its final frost baseline")
     if frost.entered and state.calendar.current_day < 49:
         raise SaveDataError("final frost baseline cannot exist before D49")
-    record_days = sorted(int(key) for key in frost.daily_records)
+    record_days = all_record_days
     latest_required_day = min(55, legal_settled_day)
     expected_record_days = (
         list(range(49, latest_required_day + 1))
@@ -4588,9 +4613,9 @@ def _validate_state_invariants(
             raise SaveDataError("final frost daily population chain is discontinuous")
         if record.population_end > record.population_start:
             raise SaveDataError("final frost daily population cannot increase during settlement")
-        if (
-            not frost.legacy_hunger_history_unknown
-            and record.starvation != (record.unfed_population > 0)
+        is_legacy_record = record.day in legacy_record_days
+        if not is_legacy_record and record.starvation != (
+            record.unfed_population > 0
         ):
             raise SaveDataError(
                 "final frost starvation flag must match the unfed population"
@@ -4655,7 +4680,7 @@ def _validate_state_invariants(
         )
         expected_hunger_deaths = (
             record.food_deaths
-            if frost.legacy_hunger_history_unknown
+            if is_legacy_record
             else min(
                 record.raw_hunger_deaths,
                 expected_applied_cap - expected_disease_deaths,
@@ -4667,7 +4692,7 @@ def _validate_state_invariants(
             - expected_disease_deaths
             - (
                 0
-                if frost.legacy_hunger_history_unknown
+                if is_legacy_record
                 else expected_hunger_deaths
             ),
         )
@@ -4678,14 +4703,14 @@ def _validate_state_invariants(
             != record.raw_disease_deaths - expected_disease_deaths
             or record.food_deaths != expected_hunger_deaths
             or (
-                frost.legacy_hunger_history_unknown
+                is_legacy_record
                 and (
                     record.raw_hunger_deaths != 0
                     or record.hunger_death_overflow != 0
                 )
             )
             or (
-                not frost.legacy_hunger_history_unknown
+                not is_legacy_record
                 and record.hunger_death_overflow
                 != record.raw_hunger_deaths - expected_hunger_deaths
             )
