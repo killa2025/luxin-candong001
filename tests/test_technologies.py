@@ -66,6 +66,45 @@ class TechnologyPatchTests(unittest.TestCase):
             self.law_rules,
         )
 
+    def test_irreversible_steel_supply_lock_is_visible_and_strongly_warned(self) -> None:
+        state = self.make_state()
+        state.resources.steel = 2
+        for point in state.surface_resource_points.values():
+            if point.resource_type == "steel":
+                point.remaining_amount = 0
+                point.is_depleted = True
+                point.assigned_workers = 0
+                point.assigned_engineers = 0
+        system = self.technology_system()
+
+        warning = system.evaluate_risks(state)
+        view = {
+            item["tech_id"]: item for item in system.view(state)
+        }["tech_steel_screening"]
+
+        self.assertEqual(len(warning), 1)
+        self.assertEqual(
+            warning[0].warning_id,
+            "technology.steel_supply_irreversibly_locked",
+        )
+        self.assertEqual(warning[0].level.value, "B_STRONG")
+        self.assertEqual(warning[0].details["required_steel"], 5)
+        self.assertEqual(warning[0].details["recoverable_steel"], 2)
+        self.assertEqual(warning[0].details["steel_shortfall"], 3)
+        self.assertEqual(
+            view["irreversible_resource_lock"], warning[0].details
+        )
+
+        recoverable = self.make_state()
+        recoverable.resources.steel = 2
+        steel_point = next(
+            point
+            for point in recoverable.surface_resource_points.values()
+            if point.resource_type == "steel"
+        )
+        steel_point.remaining_amount = 3
+        self.assertEqual(system.evaluate_risks(recoverable), ())
+
     @staticmethod
     def unlock_overload(state, level: int) -> None:
         completed = [

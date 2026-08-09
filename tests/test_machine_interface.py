@@ -73,6 +73,36 @@ class CommandInterfaceTests(unittest.TestCase):
             {"mode": ["normal", "emergency"]},
         )
 
+    def test_command_schema_exposes_and_validates_argument_semantics(self) -> None:
+        catalog = CommandCatalog()
+        catalog.register(
+            CommandSpec(
+                name="test.assign",
+                required_arguments={"count": ArgumentKind.INTEGER},
+                argument_semantics={"count": "absolute_target_count"},
+            )
+        )
+
+        self.assertEqual(
+            catalog.get("test.assign").argument_semantics,
+            {"count": "absolute_target_count"},
+        )
+        with self.assertRaises(ValueError):
+            catalog.register(
+                CommandSpec(
+                    name="test.unknown-semantic",
+                    argument_semantics={"count": "absolute_target_count"},
+                )
+            )
+        with self.assertRaises(ValueError):
+            catalog.register(
+                CommandSpec(
+                    name="test.bad-semantic",
+                    required_arguments={"count": ArgumentKind.INTEGER},
+                    argument_semantics={"count": "Not normalized"},
+                )
+            )
+
     def test_unknown_commands_are_rejected(self) -> None:
         result = self.validator.validate(CommandRequest("command-1", "game.unknown"))
 

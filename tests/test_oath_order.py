@@ -304,6 +304,8 @@ class OathOrderPatchTests(unittest.TestCase):
         view = system.route_view(state)["facilities"]["oath_hall"]
         self.assertTrue(view["enabled"])
         self.assertEqual(view["slot_cost"], 0)
+        self.assertEqual(view["minimum_total_staff"], 1)
+        self.assertEqual(view["staff_assignment_mode"], "absolute_target_count")
         self.assertFalse(view["uses_heat"])
         self.assertEqual(state.buildings, buildings_before)
         self.assertEqual(state.building_management.zone_slots_used, slots_before)
@@ -319,6 +321,41 @@ class OathOrderPatchTests(unittest.TestCase):
         self.assertTrue(state.oath_order.oath_hall.is_running)
         state.furnace.is_active = False
         self.assertTrue(state.oath_order.oath_hall.is_running)
+
+    def test_route_view_discloses_law_order_costs_and_action_contracts(self) -> None:
+        system = self.system()
+        state = self.make_state(day=35)
+
+        view = system.route_view(state)
+        laws = {item["law_id"]: item for item in view["law_rules"]}
+        actions = {item["action_id"]: item for item in view["action_rules"]}
+
+        self.assertEqual(view["entry_law_ids"], {
+            "oath": "guard_oath",
+            "iron": "city_patrol_order",
+        })
+        self.assertTrue(laws["city_patrol_order"]["confirmation_required"])
+        self.assertEqual(
+            laws["morning_roll_call"]["required_law_ids"],
+            ["city_patrol_order"],
+        )
+        self.assertEqual(laws["highest_order"]["trust_change"], -8)
+        self.assertTrue(laws["highest_order"]["facility_required"])
+        self.assertEqual(actions["patrol"]["required_law_id"], "city_patrol_order")
+        self.assertEqual(actions["patrol"]["cooldown_days"], 3)
+
+        spec = next(
+            item
+            for item in system.command_specs()
+            if item.name == STAFF_OATH_ORDER_FACILITY_COMMAND
+        )
+        self.assertEqual(
+            spec.argument_semantics,
+            {
+                "workers": "absolute_target_count",
+                "engineers": "absolute_target_count",
+            },
+        )
 
     def test_regular_staffing_respects_route_facility_assignment(self) -> None:
         system = self.system()

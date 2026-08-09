@@ -26,8 +26,11 @@ class GameSessionTests(unittest.TestCase):
     def test_session_exposes_all_systems_and_validated_numeric_views(self) -> None:
         session = self.new_session(seed=1101)
 
-        self.assertEqual(session.status()["day"], 1)
-        self.assertEqual(session.status()["population"]["alive"], 80)
+        status = session.status()
+        self.assertEqual(status["day"], 1)
+        self.assertEqual(status["population"]["alive"], 80)
+        self.assertEqual(status["ration"]["selected_mode"], "normal")
+        self.assertEqual(status["ration"]["effective_mode"], "normal")
         self.assertEqual(
             {spec.name for spec in session.command_specs()},
             {
@@ -80,6 +83,20 @@ class GameSessionTests(unittest.TestCase):
                 "research_days"
             ],
             1,
+        )
+
+        observation = session.observe()
+        self.assertIsNotNone(observation.law_view)
+        self.assertEqual(len(observation.technology_view), 37)
+        self.assertIn("law_rules", observation.oath_order_view)
+        assign_resource = next(
+            spec
+            for spec in session.command_specs()
+            if spec.name == "game.assign_resource"
+        )
+        self.assertEqual(
+            assign_resource.argument_semantics["count"],
+            "absolute_target_count",
         )
 
     def test_mutating_command_is_saved_and_loadable(self) -> None:

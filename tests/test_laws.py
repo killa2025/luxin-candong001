@@ -480,6 +480,82 @@ class LawPatchTests(unittest.TestCase):
         self.assertNotIn("emergency_ration", state.laws.cooldowns)
         self.assertEqual(state, before)
 
+    def test_food_settlement_uses_resolved_canteen_operation_after_coal_payment(self) -> None:
+        state = self.make_state()
+        canteen = self.execute_building(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        self.execute_building(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": canteen.data["building_id"],
+                "population_type": "workers",
+                "count": 5,
+            },
+        )
+        state.laws.signed_law_ids = ["coarse_soup_law"]
+        state.social_policy.current_ration_mode = "coarse_soup"
+        state.social_policy.ration_food_numerator = 70
+        state.social_policy.ration_food_denominator = 100
+        state.calendar.current_day = 38
+        state.furnace.mode_id = "level_3"
+        state.furnace.is_active = True
+        state.resources.coal = 150
+        state.resources.raw_food = 0
+        state.resources.cooked_food = 40
+        state.daily_survival.storage_used = (
+            state.resources.coal
+            + state.resources.wood
+            + state.resources.steel
+            + state.resources.cooked_food
+        )
+
+        warnings = SurvivalSystem(
+            self.survival_rules, self.building_rules
+        ).evaluate_risks(state)
+        food_warning = next(
+            warning
+            for warning in warnings
+            if warning.warning_id == "survival.food_shortfall"
+        )
+        self.assertEqual(food_warning.details["selected_ration_mode"], "coarse_soup")
+        self.assertEqual(food_warning.details["ration_mode_used"], "coarse_soup")
+        self.assertIsNone(food_warning.details["ration_fallback_reason"])
+
+        result = self.settle(self.engine(), state)
+
+        self.assertTrue(result.result.accepted)
+        self.assertTrue(state.buildings[canteen.data["building_id"]].is_operational)
+        self.assertEqual(state.daily_survival.ration_mode_used, "coarse_soup")
+        self.assertEqual(state.daily_survival.food_required, 56)
+        self.assertEqual(state.daily_survival.food_shortfall, 16)
+
+    def test_nonstandard_ration_warning_explains_expected_fallback(self) -> None:
+        state = self.make_state()
+        state.laws.signed_law_ids = ["coarse_soup_law"]
+        state.social_policy.current_ration_mode = "coarse_soup"
+        state.social_policy.ration_food_numerator = 70
+        state.social_policy.ration_food_denominator = 100
+        state.furnace.mode_id = "off"
+        state.furnace.is_active = False
+
+        warning = next(
+            item
+            for item in self.law_system().evaluate_risks(state)
+            if item.warning_id == "laws.nonstandard_ration_active"
+        )
+        view = self.law_system().observe(state)
+
+        self.assertEqual(warning.details["selected_mode"], "coarse_soup")
+        self.assertEqual(warning.details["effective_mode"], "normal")
+        self.assertEqual(warning.details["fallback_reason"], "canteen_unavailable")
+        self.assertEqual(view["ration_mode"], "coarse_soup")
+        self.assertEqual(view["effective_ration_mode"], "normal")
+        self.assertEqual(view["ration_fallback_reason"], "canteen_unavailable")
+
     def test_overtime_rejects_expected_temperature_shutdown(self) -> None:
         state = self.make_state()
         canteen = self.execute_building(

@@ -49,6 +49,7 @@ class CommandSpec:
     optional_arguments: Mapping[str, ArgumentKind] = field(default_factory=dict)
     argument_options: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     allow_extra_arguments: bool = False
+    argument_semantics: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +84,12 @@ class CommandCatalog:
         unknown_options = set(spec.argument_options) - known_arguments
         if unknown_options:
             raise ValueError(f"argument options reference unknown arguments: {unknown_options}")
+        unknown_semantics = set(spec.argument_semantics) - known_arguments
+        if unknown_semantics:
+            raise ValueError(
+                "argument semantics reference unknown arguments: "
+                f"{unknown_semantics}"
+            )
         for argument, options in spec.argument_options.items():
             if not options or any(
                 not isinstance(option, str)
@@ -91,6 +98,14 @@ class CommandCatalog:
                 for option in options
             ):
                 raise ValueError(f"argument options must be normalized strings: {argument}")
+        for argument, semantic in spec.argument_semantics.items():
+            if (
+                not isinstance(semantic, str)
+                or not COMMAND_NAME_PATTERN.fullmatch(semantic)
+            ):
+                raise ValueError(
+                    f"argument semantics must use stable normalized ids: {argument}"
+                )
         self._specs[spec.name] = spec
 
     def get(self, name: str) -> CommandSpec | None:
