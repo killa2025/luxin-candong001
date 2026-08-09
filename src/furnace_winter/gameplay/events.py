@@ -407,7 +407,10 @@ class EventSystem:
             if event_id in self.rules.fixed_arrivals
             else None,
         }
-        if event_id in self.rules.fixed_arrivals:
+        if (
+            event_id in self.rules.fixed_arrivals
+            and data["population_added"] > 0
+        ):
             data["notices"] = self._arrival_notices()
         state.events.resolution_history.append(
             EventResolutionRecord(

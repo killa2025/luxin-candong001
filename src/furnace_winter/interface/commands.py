@@ -24,11 +24,6 @@ def invalid_command_format_details() -> dict[str, Any]:
             "arguments": "OBJECT",
             "expected_state_sequence": "INTEGER_OR_NULL",
         },
-        "json_lines_envelope_example": {
-            "type": "command",
-            "name": "game.set_furnace",
-            "arguments": {"level": 2},
-        },
     }
 
 

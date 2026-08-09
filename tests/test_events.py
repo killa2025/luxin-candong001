@@ -666,6 +666,50 @@ class EventPatchTests(unittest.TestCase):
         )
         self.assertIn("不会自动分配岗位", resolved.data["notices"][0]["text"])
 
+    def test_rejected_arrival_previews_omit_acceptance_notices(self) -> None:
+        for day, event_id in (
+            (6, "arrival_day6"),
+            (19, "arrival_day19"),
+            (37, "arrival_day37"),
+        ):
+            with self.subTest(event_id=event_id):
+                state = self.make_state(day=day)
+                system = self.event_system()
+                system.initialize_day(state)
+                before_preview = deepcopy(state)
+
+                view = next(
+                    item
+                    for item in system.active_event_views(state)
+                    if item["event_id"] == event_id
+                )
+                reject = next(
+                    item
+                    for item in view["options"]
+                    if item["option_id"] == "reject"
+                )
+
+                self.assertEqual(reject["preview"]["population_added"], 0)
+                self.assertNotIn("notices", reject["preview"])
+                self.assertEqual(state, before_preview)
+
+    def test_rejected_arrival_results_omit_acceptance_notices(self) -> None:
+        for day, event_id in (
+            (6, "arrival_day6"),
+            (19, "arrival_day19"),
+            (37, "arrival_day37"),
+        ):
+            with self.subTest(event_id=event_id):
+                state = self.make_state(day=day)
+                system = self.event_system()
+                system.initialize_day(state)
+
+                result = self.execute(system, state, event_id, "reject")
+
+                self.assertEqual(result.code, ErrorCode.OK)
+                self.assertEqual(result.data["population_added"], 0)
+                self.assertNotIn("notices", result.data)
+
     def test_children_and_final_frost_titles_use_sealed_text(self) -> None:
         children = self.make_state(day=5)
         children_system = self.event_system()
