@@ -632,7 +632,7 @@ class FinalFrostPatchTests(unittest.TestCase):
             "outer_ring": -44,
         }
         system.capture_daily_record(
-            self.context(state, 49, EndDayStage.UPDATE_PROMISE_TARGETS)
+            self.context(state, 49, EndDayStage.CAPTURE_DAILY_RECORDS)
         )
         record = state.final_frost.daily_records["49"]
         self.assertGreater(record.new_sick, 0)
@@ -855,7 +855,7 @@ class FinalFrostPatchTests(unittest.TestCase):
             "outer_ring": -66,
         }
         system.capture_daily_record(
-            self.context(state, 49, EndDayStage.UPDATE_PROMISE_TARGETS)
+            self.context(state, 49, EndDayStage.CAPTURE_DAILY_RECORDS)
         )
         record = state.final_frost.daily_records["49"]
         self.assertEqual(record.natural_death_overflow_pressure, 38)
@@ -1139,7 +1139,7 @@ class FinalFrostPatchTests(unittest.TestCase):
                     self.context(
                         state,
                         49,
-                        EndDayStage.UPDATE_PROMISE_TARGETS,
+                        EndDayStage.CAPTURE_DAILY_RECORDS,
                     )
                 )
                 record = state.final_frost.daily_records["49"]
@@ -1455,6 +1455,42 @@ class FinalFrostPatchTests(unittest.TestCase):
         )
         self.assertLess(
             codes.index("laws.firepit_daily_relief.resolved"),
+            codes.index("end_day.stage.check_hard_fails"),
+        )
+
+    def test_d49_firepit_updates_panic_before_frost_daily_record(
+        self,
+    ) -> None:
+        state = self.make_state(day=49)
+        self.set_population(state, healthy=20, housed=20)
+        state.resources.coal = 2000
+        state.resources.cooked_food = 1000
+        state.resources.raw_food = 0
+        state.furnace.is_active = True
+        state.furnace.mode_id = "level_3"
+        state.laws.signed_law_ids = ["firepit_law"]
+        state.laws.active_law_ids = ["firepit_law"]
+        state.social_policy.firepit_enabled = True
+        state.trust_panic.panic = 80
+        self.system().prepare_new_day(state)
+
+        engine, _events, _oath_order = self.full_engine()
+        execution = self.settle(engine, state, "d49-firepit-record")
+
+        self.assertEqual(execution.result.code, ErrorCode.OK)
+        self.assertEqual(state.trust_panic.panic, 79)
+        self.assertFalse(state.final_frost.daily_records["49"].panic_crisis)
+        codes = [item.code for item in execution.logs]
+        self.assertLess(
+            codes.index("end_day.stage.update_promise_targets"),
+            codes.index("laws.firepit_daily_relief.resolved"),
+        )
+        self.assertLess(
+            codes.index("laws.firepit_daily_relief.resolved"),
+            codes.index("final_frost.day.recorded"),
+        )
+        self.assertLess(
+            codes.index("final_frost.day.recorded"),
             codes.index("end_day.stage.check_hard_fails"),
         )
 

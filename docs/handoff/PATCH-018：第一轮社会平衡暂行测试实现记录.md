@@ -40,7 +40,7 @@
 ## 实现
 
 - `data/laws.json` 新增 `firepit_daily_panic_floor=10`，由严格配置读取器校验为 0～100 的整数；每日减压值仍必须为负数。机器炉律视图同时公开每日变化、下限、运行前提和 `TEST_NUMERIC` 身份。
-- 社会日结先完成配给、工时、遗体压力、饥饿及旧城当日收口等全部同日信任/恐慌结算，再于 `UPDATE_PROMISE_TARGETS` 之后、`CHECK_HARD_FAILS` 之前的独立 `APPLY_DAILY_SOCIAL_RELIEF` 阶段应用火盆集会下限；没有调整既有系统安装顺序，也没有改变其他情绪来源的相对结算顺序。
+- 社会日结先完成配给、工时、遗体压力、饥饿及旧城当日收口等全部同日信任/恐慌结算，再于独立 `APPLY_DAILY_SOCIAL_RELIEF` 阶段应用火盆集会下限；终霜每日记录已移入随后的 `CAPTURE_DAILY_RECORDS` 阶段，最后才进入 `CHECK_HARD_FAILS`。因此固定顺序为“旧城结算 → 火盆减压 → 终霜每日记录 → 硬失败检查”，没有调整既有系统安装顺序，也没有改变其他情绪来源的相对结算顺序。
 - `data/oath_order.json` 只调整上表列出的誓言值。机器路线视图公开 `TEST_NUMERIC` 身份，所有规则和命令结果继续直接读取同一配置，不维护第二套隐藏数值。
 - 没有新增存档字段或改变存档版本。严格校验仅额外兼容 Patch 017 已经写入的守炉宣誓 `使用日+3` 与共食誓餐 `使用日+4` 两种历史截止日，并原样保留；Patch 018 后新执行的行动仍分别写入 `使用日+4` 与 `使用日+5`，其他行动不接受旧差值。
 
@@ -50,10 +50,11 @@
 - 同日存在其他恐慌压力时，火盆集会按汇总后的预计恐慌工作，但仍不越过下限。
 - 完整 `GameSession` 回归覆盖日初恐慌 9、当日饥饿恐慌 +5，确认饥饿先结算到 14、火盆随后减至 13。
 - 全真实系统 D48 日结回归覆盖旧城 `partial_exodus` 恐慌 +5，确认旧城先把恐慌从 9 结算到 14、火盆随后减至 13，并且火盆日志早于硬失败检查。
+- 全真实系统 D49 日结回归覆盖日初恐慌 80，确认火盆先减至 79、终霜随后记录 `panic_crisis=false`，且记录日志早于硬失败检查。
 - 非法下限和非负每日减压值会被配置加载拒绝。
 - 机器路线视图逐项暴露本轮暂行值；守炉宣誓正式执行按 +2/-1 结算，并写入 4 天冷却。
 - `GameSession.load` 回归分别覆盖 Patch 017 守炉宣誓与共食誓餐的旧冷却截止日，加载后历史值不被追溯改写。
-- `python -m unittest discover -s tests -q`：401 项通过。
+- `python -m unittest discover -s tests -q`：402 项通过。
 - `python -m furnace_winter validate-config data`：9 份 JSON 配置通过。
 - `python -m compileall -q src tests`：通过。
 - `git diff --check`：通过。
