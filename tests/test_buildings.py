@@ -822,6 +822,33 @@ class BuildingPatchTests(unittest.TestCase):
             "hunting_lodge",
             warning.details["forced_shutdown_building_types"],
         )
+        self.assertTrue(
+            warning.details["surface_resource_collection_shutdown"]
+        )
+        self.assertIn(
+            "surface-steel-1",
+            warning.details["affected_surface_resource_point_ids"],
+        )
+
+    def test_d48_surface_points_trigger_shutdown_warning_without_buildings(self) -> None:
+        state = self.make_state()
+        state.calendar.current_day = 48
+        state.surface_resource_points["surface-steel-1"].assigned_workers = 5
+
+        warning = next(
+            item
+            for item in SurvivalSystem(
+                self.survival_rules, self.building_rules
+            ).evaluate_risks(state)
+            if item.warning_id
+            == "survival.final_frost_forced_shutdown_next_day"
+        )
+
+        self.assertEqual(warning.details["affected_building_ids"], [])
+        self.assertIn(
+            "surface-steel-1",
+            warning.details["affected_surface_resource_point_ids"],
+        )
 
     def test_woodfuel_can_cover_the_shortfall_created_by_heat(self) -> None:
         state = self.make_state()

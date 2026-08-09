@@ -1178,6 +1178,8 @@ class FinalFrostSystem:
         self.validate_state(state)
         from furnace_winter.gameplay.buildings import (
             FINAL_FROST_SHUTDOWN_BUILDING_TYPES,
+            final_frost_affected_surface_resource_point_ids,
+            is_final_frost_collection_shutdown,
         )
 
         return {
@@ -1198,6 +1200,14 @@ class FinalFrostSystem:
                     if building.is_built
                     and building.building_type
                     in FINAL_FROST_SHUTDOWN_BUILDING_TYPES
+                ),
+                "surface_resource_collection_shutdown": (
+                    is_final_frost_collection_shutdown(
+                        state.calendar.current_day
+                    )
+                ),
+                "affected_surface_resource_point_ids": list(
+                    final_frost_affected_surface_resource_point_ids(state)
                 ),
             },
             "frost_deaths": state.final_frost.frost_deaths,

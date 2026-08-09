@@ -343,6 +343,10 @@ class OathOrderPatchTests(unittest.TestCase):
         self.assertTrue(laws["highest_order"]["facility_required"])
         self.assertEqual(actions["patrol"]["required_law_id"], "city_patrol_order")
         self.assertEqual(actions["patrol"]["cooldown_days"], 3)
+        self.assertEqual(
+            actions["patrol"]["required_facility_id"], "patrol_office"
+        )
+        self.assertTrue(actions["patrol"]["facility_required"])
 
         spec = next(
             item
@@ -425,6 +429,15 @@ class OathOrderPatchTests(unittest.TestCase):
             law_id="shared_meal",
         )
         state.resources.cooked_food = 29
+        action_view = {
+            item["action_id"]: item
+            for item in system.route_view(state)["action_rules"]
+        }["shared_meal"]
+        self.assertEqual(action_view["current_cooked_food_cost"], 40)
+        self.assertEqual(
+            action_view["required_facility_id"], "oath_hall"
+        )
+        self.assertTrue(action_view["required_facility_running"])
         before = deepcopy(state)
         failed = self.execute(
             system, state, USE_OATH_ORDER_ACTION_COMMAND, action_id="shared_meal"
@@ -441,6 +454,90 @@ class OathOrderPatchTests(unittest.TestCase):
             system, state, USE_OATH_ORDER_ACTION_COMMAND, action_id="shared_meal"
         )
         self.assertEqual(repeated.data["reason"], "action_cooldown_active")
+
+    def test_action_view_exposes_dynamic_cost_boundaries_and_facility_block(self) -> None:
+        system = self.system()
+
+        def set_alive_population(state, alive: int) -> None:
+            population = state.population
+            population.population_total_ever = alive
+            population.population_total = alive
+            population.population_alive = alive
+            population.population_dead = 0
+            population.workers = alive
+            population.engineers = 0
+            population.children = 0
+            population.medical_apprentices = 0
+            population.engineering_apprentices = 0
+            population.healthy_population = alive
+            population.sick_population = 0
+            population.critical_population = 0
+            population.disabled_population = 0
+            population.housed_population = min(alive, state.housing.capacity)
+            population.homeless_population = (
+                alive - population.housed_population
+            )
+            state.hunger.none_population = alive
+            state.hunger.light_population = 0
+            state.hunger.severe_population = 0
+            state.hunger.starving_population = 0
+
+        low_population = self.make_state(day=35)
+        set_alive_population(low_population, 20)
+        high_population = self.make_state(day=35)
+        set_alive_population(high_population, 200)
+
+        low_rule = {
+            item["action_id"]: item
+            for item in system.route_view(low_population)["action_rules"]
+        }["shared_meal"]
+        high_rule = {
+            item["action_id"]: item
+            for item in system.route_view(high_population)["action_rules"]
+        }["shared_meal"]
+
+        self.assertEqual(low_rule["current_cooked_food_cost"], 30)
+        self.assertEqual(high_rule["current_cooked_food_cost"], 80)
+        self.assertEqual(
+            low_rule["cooked_food_cost_formula"],
+            {
+                "kind": "population_scaled_clamped",
+                "population_field": "population_alive",
+                "population_numerator": 1,
+                "population_denominator": 2,
+                "rounding": "ceiling",
+                "minimum": 30,
+                "maximum": 80,
+            },
+        )
+
+        blocked = self.make_state(day=35)
+        self.enter_oath_route(system, blocked)
+        blocked.calendar.current_day = blocked.oath_order.next_law_day
+        self.assertEqual(
+            self.execute(
+                system,
+                blocked,
+                SIGN_OATH_ORDER_LAW_COMMAND,
+                law_id="shared_meal",
+            ).code,
+            ErrorCode.OK,
+        )
+        blocked_rule = {
+            item["action_id"]: item
+            for item in system.route_view(blocked)["action_rules"]
+        }["shared_meal"]
+        rejected = self.execute(
+            system,
+            blocked,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="shared_meal",
+        )
+
+        self.assertTrue(blocked_rule["facility_required"])
+        self.assertEqual(blocked_rule["required_facility_id"], "oath_hall")
+        self.assertFalse(blocked_rule["required_facility_running"])
+        self.assertEqual(rejected.data["reason"], "route_facility_not_running")
 
     def test_old_city_day24_activation_and_blocking_event(self) -> None:
         system = self.system()

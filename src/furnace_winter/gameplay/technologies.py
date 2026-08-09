@@ -11,6 +11,9 @@ from furnace_winter.config import (
     TechnologyRules,
 )
 from furnace_winter.config.technologies import validate_technology_building_links
+from furnace_winter.gameplay.buildings import (
+    surface_resource_recoverable_before_final_frost,
+)
 from furnace_winter.gameplay.end_day import (
     EndDayContext,
     EndDayEngine,
@@ -264,19 +267,26 @@ class TechnologySystem:
         ):
             return None
         required_steel = self.rules.technologies[tech_id].steel_cost
-        remaining_surface_steel = sum(
-            point.remaining_amount
-            for point in state.surface_resource_points.values()
-            if point.resource_type == "steel"
+        recoverable_surface_steel = (
+            surface_resource_recoverable_before_final_frost(
+                state,
+                self.building_rules,
+                "steel",
+            )
         )
-        recoverable_steel = state.resources.steel + remaining_surface_steel
+        recoverable_steel = state.resources.steel + recoverable_surface_steel
         if recoverable_steel >= required_steel:
             return None
         return {
             "required_technology_id": tech_id,
             "required_steel": required_steel,
             "current_steel": state.resources.steel,
-            "remaining_surface_steel": remaining_surface_steel,
+            "remaining_surface_steel": sum(
+                point.remaining_amount
+                for point in state.surface_resource_points.values()
+                if point.resource_type == "steel"
+            ),
+            "recoverable_surface_steel": recoverable_surface_steel,
             "recoverable_steel": recoverable_steel,
             "steel_shortfall": required_steel - recoverable_steel,
             "small_steel_miner_unlocked": False,

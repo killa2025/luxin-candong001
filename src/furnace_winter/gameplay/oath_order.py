@@ -854,7 +854,29 @@ class OathOrderSystem:
                     "cooldown_days": rule.cooldown_days,
                     "trust_change": rule.trust,
                     "panic_change": rule.panic,
-                    "cooked_food_cost": rule.cooked_food,
+                    "current_cooked_food_cost": (
+                        self._shared_meal_cost(state)
+                        if action_id == "shared_meal"
+                        else rule.cooked_food
+                    ),
+                    "cooked_food_cost_formula": (
+                        {
+                            "kind": "population_scaled_clamped",
+                            "population_field": "population_alive",
+                            "population_numerator": 1,
+                            "population_denominator": 2,
+                            "rounding": "ceiling",
+                            "minimum": 30,
+                            "maximum": 80,
+                        }
+                        if action_id == "shared_meal"
+                        else None
+                    ),
+                    "facility_required": True,
+                    "required_facility_id": _ROUTE_FACILITIES[rule.route],
+                    "required_facility_running": self._facility(
+                        state, rule.route
+                    ).is_running,
                     "old_city_change": rule.old_city,
                 }
                 for action_id, rule in sorted(self.rules.actions.items())
@@ -1507,7 +1529,8 @@ class OathOrderSystem:
 
     @staticmethod
     def _shared_meal_cost(state: GameState) -> int:
-        return min(80, max(30, ceil(state.population.population_alive * 0.5)))
+        scaled_population = (state.population.population_alive + 1) // 2
+        return min(80, max(30, scaled_population))
 
     @staticmethod
     def _change_emotion(

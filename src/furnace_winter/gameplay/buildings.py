@@ -57,6 +57,58 @@ FINAL_FROST_SHUTDOWN_BUILDING_TYPES = frozenset(
         "small_steel_miner",
     }
 )
+FINAL_FROST_COLLECTION_START_DAY = 49
+FINAL_FROST_COLLECTION_END_DAY = 55
+
+
+def is_final_frost_collection_shutdown(day: int) -> bool:
+    return FINAL_FROST_COLLECTION_START_DAY <= day <= FINAL_FROST_COLLECTION_END_DAY
+
+
+def final_frost_affected_surface_resource_point_ids(
+    state: GameState,
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            point.resource_point_id
+            for point in state.surface_resource_points.values()
+            if not point.is_depleted
+            or point.assigned_workers + point.assigned_engineers > 0
+        )
+    )
+
+
+def surface_resource_recoverable_before_final_frost(
+    state: GameState,
+    rules: BuildingRules,
+    resource_type: str,
+) -> int:
+    """Return resource still collectable under the current plan before D49."""
+
+    day = state.calendar.current_day
+    if is_final_frost_collection_shutdown(day):
+        return 0
+    future_full_days = max(FINAL_FROST_COLLECTION_START_DAY - day - 1, 0)
+    recoverable = 0
+    for point_id, point in state.surface_resource_points.items():
+        if point.resource_type != resource_type or point.is_depleted:
+            continue
+        rule = rules.surface_resource_points[point_id]
+        assigned = point.assigned_workers + point.assigned_engineers
+        output_today = min(
+            (
+                point.production_remainder_numerator
+                + rule.output_per_day * assigned
+            )
+            // rule.staff_capacity,
+            point.remaining_amount,
+        )
+        remaining_after_today = point.remaining_amount - output_today
+        recoverable += output_today + min(
+            remaining_after_today,
+            rule.output_per_day * future_full_days,
+        )
+    return recoverable
 
 _STAFF_FIELDS = {
     "workers": "assigned_workers",
@@ -712,7 +764,7 @@ class BuildingSystem:
         context.emit("buildings.temperature.calculated", {"building_count": len(state.buildings)})
 
     def resolve_building_operation(self, context: EndDayContext) -> None:
-        final_frost = 49 <= context.settled_day <= 55
+        final_frost = is_final_frost_collection_shutdown(context.settled_day)
         for building in context.state.buildings.values():
             rule = self.rules.buildings.get(building.building_type)
             if rule is None:
@@ -749,7 +801,7 @@ class BuildingSystem:
             and building.bound_resource_id is not None
         }
         for resource_point_id, point in state.surface_resource_points.items():
-            if 49 <= context.settled_day <= 55:
+            if is_final_frost_collection_shutdown(context.settled_day):
                 continue
             if point.is_depleted:
                 continue
@@ -811,7 +863,9 @@ class BuildingSystem:
         """
 
         working = deepcopy(state)
-        final_frost = 49 <= working.calendar.current_day <= 55
+        final_frost = is_final_frost_collection_shutdown(
+            working.calendar.current_day
+        )
         heating = projected_heating(
             working,
             self.survival_rules,

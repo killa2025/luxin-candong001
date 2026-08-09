@@ -844,24 +844,35 @@ class SurvivalSystem:
             )
         if state.calendar.current_day == 48 and self.building_rules is not None:
             from furnace_winter.gameplay.buildings import (
+                FINAL_FROST_COLLECTION_START_DAY,
                 FINAL_FROST_SHUTDOWN_BUILDING_TYPES,
+                final_frost_affected_surface_resource_point_ids,
             )
 
-            affected = sorted(
+            affected_buildings = sorted(
                 building.building_id
                 for building in state.buildings.values()
                 if building.is_built
                 and building.building_type
                 in FINAL_FROST_SHUTDOWN_BUILDING_TYPES
             )
-            if affected:
+            affected_surface_points = (
+                final_frost_affected_surface_resource_point_ids(state)
+            )
+            if affected_buildings or affected_surface_points:
                 warnings.append(
                     RiskWarning(
                         "survival.final_frost_forced_shutdown_next_day",
                         RiskWarningLevel.B_STRONG,
                         {
-                            "shutdown_starts_day": 49,
-                            "affected_building_ids": affected,
+                            "shutdown_starts_day": (
+                                FINAL_FROST_COLLECTION_START_DAY
+                            ),
+                            "affected_building_ids": affected_buildings,
+                            "affected_surface_resource_point_ids": list(
+                                affected_surface_points
+                            ),
+                            "surface_resource_collection_shutdown": True,
                             "forced_shutdown_building_types": sorted(
                                 FINAL_FROST_SHUTDOWN_BUILDING_TYPES
                             ),
