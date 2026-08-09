@@ -835,6 +835,18 @@ class LawSystem:
             item for item in all_building_unlocks if item not in self.building_rules.buildings
         )
         unlocked_actions = sorted({item for law_id in signed for item in self.rules.laws[law_id].unlock_actions})
+        unlocked_modes = sorted(
+            {
+                item
+                for law_id in signed
+                for item in self.rules.laws[law_id].unlock_modes
+            }
+        )
+        pending_mode_effect_ids = sorted(
+            f"{mode_id}.population_generation"
+            for mode_id in unlocked_modes
+            if mode_id in {"medical_apprentices", "engineering_apprentices"}
+        )
         overtime_building_id = state.social_policy.overtime_building_id
         progress_numerator, progress_denominator = (
             self.overtime_progress_multiplier(state, overtime_building_id)
@@ -849,6 +861,8 @@ class LawSystem:
             "unlocked_building_ids": unlocked_buildings,
             "deferred_building_ids": deferred_buildings,
             "unlocked_action_ids": unlocked_actions,
+            "unlocked_mode_ids": unlocked_modes,
+            "pending_mode_effect_ids": pending_mode_effect_ids,
             "ration_mode": state.social_policy.current_ration_mode,
             "effective_ration_mode": effective_ration_mode,
             "ration_fallback_reason": (

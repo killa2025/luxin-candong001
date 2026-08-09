@@ -1523,6 +1523,22 @@ class FinalFrostPatchTests(unittest.TestCase):
 
     def test_day_48_boundary_and_day_49_settlement_are_transactional(self) -> None:
         state = self.make_state(day=48)
+        building_system = BuildingSystem(
+            self.buildings, self.survival, self.technology
+        )
+        built = building_system.execute(
+            state,
+            CommandRequest(
+                "build-hunting-boundary",
+                "game.build",
+                {"building_type": "hunting_lodge", "zone": "outer_ring"},
+                state.command_sequence,
+            ),
+        )
+        self.assertEqual(built.code, ErrorCode.OK)
+        hunting_lodge_id = built.data["building_id"]
+        state.buildings[hunting_lodge_id].assigned_workers = 5
+        state.buildings[hunting_lodge_id].is_operational = True
         engine = EndDayEngine()
         SurvivalSystem(
             self.survival, self.buildings, self.technology
@@ -1561,6 +1577,7 @@ class FinalFrostPatchTests(unittest.TestCase):
         settle("end-48")
         self.assertEqual(state.calendar.current_day, 49)
         self.assertEqual(state.final_frost.baseline_day, 49)
+        self.assertFalse(state.buildings[hunting_lodge_id].is_operational)
         before = deepcopy(state)
         settled = settle("end-49")
         self.assertIn("49", state.final_frost.daily_records)

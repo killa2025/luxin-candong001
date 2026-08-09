@@ -232,6 +232,9 @@ class EndingReportSystem:
         if not report.is_generated:
             return {
                 "available": False,
+                "content_status": "not_generated",
+                "body_complete": False,
+                "pending_text_count": 0,
                 "run_state": final.run_state.value,
                 "termination_reason": (
                     final.termination_reason.value
@@ -249,6 +252,13 @@ class EndingReportSystem:
         ]
         return {
             "available": True,
+            "content_status": (
+                "partial_pending_text"
+                if report.pending_text_ids
+                else "complete"
+            ),
+            "body_complete": not report.pending_text_ids,
+            "pending_text_count": len(report.pending_text_ids),
             "generated_day": report.generated_day,
             "run_state": final.run_state.value,
             "termination_reason": (

@@ -17,6 +17,12 @@ from furnace_winter.gameplay.end_day import (
     RiskWarningLevel,
 )
 from furnace_winter.gameplay.maps import select_initial_map
+from furnace_winter.gameplay.operation import (
+    FINAL_FROST_COLLECTION_START_DAY,
+    FINAL_FROST_SHUTDOWN_BUILDING_TYPES,
+    final_frost_affected_surface_resource_point_ids,
+    is_building_forced_shutdown,
+)
 from furnace_winter.interface import (
     ArgumentKind,
     CommandCatalog,
@@ -286,11 +292,19 @@ def is_building_expected_operational(
     technology_rules: TechnologyRules | None = None,
     *,
     heating: HeatingProjection | None = None,
+    respect_forced_shutdown: bool = True,
 ) -> bool:
     """Return whether a built and staffed building is expected to run today."""
 
     rule = building_rules.buildings.get(building.building_type)
-    if rule is None or not building.is_built:
+    if (
+        rule is None
+        or not building.is_built
+        or (
+            respect_forced_shutdown
+            and is_building_forced_shutdown(state, building)
+        )
+    ):
         return False
     assigned = sum(
         (
@@ -843,12 +857,6 @@ class SurvivalSystem:
                 )
             )
         if state.calendar.current_day == 48 and self.building_rules is not None:
-            from furnace_winter.gameplay.buildings import (
-                FINAL_FROST_COLLECTION_START_DAY,
-                FINAL_FROST_SHUTDOWN_BUILDING_TYPES,
-                final_frost_affected_surface_resource_point_ids,
-            )
-
             affected_buildings = sorted(
                 building.building_id
                 for building in state.buildings.values()

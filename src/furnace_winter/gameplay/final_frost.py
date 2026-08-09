@@ -12,6 +12,11 @@ from furnace_winter.gameplay.hunger import (
     remove_non_hunger_deaths_or_departures,
     remove_starvation_deaths,
 )
+from furnace_winter.gameplay.operation import (
+    FINAL_FROST_SHUTDOWN_BUILDING_TYPES,
+    final_frost_affected_surface_resource_point_ids,
+    is_final_frost_collection_shutdown,
+)
 from furnace_winter.gameplay.survival import (
     furnace_coal_cost,
     is_building_expected_operational,
@@ -1176,12 +1181,6 @@ class FinalFrostSystem:
 
     def observe(self, state: GameState) -> dict[str, object]:
         self.validate_state(state)
-        from furnace_winter.gameplay.buildings import (
-            FINAL_FROST_SHUTDOWN_BUILDING_TYPES,
-            final_frost_affected_surface_resource_point_ids,
-            is_final_frost_collection_shutdown,
-        )
-
         return {
             "active": self.rules.is_frost_day(state.calendar.current_day),
             "start_day": self.rules.start_day,
@@ -1348,6 +1347,9 @@ class FinalFrostSystem:
                 self.building_rules,
                 self.survival_rules,
                 self.technology_rules,
+                # This D49 snapshot asks whether a valid renewable supply
+                # chain existed, not whether collection runs during frost.
+                respect_forced_shutdown=False,
             )
             for building in state.buildings.values()
         )

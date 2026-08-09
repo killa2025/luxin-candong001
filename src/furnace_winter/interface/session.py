@@ -157,6 +157,7 @@ class GameSession:
             self.survival_rules,
             self.technology_rules,
         )
+        self.buildings.synchronize_forced_shutdown_state(self._state)
         self.laws = LawSystem(
             self.law_rules,
             self.building_rules,

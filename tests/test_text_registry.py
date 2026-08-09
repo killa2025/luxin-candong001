@@ -13,6 +13,7 @@ from furnace_winter.text import (
     TextRegistry,
     TextRegistryError,
     TextVisibility,
+    build_event_text_registry,
 )
 
 
@@ -27,6 +28,22 @@ def confirmed_entry(text_id: str = "test.confirmed") -> TextEntry:
 
 
 class TextRegistryTests(unittest.TestCase):
+    def test_fixed_frost_warning_text_is_registered_from_sealed_assets(self) -> None:
+        registry = build_event_text_registry()
+
+        self.assertEqual(
+            registry.require("event.black_frost_echo.title").text,
+            "黑霜回声",
+        )
+        self.assertEqual(
+            registry.require("event.final_preparation_window.option_c").text,
+            "压下恐慌，继续日常运转",
+        )
+        self.assertEqual(
+            registry.require("event.city_night_terror.option_c").text,
+            "不再粉饰情况",
+        )
+
     def test_confirmed_text_can_be_looked_up(self) -> None:
         registry = TextRegistry()
         entry = confirmed_entry()
