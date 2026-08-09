@@ -12,6 +12,14 @@ from furnace_winter.config import (
     TechnologyRules,
 )
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage
+from furnace_winter.gameplay.operation import (
+    FINAL_FROST_COLLECTION_END_DAY,
+    FINAL_FROST_COLLECTION_START_DAY,
+    FINAL_FROST_SHUTDOWN_BUILDING_TYPES,
+    final_frost_affected_surface_resource_point_ids,
+    is_building_forced_shutdown,
+    is_final_frost_collection_shutdown,
+)
 from furnace_winter.gameplay.survival import (
     HeatingProjection,
     furnace_coal_cost,
@@ -48,35 +56,6 @@ ASSIGN_RESOURCE_COMMAND = "game.assign_resource"
 UNASSIGN_RESOURCE_COMMAND = "game.unassign_resource"
 HEAT_COMMAND = "game.heat"
 WOODFUEL_COMMAND = "game.woodfuel"
-
-FINAL_FROST_SHUTDOWN_BUILDING_TYPES = frozenset(
-    {
-        "hunting_lodge",
-        "logging_camp",
-        "small_coal_miner",
-        "small_steel_miner",
-    }
-)
-FINAL_FROST_COLLECTION_START_DAY = 49
-FINAL_FROST_COLLECTION_END_DAY = 55
-
-
-def is_final_frost_collection_shutdown(day: int) -> bool:
-    return FINAL_FROST_COLLECTION_START_DAY <= day <= FINAL_FROST_COLLECTION_END_DAY
-
-
-def final_frost_affected_surface_resource_point_ids(
-    state: GameState,
-) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            point.resource_point_id
-            for point in state.surface_resource_points.values()
-            if not point.is_depleted
-            or point.assigned_workers + point.assigned_engineers > 0
-        )
-    )
-
 
 def surface_resource_recoverable_before_final_frost(
     state: GameState,
@@ -660,8 +639,9 @@ class BuildingSystem:
         else:
             target = int(request.arguments["count"])
         setattr(building, _STAFF_FIELDS[population_type], target)
-        rule = self.rules.buildings[building.building_type]
-        building.is_operational = rule.staff_capacity == 0 or self._assigned_total(building) > 0
+        building.is_operational = self._staffing_allows_operation(
+            state, building
+        )
         return {"building_id": building.building_id, "population_type": population_type, "assigned_count": target}
 
     @staticmethod
@@ -745,8 +725,14 @@ class BuildingSystem:
 
         if not is_final_frost_collection_shutdown(state.calendar.current_day):
             return
+        BuildingSystem.synchronize_forced_shutdown_state(state)
+
+    @staticmethod
+    def synchronize_forced_shutdown_state(state: GameState) -> None:
+        """Normalize derived flags in current and legacy D49-D55 states."""
+
         for building in state.buildings.values():
-            if building.building_type in FINAL_FROST_SHUTDOWN_BUILDING_TYPES:
+            if is_building_forced_shutdown(state, building):
                 building.is_operational = False
 
     def validate_state(self, state: GameState) -> None:
@@ -775,7 +761,6 @@ class BuildingSystem:
         context.emit("buildings.temperature.calculated", {"building_count": len(state.buildings)})
 
     def resolve_building_operation(self, context: EndDayContext) -> None:
-        final_frost = is_final_frost_collection_shutdown(context.settled_day)
         for building in context.state.buildings.values():
             rule = self.rules.buildings.get(building.building_type)
             if rule is None:
@@ -785,16 +770,9 @@ class BuildingSystem:
                 rule.min_operating_temperature is not None
                 and building.effective_temperature < rule.min_operating_temperature
             )
-            staffed = rule.staff_capacity == 0 or self._assigned_total(building) > 0
             building.is_operational = (
-                building.is_built
-                and staffed
+                self._staffing_allows_operation(context.state, building)
                 and not building.is_shutdown_by_temperature
-                and not (
-                    final_frost
-                    and building.building_type
-                    in FINAL_FROST_SHUTDOWN_BUILDING_TYPES
-                )
             )
         context.emit(
             "buildings.operation.resolved",
@@ -874,9 +852,6 @@ class BuildingSystem:
         """
 
         working = deepcopy(state)
-        final_frost = is_final_frost_collection_shutdown(
-            working.calendar.current_day
-        )
         heating = projected_heating(
             working,
             self.survival_rules,
@@ -892,11 +867,6 @@ class BuildingSystem:
                     self.survival_rules,
                     self.technology_rules,
                     heating=heating,
-                )
-                and not (
-                    final_frost
-                    and building.building_type
-                    in FINAL_FROST_SHUTDOWN_BUILDING_TYPES
                 )
             )
 
@@ -994,6 +964,17 @@ class BuildingSystem:
         if rule.max_count_source == "forest_zones":
             return state.building_management.forest_zones
         return rule.max_buildings
+
+    def _staffing_allows_operation(
+        self, state: GameState, building: BuildingState
+    ) -> bool:
+        rule = self.rules.buildings[building.building_type]
+        staffed = rule.staff_capacity == 0 or self._assigned_total(building) > 0
+        return (
+            building.is_built
+            and staffed
+            and not is_building_forced_shutdown(state, building)
+        )
 
     def _heat_bonus(self, state: GameState) -> int:
         return projected_heat_bonus(state, self.rules)

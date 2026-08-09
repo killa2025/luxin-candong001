@@ -9,9 +9,11 @@ from pathlib import Path
 from furnace_winter.config import (
     BuildingConfigError,
     load_building_rules,
+    load_final_frost_rules,
     load_survival_rules,
     load_technology_rules,
 )
+from furnace_winter import GameSession
 from furnace_winter.gameplay import (
     ASSIGN_COMMAND,
     ASSIGN_RESOURCE_COMMAND,
@@ -26,15 +28,18 @@ from furnace_winter.gameplay import (
     BuildingSystem,
     EndDayEngine,
     EndDayStage,
+    FinalFrostSystem,
     SurvivalSystem,
     create_initial_survival_state,
 )
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
     CURRENT_SAVE_DATA_VERSION,
+    EventResolutionRecord,
     SaveDataError,
     decode_game_state,
     encode_game_state,
+    to_primitive,
     validate_game_state,
 )
 from tests import (
@@ -887,6 +892,186 @@ class BuildingPatchTests(unittest.TestCase):
 
         self.assertTrue(
             state.buildings[hunting_lodge.data["building_id"]].is_operational
+        )
+
+    def test_final_frost_assignment_cannot_reenable_shutdown_buildings(self) -> None:
+        build_arguments = {
+            "hunting_lodge": {
+                "building_type": "hunting_lodge",
+                "zone": "outer_ring",
+            },
+            "logging_camp": {
+                "building_type": "logging_camp",
+                "zone": "outer_ring",
+                "binding_id": "forest-zone-1",
+            },
+            "small_coal_miner": {
+                "building_type": "small_coal_miner",
+                "zone": "outer_ring",
+            },
+            "small_steel_miner": {
+                "building_type": "small_steel_miner",
+                "zone": "outer_ring",
+            },
+        }
+        required_tech = {
+            "logging_camp": "tech_wood_processing_1",
+            "small_coal_miner": "tech_coal_seam_support",
+            "small_steel_miner": "tech_steel_screening",
+        }
+        for day in range(49, 56):
+            for building_type, arguments in build_arguments.items():
+                with self.subTest(day=day, building_type=building_type):
+                    state = self.make_state()
+                    state.calendar.current_day = day
+                    seed_final_frost_history(state, through_day=day - 1)
+                    if building_type in required_tech:
+                        state.technologies.researched_tech_ids.append(
+                            required_tech[building_type]
+                        )
+                    built = self.execute(
+                        state,
+                        BUILD_COMMAND,
+                        arguments,
+                        f"build-{day}-{building_type}",
+                    )
+                    self.assertEqual(built.code, ErrorCode.OK)
+
+                    assigned = self.execute(
+                        state,
+                        ASSIGN_COMMAND,
+                        {
+                            "building_id": built.data["building_id"],
+                            "population_type": "workers",
+                            "count": 5,
+                        },
+                        f"assign-{day}-{building_type}",
+                    )
+
+                    self.assertEqual(assigned.code, ErrorCode.OK)
+                    self.assertFalse(
+                        state.buildings[
+                            built.data["building_id"]
+                        ].is_operational
+                    )
+                    unassigned = self.execute(
+                        state,
+                        UNASSIGN_COMMAND,
+                        {
+                            "building_id": built.data["building_id"],
+                            "population_type": "workers",
+                        },
+                        f"unassign-{day}-{building_type}",
+                    )
+                    self.assertEqual(unassigned.code, ErrorCode.OK)
+                    self.assertFalse(
+                        state.buildings[
+                            built.data["building_id"]
+                        ].is_operational
+                    )
+                    reassigned = self.execute(
+                        state,
+                        ASSIGN_COMMAND,
+                        {
+                            "building_id": built.data["building_id"],
+                            "population_type": "workers",
+                            "count": 5,
+                        },
+                        f"reassign-{day}-{building_type}",
+                    )
+                    self.assertEqual(reassigned.code, ErrorCode.OK)
+                    self.assertFalse(
+                        state.buildings[
+                            built.data["building_id"]
+                        ].is_operational
+                    )
+
+    def test_final_frost_assignment_does_not_disable_other_buildings(self) -> None:
+        state = self.make_state()
+        state.calendar.current_day = 49
+        FinalFrostSystem(
+            load_final_frost_rules(REPOSITORY_ROOT / "data" / "final_frost.json"),
+            self.building_rules,
+            self.survival_rules,
+            self.technology_rules,
+        ).prepare_new_day(state)
+        built = self.execute(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "research_institute", "zone": "middle_ring"},
+        )
+
+        assigned = self.execute(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": built.data["building_id"],
+                "population_type": "engineers",
+                "count": 1,
+            },
+        )
+
+        self.assertEqual(assigned.code, ErrorCode.OK)
+        self.assertTrue(
+            state.buildings[built.data["building_id"]].is_operational
+        )
+
+    def test_v14_final_frost_residual_operation_flag_is_normalized(self) -> None:
+        state = self.make_state()
+        built = self.execute(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "hunting_lodge", "zone": "outer_ring"},
+        )
+        state.calendar.current_day = 49
+        FinalFrostSystem(
+            load_final_frost_rules(REPOSITORY_ROOT / "data" / "final_frost.json"),
+            self.building_rules,
+            self.survival_rules,
+            self.technology_rules,
+        ).prepare_new_day(state)
+        for event_id, resolved_day in (
+            ("arrival_day6", 6),
+            ("arrival_day19", 19),
+            ("arrival_day37", 37),
+        ):
+            state.events.fixed_arrival_choices[event_id] = "reject"
+            state.events.resolved_event_ids.append(event_id)
+            state.events.occurrence_counts[event_id] = 1
+            state.events.resolution_history.append(
+                EventResolutionRecord(
+                    event_id=event_id,
+                    option_id="reject",
+                    event_type="major",
+                    resolved_day=resolved_day,
+                    instance_id=f"{event_id}#0001",
+                    occurrence_index=1,
+                    resource_changes={
+                        "coal": 0,
+                        "wood": 0,
+                        "steel": 0,
+                        "raw_food": 0,
+                        "cooked_food": 0,
+                    },
+                )
+            )
+        state.buildings[built.data["building_id"]].assigned_workers = 5
+        state.buildings[built.data["building_id"]].is_operational = True
+        with tempfile.TemporaryDirectory() as directory:
+            save_path = Path(directory) / "legacy-v14-d49.json"
+            save_path.write_text(
+                json.dumps(encode_game_state(state), ensure_ascii=False),
+                encoding="utf-8",
+            )
+            loaded = GameSession.load(
+                save_path,
+                config_dir=REPOSITORY_ROOT / "data",
+            )
+            observation = to_primitive(loaded.observe())
+        self.assertFalse(
+            observation["state"]["buildings"][built.data["building_id"]][
+                "is_operational"
+            ]
         )
 
     def test_woodfuel_can_cover_the_shortfall_created_by_heat(self) -> None:
