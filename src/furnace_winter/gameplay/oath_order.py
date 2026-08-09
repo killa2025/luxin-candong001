@@ -121,6 +121,10 @@ def build_oath_order_catalog(rules: OathOrderRules) -> CommandCatalog:
                 "engineers": ArgumentKind.INTEGER,
             },
             argument_options={"facility_id": ("oath_hall", "patrol_office")},
+            argument_semantics={
+                "workers": "absolute_target_count",
+                "engineers": "absolute_target_count",
+            },
         )
     )
     catalog.register(
@@ -825,6 +829,58 @@ class OathOrderSystem:
             "selected_route": state.oath_order.selected_route,
             "signed_law_ids": list(state.oath_order.signed_law_ids),
             "next_law_day": state.oath_order.next_law_day,
+            "entry_law_ids": dict(_ROUTE_ENTRY_LAWS),
+            "law_rules": [
+                {
+                    "law_id": law_id,
+                    "route": rule.route,
+                    "required_law_ids": list(rule.requires),
+                    "trust_change": rule.trust,
+                    "panic_change": rule.panic,
+                    "confirmation_required": (
+                        law_id == _ROUTE_ENTRY_LAWS[rule.route]
+                    ),
+                    "terminal_law": law_id in _TERMINAL_LAWS,
+                    "facility_required": law_id in _TERMINAL_LAWS,
+                    "is_signed": law_id in state.oath_order.signed_law_ids,
+                }
+                for law_id, rule in sorted(self.rules.laws.items())
+            ],
+            "action_rules": [
+                {
+                    "action_id": action_id,
+                    "route": rule.route,
+                    "required_law_id": rule.required_law,
+                    "cooldown_days": rule.cooldown_days,
+                    "trust_change": rule.trust,
+                    "panic_change": rule.panic,
+                    "current_cooked_food_cost": (
+                        self._shared_meal_cost(state)
+                        if action_id == "shared_meal"
+                        else rule.cooked_food
+                    ),
+                    "cooked_food_cost_formula": (
+                        {
+                            "kind": "population_scaled_clamped",
+                            "population_field": "population_alive",
+                            "population_numerator": 1,
+                            "population_denominator": 2,
+                            "rounding": "ceiling",
+                            "minimum": 30,
+                            "maximum": 80,
+                        }
+                        if action_id == "shared_meal"
+                        else None
+                    ),
+                    "facility_required": True,
+                    "required_facility_id": _ROUTE_FACILITIES[rule.route],
+                    "required_facility_running": self._facility(
+                        state, rule.route
+                    ).is_running,
+                    "old_city_change": rule.old_city,
+                }
+                for action_id, rule in sorted(self.rules.actions.items())
+            ],
             "facilities": {
                 "oath_hall": self._facility_view(state.oath_order.oath_hall),
                 "patrol_office": self._facility_view(state.oath_order.patrol_office),
@@ -1445,6 +1501,8 @@ class OathOrderSystem:
             "enabled": facility.enabled,
             "visible": facility.visible,
             "slot_cost": 0,
+            "minimum_total_staff": 1,
+            "staff_assignment_mode": "absolute_target_count",
             "assigned_workers": facility.assigned_workers,
             "assigned_engineers": facility.assigned_engineers,
             "is_running": facility.is_running,
@@ -1471,7 +1529,8 @@ class OathOrderSystem:
 
     @staticmethod
     def _shared_meal_cost(state: GameState) -> int:
-        return min(80, max(30, ceil(state.population.population_alive * 0.5)))
+        scaled_population = (state.population.population_alive + 1) // 2
+        return min(80, max(30, scaled_population))
 
     @staticmethod
     def _change_emotion(

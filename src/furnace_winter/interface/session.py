@@ -364,6 +364,8 @@ class GameSession:
             event_views=self.events.active_event_views(self._state),
             promise_views=self.events.active_promise_views(self._state),
             map_view=self.maps.view(self._state),
+            law_view=self.laws.observe(self._state),
+            technology_view=self.technologies.view(self._state),
             old_city_view=self.oath_order.old_city_view(self._state),
             oath_order_view=self.oath_order.route_view(self._state),
             final_frost_view=self.final_frost.observe(self._state),
@@ -375,6 +377,7 @@ class GameSession:
         population = state.population
         resources = state.resources
         final = state.final_result
+        law_view = self.laws.observe(state)
         return {
             "state_sequence": state.command_sequence,
             "day": state.calendar.current_day,
@@ -431,6 +434,13 @@ class GameSession:
                 "mode_id": state.furnace.mode_id,
                 "pressure": state.furnace.pressure,
                 "overload_level": state.furnace.overload_level,
+            },
+            "ration": {
+                "selected_mode": law_view["ration_mode"],
+                "effective_mode": law_view["effective_ration_mode"],
+                "fallback_reason": law_view["ration_fallback_reason"],
+                "last_settled_mode": state.daily_survival.ration_mode_used,
+                "last_settled_day": state.daily_survival.settled_day,
             },
             "trust": state.trust_panic.trust,
             "panic": state.trust_panic.panic,

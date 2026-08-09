@@ -66,6 +66,77 @@ class TechnologyPatchTests(unittest.TestCase):
             self.law_rules,
         )
 
+    def test_irreversible_steel_supply_lock_is_visible_and_strongly_warned(self) -> None:
+        state = self.make_state()
+        state.resources.steel = 2
+        for point in state.surface_resource_points.values():
+            if point.resource_type == "steel":
+                point.remaining_amount = 0
+                point.is_depleted = True
+                point.assigned_workers = 0
+                point.assigned_engineers = 0
+        system = self.technology_system()
+
+        warning = system.evaluate_risks(state)
+        view = {
+            item["tech_id"]: item for item in system.view(state)
+        }["tech_steel_screening"]
+
+        self.assertEqual(len(warning), 1)
+        self.assertEqual(
+            warning[0].warning_id,
+            "technology.steel_supply_irreversibly_locked",
+        )
+        self.assertEqual(warning[0].level.value, "B_STRONG")
+        self.assertEqual(warning[0].details["required_steel"], 5)
+        self.assertEqual(warning[0].details["recoverable_steel"], 2)
+        self.assertEqual(warning[0].details["steel_shortfall"], 3)
+        self.assertEqual(
+            view["irreversible_resource_lock"], warning[0].details
+        )
+
+        recoverable = self.make_state()
+        recoverable.resources.steel = 2
+        steel_point = next(
+            point
+            for point in recoverable.surface_resource_points.values()
+            if point.resource_type == "steel"
+        )
+        steel_point.remaining_amount = 3
+        self.assertEqual(system.evaluate_risks(recoverable), ())
+
+    def test_final_frost_excludes_uncollectable_surface_steel(self) -> None:
+        system = self.technology_system()
+        d48 = self.make_state()
+        d48.calendar.current_day = 48
+        d48.resources.steel = 0
+        d48.surface_resource_points["surface-steel-1"].assigned_workers = 4
+
+        d48_lock = {
+            item["tech_id"]: item for item in system.view(d48)
+        }["tech_steel_screening"]["irreversible_resource_lock"]
+        self.assertEqual(d48_lock["remaining_surface_steel"], 120)
+        self.assertEqual(d48_lock["recoverable_surface_steel"], 4)
+        self.assertEqual(d48_lock["recoverable_steel"], 4)
+        self.assertEqual(len(system.evaluate_risks(d48)), 1)
+
+        d48.surface_resource_points["surface-steel-1"].assigned_workers = 5
+        self.assertEqual(system.evaluate_risks(d48), ())
+
+        d49 = self.make_state()
+        d49.calendar.current_day = 49
+        d49.resources.steel = 0
+        d49.surface_resource_points["surface-steel-1"].assigned_workers = 5
+        warning = system.evaluate_risks(d49)
+        d49_lock = {
+            item["tech_id"]: item for item in system.view(d49)
+        }["tech_steel_screening"]["irreversible_resource_lock"]
+
+        self.assertEqual(len(warning), 1)
+        self.assertEqual(d49_lock["remaining_surface_steel"], 120)
+        self.assertEqual(d49_lock["recoverable_surface_steel"], 0)
+        self.assertEqual(d49_lock["recoverable_steel"], 0)
+
     @staticmethod
     def unlock_overload(state, level: int) -> None:
         completed = [

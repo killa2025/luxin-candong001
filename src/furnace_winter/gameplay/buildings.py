@@ -49,6 +49,67 @@ UNASSIGN_RESOURCE_COMMAND = "game.unassign_resource"
 HEAT_COMMAND = "game.heat"
 WOODFUEL_COMMAND = "game.woodfuel"
 
+FINAL_FROST_SHUTDOWN_BUILDING_TYPES = frozenset(
+    {
+        "hunting_lodge",
+        "logging_camp",
+        "small_coal_miner",
+        "small_steel_miner",
+    }
+)
+FINAL_FROST_COLLECTION_START_DAY = 49
+FINAL_FROST_COLLECTION_END_DAY = 55
+
+
+def is_final_frost_collection_shutdown(day: int) -> bool:
+    return FINAL_FROST_COLLECTION_START_DAY <= day <= FINAL_FROST_COLLECTION_END_DAY
+
+
+def final_frost_affected_surface_resource_point_ids(
+    state: GameState,
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            point.resource_point_id
+            for point in state.surface_resource_points.values()
+            if not point.is_depleted
+            or point.assigned_workers + point.assigned_engineers > 0
+        )
+    )
+
+
+def surface_resource_recoverable_before_final_frost(
+    state: GameState,
+    rules: BuildingRules,
+    resource_type: str,
+) -> int:
+    """Return resource still collectable under the current plan before D49."""
+
+    day = state.calendar.current_day
+    if is_final_frost_collection_shutdown(day):
+        return 0
+    future_full_days = max(FINAL_FROST_COLLECTION_START_DAY - day - 1, 0)
+    recoverable = 0
+    for point_id, point in state.surface_resource_points.items():
+        if point.resource_type != resource_type or point.is_depleted:
+            continue
+        rule = rules.surface_resource_points[point_id]
+        assigned = point.assigned_workers + point.assigned_engineers
+        output_today = min(
+            (
+                point.production_remainder_numerator
+                + rule.output_per_day * assigned
+            )
+            // rule.staff_capacity,
+            point.remaining_amount,
+        )
+        remaining_after_today = point.remaining_amount - output_today
+        recoverable += output_today + min(
+            remaining_after_today,
+            rule.output_per_day * future_full_days,
+        )
+    return recoverable
+
 _STAFF_FIELDS = {
     "workers": "assigned_workers",
     "engineers": "assigned_engineers",
@@ -106,6 +167,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
                 "count": ArgumentKind.INTEGER,
             },
             argument_options={"population_type": tuple(_STAFF_FIELDS)},
+            argument_semantics={"count": "absolute_target_count"},
         )
     )
     catalog.register(
@@ -117,6 +179,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
             },
             optional_arguments={"count": ArgumentKind.INTEGER},
             argument_options={"population_type": tuple(_STAFF_FIELDS)},
+            argument_semantics={"count": "decrement_count_omitted_clears_all"},
         )
     )
     catalog.register(
@@ -128,6 +191,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
                 "count": ArgumentKind.INTEGER,
             },
             argument_options={"population_type": ("workers", "engineers")},
+            argument_semantics={"count": "absolute_target_count"},
         )
     )
     catalog.register(
@@ -139,6 +203,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
             },
             optional_arguments={"count": ArgumentKind.INTEGER},
             argument_options={"population_type": ("workers", "engineers")},
+            argument_semantics={"count": "decrement_count_omitted_clears_all"},
         )
     )
     catalog.register(
@@ -631,10 +696,40 @@ class BuildingSystem:
             - state.building_management.heat_uses_today,
         }
 
-    @staticmethod
-    def _woodfuel(state: GameState) -> dict[str, Any]:
+    def _woodfuel(self, state: GameState) -> dict[str, Any]:
         state.building_management.woodfuel_confirmed_today = True
-        return {"woodfuel_confirmed_today": True, "active_duration": "current_day_only"}
+        projection = self._projected_heating(state)
+        woodfuel_available = self._woodfuel_available(state)
+        if projection.woodfuel_contribution > 0:
+            outcome = "will_contribute_at_current_plan"
+            reason = None
+        elif projection.effective_furnace_level < projection.target_furnace_level:
+            outcome = "armed_but_no_current_contribution"
+            reason = "cannot_reach_next_full_furnace_level"
+        else:
+            outcome = "armed_but_no_current_contribution"
+            reason = "coal_already_covers_current_effective_level"
+        return {
+            "woodfuel_confirmed_today": True,
+            "active_duration": "current_day_only",
+            "activation_outcome": outcome,
+            "zero_contribution_reason": reason,
+            "projected_target_furnace_level": (
+                projection.target_furnace_level
+            ),
+            "projected_effective_furnace_level": (
+                projection.effective_furnace_level
+            ),
+            "projected_woodfuel_available": woodfuel_available,
+            "projected_woodfuel_contribution": (
+                projection.woodfuel_contribution
+            ),
+            "projected_wood_burned": (
+                projection.woodfuel_contribution
+                * self.rules.woodfuel.wood_per_fuel
+            ),
+            "projection_scope": "current_plan_before_later_commands",
+        }
 
     def install(self, engine: EndDayEngine) -> None:
         engine.register_state_validator(self.validate_state)
@@ -669,13 +764,7 @@ class BuildingSystem:
         context.emit("buildings.temperature.calculated", {"building_count": len(state.buildings)})
 
     def resolve_building_operation(self, context: EndDayContext) -> None:
-        final_frost = 49 <= context.settled_day <= 55
-        frost_shutdown_types = {
-            "hunting_lodge",
-            "logging_camp",
-            "small_coal_miner",
-            "small_steel_miner",
-        }
+        final_frost = is_final_frost_collection_shutdown(context.settled_day)
         for building in context.state.buildings.values():
             rule = self.rules.buildings.get(building.building_type)
             if rule is None:
@@ -692,7 +781,8 @@ class BuildingSystem:
                 and not building.is_shutdown_by_temperature
                 and not (
                     final_frost
-                    and building.building_type in frost_shutdown_types
+                    and building.building_type
+                    in FINAL_FROST_SHUTDOWN_BUILDING_TYPES
                 )
             )
         context.emit(
@@ -711,7 +801,7 @@ class BuildingSystem:
             and building.bound_resource_id is not None
         }
         for resource_point_id, point in state.surface_resource_points.items():
-            if 49 <= context.settled_day <= 55:
+            if is_final_frost_collection_shutdown(context.settled_day):
                 continue
             if point.is_depleted:
                 continue
@@ -773,13 +863,9 @@ class BuildingSystem:
         """
 
         working = deepcopy(state)
-        final_frost = 49 <= working.calendar.current_day <= 55
-        frost_shutdown_types = {
-            "hunting_lodge",
-            "logging_camp",
-            "small_coal_miner",
-            "small_steel_miner",
-        }
+        final_frost = is_final_frost_collection_shutdown(
+            working.calendar.current_day
+        )
         heating = projected_heating(
             working,
             self.survival_rules,
@@ -798,7 +884,8 @@ class BuildingSystem:
                 )
                 and not (
                     final_frost
-                    and building.building_type in frost_shutdown_types
+                    and building.building_type
+                    in FINAL_FROST_SHUTDOWN_BUILDING_TYPES
                 )
             )
 

@@ -20,6 +20,8 @@ class Observation:
     event_views: tuple[dict[str, Any], ...] = ()
     promise_views: tuple[dict[str, Any], ...] = ()
     map_view: dict[str, Any] | None = None
+    law_view: dict[str, Any] | None = None
+    technology_view: tuple[dict[str, Any], ...] = ()
     old_city_view: dict[str, Any] | None = None
     oath_order_view: dict[str, Any] | None = None
     final_frost_view: dict[str, Any] | None = None
@@ -34,6 +36,8 @@ class Observation:
         event_views: tuple[dict[str, Any], ...] = (),
         promise_views: tuple[dict[str, Any], ...] = (),
         map_view: dict[str, Any] | None = None,
+        law_view: dict[str, Any] | None = None,
+        technology_view: tuple[dict[str, Any], ...] = (),
         old_city_view: dict[str, Any] | None = None,
         oath_order_view: dict[str, Any] | None = None,
         final_frost_view: dict[str, Any] | None = None,
@@ -46,6 +50,8 @@ class Observation:
             event_views=event_views,
             promise_views=promise_views,
             map_view=map_view,
+            law_view=law_view,
+            technology_view=technology_view,
             old_city_view=old_city_view,
             oath_order_view=oath_order_view,
             final_frost_view=final_frost_view,

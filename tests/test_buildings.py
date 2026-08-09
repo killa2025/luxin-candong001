@@ -254,6 +254,26 @@ class BuildingPatchTests(unittest.TestCase):
                     list(advertised_types),
                 )
 
+    def test_assignment_specs_disclose_absolute_and_decrement_semantics(self) -> None:
+        specs = {item.name: item for item in self.make_system().command_specs()}
+
+        self.assertEqual(
+            specs[ASSIGN_COMMAND].argument_semantics["count"],
+            "absolute_target_count",
+        )
+        self.assertEqual(
+            specs[ASSIGN_RESOURCE_COMMAND].argument_semantics["count"],
+            "absolute_target_count",
+        )
+        self.assertEqual(
+            specs[UNASSIGN_COMMAND].argument_semantics["count"],
+            "decrement_count_omitted_clears_all",
+        )
+        self.assertEqual(
+            specs[UNASSIGN_RESOURCE_COMMAND].argument_semantics["count"],
+            "decrement_count_omitted_clears_all",
+        )
+
     def test_law_and_tech_prerequisites_are_checked_without_auto_building(self) -> None:
         state = self.make_state()
         blocked = self.execute(
@@ -740,6 +760,95 @@ class BuildingPatchTests(unittest.TestCase):
         self.assertEqual(state.daily_survival.woodfuel_wood_burned, 60)
         self.assertEqual((state.resources.coal, state.resources.wood), (0, 40))
         self.assertFalse(state.building_management.woodfuel_confirmed_today)
+
+    def test_woodfuel_feedback_explains_zero_contribution_at_full_level_boundaries(self) -> None:
+        system = self.make_system(with_technology_rules=True)
+        state = self.make_state()
+        state.technologies.researched_tech_ids.append(
+            "tech_furnace_coal_saving_1"
+        )
+        state.furnace.mode_id = "level_2"
+        state.furnace.is_active = True
+        state.resources.coal = 47
+        state.resources.wood = 15
+
+        result = system.execute(
+            state,
+            CommandRequest(
+                "woodfuel-zero",
+                WOODFUEL_COMMAND,
+                {"confirm": True},
+                expected_state_sequence=state.command_sequence,
+            ),
+        )
+
+        self.assertTrue(result.accepted)
+        self.assertEqual(result.data["activation_outcome"], "armed_but_no_current_contribution")
+        self.assertEqual(
+            result.data["zero_contribution_reason"],
+            "cannot_reach_next_full_furnace_level",
+        )
+        self.assertEqual(result.data["projected_target_furnace_level"], 2)
+        self.assertEqual(result.data["projected_effective_furnace_level"], 1)
+        self.assertEqual(result.data["projected_woodfuel_available"], 3)
+        self.assertEqual(result.data["projected_woodfuel_contribution"], 0)
+        self.assertEqual(result.data["projected_wood_burned"], 0)
+
+    def test_d48_warning_discloses_next_day_forced_shutdown(self) -> None:
+        state = self.make_state()
+        state.calendar.current_day = 48
+        built = self.execute(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "hunting_lodge", "zone": "outer_ring"},
+        )
+
+        warning = next(
+            item
+            for item in SurvivalSystem(
+                self.survival_rules, self.building_rules
+            ).evaluate_risks(state)
+            if item.warning_id
+            == "survival.final_frost_forced_shutdown_next_day"
+        )
+
+        self.assertEqual(warning.level.value, "B_STRONG")
+        self.assertEqual(warning.details["shutdown_starts_day"], 49)
+        self.assertIn(
+            built.data["building_id"],
+            warning.details["affected_building_ids"],
+        )
+        self.assertIn(
+            "hunting_lodge",
+            warning.details["forced_shutdown_building_types"],
+        )
+        self.assertTrue(
+            warning.details["surface_resource_collection_shutdown"]
+        )
+        self.assertIn(
+            "surface-steel-1",
+            warning.details["affected_surface_resource_point_ids"],
+        )
+
+    def test_d48_surface_points_trigger_shutdown_warning_without_buildings(self) -> None:
+        state = self.make_state()
+        state.calendar.current_day = 48
+        state.surface_resource_points["surface-steel-1"].assigned_workers = 5
+
+        warning = next(
+            item
+            for item in SurvivalSystem(
+                self.survival_rules, self.building_rules
+            ).evaluate_risks(state)
+            if item.warning_id
+            == "survival.final_frost_forced_shutdown_next_day"
+        )
+
+        self.assertEqual(warning.details["affected_building_ids"], [])
+        self.assertIn(
+            "surface-steel-1",
+            warning.details["affected_surface_resource_point_ids"],
+        )
 
     def test_woodfuel_can_cover_the_shortfall_created_by_heat(self) -> None:
         state = self.make_state()

@@ -117,6 +117,18 @@ class FinalFrostPatchTests(unittest.TestCase):
             self.technology,
         )
 
+    def test_observation_discloses_surface_collection_shutdown(self) -> None:
+        state = self.make_state(day=49)
+        system = self.system()
+        system.prepare_new_day(state)
+        view = system.observe(state)["forced_shutdown"]
+
+        self.assertTrue(view["surface_resource_collection_shutdown"])
+        self.assertIn(
+            "surface-steel-1",
+            view["affected_surface_resource_point_ids"],
+        )
+
     def full_engine(
         self,
         *,

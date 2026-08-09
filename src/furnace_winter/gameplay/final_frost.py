@@ -1176,6 +1176,12 @@ class FinalFrostSystem:
 
     def observe(self, state: GameState) -> dict[str, object]:
         self.validate_state(state)
+        from furnace_winter.gameplay.buildings import (
+            FINAL_FROST_SHUTDOWN_BUILDING_TYPES,
+            final_frost_affected_surface_resource_point_ids,
+            is_final_frost_collection_shutdown,
+        )
+
         return {
             "active": self.rules.is_frost_day(state.calendar.current_day),
             "start_day": self.rules.start_day,
@@ -1183,6 +1189,27 @@ class FinalFrostSystem:
             "baseline_day": state.final_frost.baseline_day,
             "preparation_tags": list(state.final_frost.preparation_tags),
             "settled_days": sorted(int(day) for day in state.final_frost.daily_records),
+            "forced_shutdown": {
+                "starts_day": self.rules.start_day,
+                "building_types": sorted(
+                    FINAL_FROST_SHUTDOWN_BUILDING_TYPES
+                ),
+                "affected_building_ids": sorted(
+                    building.building_id
+                    for building in state.buildings.values()
+                    if building.is_built
+                    and building.building_type
+                    in FINAL_FROST_SHUTDOWN_BUILDING_TYPES
+                ),
+                "surface_resource_collection_shutdown": (
+                    is_final_frost_collection_shutdown(
+                        state.calendar.current_day
+                    )
+                ),
+                "affected_surface_resource_point_ids": list(
+                    final_frost_affected_surface_resource_point_ids(state)
+                ),
+            },
             "frost_deaths": state.final_frost.frost_deaths,
             "wood_supply": {
                 "checked_day": state.final_frost.wood_supply_check_day,

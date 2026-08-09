@@ -11,7 +11,16 @@ from furnace_winter.config import (
     TechnologyRules,
 )
 from furnace_winter.config.technologies import validate_technology_building_links
-from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage
+from furnace_winter.gameplay.buildings import (
+    surface_resource_recoverable_before_final_frost,
+)
+from furnace_winter.gameplay.end_day import (
+    EndDayContext,
+    EndDayEngine,
+    EndDayStage,
+    RiskWarning,
+    RiskWarningLevel,
+)
 from furnace_winter.interface import (
     ArgumentKind,
     CommandCatalog,
@@ -226,10 +235,62 @@ class TechnologySystem:
 
     def install(self, engine: EndDayEngine) -> None:
         engine.register_state_validator(self.validate_state)
+        engine.register_risk_evaluator(self.evaluate_risks)
         engine.register_stage_handler(
             EndDayStage.ADVANCE_AND_COMMIT_RESEARCH,
             self.advance_and_commit_research,
         )
+
+    def evaluate_risks(self, state: GameState) -> tuple[RiskWarning, ...]:
+        details = self._steel_supply_lock_details(state)
+        if details is None:
+            return ()
+        return (
+            RiskWarning(
+                "technology.steel_supply_irreversibly_locked",
+                RiskWarningLevel.B_STRONG,
+                details,
+            ),
+        )
+
+    def _steel_supply_lock_details(
+        self, state: GameState
+    ) -> dict[str, Any] | None:
+        tech_id = "tech_steel_screening"
+        if (
+            tech_id in state.technologies.researched_tech_ids
+            or state.technologies.active_research_id == tech_id
+            or any(
+                building.building_type == "small_steel_miner"
+                for building in state.buildings.values()
+            )
+        ):
+            return None
+        required_steel = self.rules.technologies[tech_id].steel_cost
+        recoverable_surface_steel = (
+            surface_resource_recoverable_before_final_frost(
+                state,
+                self.building_rules,
+                "steel",
+            )
+        )
+        recoverable_steel = state.resources.steel + recoverable_surface_steel
+        if recoverable_steel >= required_steel:
+            return None
+        return {
+            "required_technology_id": tech_id,
+            "required_steel": required_steel,
+            "current_steel": state.resources.steel,
+            "remaining_surface_steel": sum(
+                point.remaining_amount
+                for point in state.surface_resource_points.values()
+                if point.resource_type == "steel"
+            ),
+            "recoverable_surface_steel": recoverable_surface_steel,
+            "recoverable_steel": recoverable_steel,
+            "steel_shortfall": required_steel - recoverable_steel,
+            "small_steel_miner_unlocked": False,
+        }
 
     def validate_state(self, state: GameState) -> None:
         validate_game_state(
@@ -338,6 +399,7 @@ class TechnologySystem:
 
     def view(self, state: GameState) -> tuple[dict[str, Any], ...]:
         completed = set(state.technologies.researched_tech_ids)
+        steel_lock = self._steel_supply_lock_details(state)
         result: list[dict[str, Any]] = []
         for tech_id, rule in sorted(self.rules.technologies.items()):
             missing = sorted(set(rule.prerequisite_tech_ids) - completed)
@@ -361,6 +423,21 @@ class TechnologySystem:
                     "missing_tech_ids": sorted(set(missing)),
                     "wood_cost": rule.wood_cost,
                     "steel_cost": rule.steel_cost,
+                    "resource_shortfalls": {
+                        key: value
+                        for key, value in {
+                            "wood": max(
+                                rule.wood_cost - state.resources.wood, 0
+                            ),
+                            "steel": max(
+                                rule.steel_cost - state.resources.steel, 0
+                            ),
+                        }.items()
+                        if value > 0
+                    },
+                    "irreversible_resource_lock": (
+                        steel_lock if tech_id == "tech_steel_screening" else None
+                    ),
                     "research_days": rule.research_days,
                     "effect_status": rule.effect_status,
                 }

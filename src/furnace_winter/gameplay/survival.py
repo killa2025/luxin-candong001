@@ -762,9 +762,12 @@ class SurvivalSystem:
                     )
                 )
 
-        ration_mode, ration_numerator, ration_denominator = self._effective_ration(
-            state
-        )
+        (
+            ration_mode,
+            ration_numerator,
+            ration_denominator,
+            ration_fallback_reason,
+        ) = self._effective_ration(state, expected_operation=True)
         food_required = self._food_required(
             state.population.population_alive,
             ration_numerator,
@@ -800,6 +803,10 @@ class SurvivalSystem:
                         ],
                         "required_food": food_required,
                         "ration_mode_used": ration_mode,
+                        "selected_ration_mode": (
+                            state.social_policy.current_ration_mode
+                        ),
+                        "ration_fallback_reason": ration_fallback_reason,
                         "food_shortfall": food_required - food_eaten,
                         "unfed_population": self._unfed_population(
                             state.population.population_alive,
@@ -835,6 +842,43 @@ class SurvivalSystem:
                     },
                 )
             )
+        if state.calendar.current_day == 48 and self.building_rules is not None:
+            from furnace_winter.gameplay.buildings import (
+                FINAL_FROST_COLLECTION_START_DAY,
+                FINAL_FROST_SHUTDOWN_BUILDING_TYPES,
+                final_frost_affected_surface_resource_point_ids,
+            )
+
+            affected_buildings = sorted(
+                building.building_id
+                for building in state.buildings.values()
+                if building.is_built
+                and building.building_type
+                in FINAL_FROST_SHUTDOWN_BUILDING_TYPES
+            )
+            affected_surface_points = (
+                final_frost_affected_surface_resource_point_ids(state)
+            )
+            if affected_buildings or affected_surface_points:
+                warnings.append(
+                    RiskWarning(
+                        "survival.final_frost_forced_shutdown_next_day",
+                        RiskWarningLevel.B_STRONG,
+                        {
+                            "shutdown_starts_day": (
+                                FINAL_FROST_COLLECTION_START_DAY
+                            ),
+                            "affected_building_ids": affected_buildings,
+                            "affected_surface_resource_point_ids": list(
+                                affected_surface_points
+                            ),
+                            "surface_resource_collection_shutdown": True,
+                            "forced_shutdown_building_types": sorted(
+                                FINAL_FROST_SHUTDOWN_BUILDING_TYPES
+                            ),
+                        },
+                    )
+                )
         return tuple(warnings)
 
     def _projected_food_inventory(self, state: GameState) -> dict[str, int]:
@@ -1020,9 +1064,12 @@ class SurvivalSystem:
 
     def settle_food(self, context: EndDayContext) -> None:
         state = context.state
-        ration_mode, ration_numerator, ration_denominator = self._effective_ration(
-            state
-        )
+        (
+            ration_mode,
+            ration_numerator,
+            ration_denominator,
+            ration_fallback_reason,
+        ) = self._effective_ration(state, expected_operation=False)
         required = self._food_required(
             state.population.population_alive,
             ration_numerator,
@@ -1054,6 +1101,10 @@ class SurvivalSystem:
             {
                 "required_food": required,
                 "ration_mode_used": ration_mode,
+                "selected_ration_mode": (
+                    state.social_policy.current_ration_mode
+                ),
+                "ration_fallback_reason": ration_fallback_reason,
                 "cooked_food_eaten": cooked_eaten,
                 "raw_food_eaten": raw_eaten,
                 "food_shortfall": shortfall,
@@ -1086,7 +1137,12 @@ class SurvivalSystem:
         )
         return population_alive - fed_population
 
-    def _effective_ration(self, state: GameState) -> tuple[str, int, int]:
+    def _effective_ration(
+        self,
+        state: GameState,
+        *,
+        expected_operation: bool,
+    ) -> tuple[str, int, int, str | None]:
         selected_mode = state.social_policy.current_ration_mode
         canteen_available = any(
             building.building_type == "canteen"
@@ -1098,17 +1154,18 @@ class SurvivalSystem:
                     self.rules,
                     self.technology_rules,
                 )
-                if self.building_rules is not None
+                if expected_operation and self.building_rules is not None
                 else building.is_operational
             )
             for building in state.buildings.values()
         )
         if selected_mode != "normal" and not canteen_available:
-            return "normal", 100, 100
+            return "normal", 100, 100, "canteen_unavailable"
         return (
             selected_mode,
             state.social_policy.ration_food_numerator,
             state.social_policy.ration_food_denominator,
+            None,
         )
 
     @staticmethod

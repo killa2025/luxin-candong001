@@ -577,7 +577,25 @@ class LawSystem:
         if state.social_policy.overtime_building_id:
             warnings.append(RiskWarning("laws.overtime_active", RiskWarningLevel.B_STRONG, {"building_id": state.social_policy.overtime_building_id}))
         if state.social_policy.current_ration_mode != "normal":
-            warnings.append(RiskWarning("laws.nonstandard_ration_active", RiskWarningLevel.A_INFO, {"mode": state.social_policy.current_ration_mode}))
+            effective_ration_mode = self._effective_ration_mode(state)
+            warnings.append(
+                RiskWarning(
+                    "laws.nonstandard_ration_active",
+                    RiskWarningLevel.A_INFO,
+                    {
+                        "mode": state.social_policy.current_ration_mode,
+                        "selected_mode": (
+                            state.social_policy.current_ration_mode
+                        ),
+                        "effective_mode": effective_ration_mode,
+                        "fallback_reason": (
+                            "canteen_unavailable"
+                            if effective_ration_mode == "normal"
+                            else None
+                        ),
+                    },
+                )
+            )
         if medical_pressure > 0:
             warnings.append(RiskWarning("laws.medical_overload", RiskWarningLevel.B_STRONG, {"medical_pressure": medical_pressure, "effective_capacity": effective_capacity}))
         if state.calendar.current_day >= 4 and self._current_medical_capacity(state) == 0 and state.population.sick_population + state.population.critical_population > 0:
@@ -823,6 +841,7 @@ class LawSystem:
             if overtime_building_id is not None
             else (100, 100)
         )
+        effective_ration_mode = self._effective_ration_mode(state)
         return {
             "signed_law_ids": list(state.laws.signed_law_ids),
             "available_law_ids": sorted(available), "locked_laws": locked,
@@ -831,6 +850,13 @@ class LawSystem:
             "deferred_building_ids": deferred_buildings,
             "unlocked_action_ids": unlocked_actions,
             "ration_mode": state.social_policy.current_ration_mode,
+            "effective_ration_mode": effective_ration_mode,
+            "ration_fallback_reason": (
+                "canteen_unavailable"
+                if state.social_policy.current_ration_mode != "normal"
+                and effective_ration_mode == "normal"
+                else None
+            ),
             "worktime_mode": state.social_policy.current_worktime_mode,
             "overtime_progress_multiplier": {
                 "building_id": overtime_building_id,
