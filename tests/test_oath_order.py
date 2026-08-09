@@ -327,6 +327,7 @@ class OathOrderPatchTests(unittest.TestCase):
         state = self.make_state(day=35)
 
         view = system.route_view(state)
+        self.assertEqual(view["balance_status"], "TEST_NUMERIC")
         laws = {item["law_id"]: item for item in view["law_rules"]}
         actions = {item["action_id"]: item for item in view["action_rules"]}
 
@@ -347,6 +348,74 @@ class OathOrderPatchTests(unittest.TestCase):
             actions["patrol"]["required_facility_id"], "patrol_office"
         )
         self.assertTrue(actions["patrol"]["facility_required"])
+
+        self.assertEqual(
+            {
+                law_id: (laws[law_id]["trust_change"], laws[law_id]["panic_change"])
+                for law_id in (
+                    "guard_oath",
+                    "mourning_bell",
+                    "shared_meal",
+                    "ember_roster",
+                    "stay_oath",
+                    "final_oath",
+                )
+            },
+            {
+                "guard_oath": (1, -1),
+                "mourning_bell": (0, -1),
+                "shared_meal": (0, 0),
+                "ember_roster": (0, 0),
+                "stay_oath": (0, 0),
+                "final_oath": (0, 8),
+            },
+        )
+        self.assertEqual(
+            (
+                actions["guard_oath"]["cooldown_days"],
+                actions["guard_oath"]["trust_change"],
+                actions["guard_oath"]["panic_change"],
+            ),
+            (4, 2, -1),
+        )
+        self.assertEqual(
+            (
+                actions["shared_meal"]["cooldown_days"],
+                actions["shared_meal"]["trust_change"],
+                actions["shared_meal"]["panic_change"],
+            ),
+            (5, 1, -2),
+        )
+
+    def test_patch018_guard_oath_action_applies_provisional_values(self) -> None:
+        system = self.system()
+        state = self.make_state(day=35)
+        self.enter_oath_route(system, state)
+        self.assertEqual((state.trust_panic.trust, state.trust_panic.panic), (51, 29))
+        self.assertEqual(
+            self.execute(
+                system,
+                state,
+                STAFF_OATH_ORDER_FACILITY_COMMAND,
+                facility_id="oath_hall",
+                workers=1,
+                engineers=0,
+            ).code,
+            ErrorCode.OK,
+        )
+
+        result = self.execute(
+            system,
+            state,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="guard_oath",
+        )
+
+        self.assertEqual(result.code, ErrorCode.OK)
+        self.assertEqual(result.data["trust_change"], 2)
+        self.assertEqual(result.data["panic_change"], -1)
+        self.assertEqual(result.data["next_available_day"], 39)
+        self.assertEqual((state.trust_panic.trust, state.trust_panic.panic), (53, 28))
 
         spec = next(
             item

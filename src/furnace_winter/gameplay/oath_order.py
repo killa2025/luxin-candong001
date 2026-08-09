@@ -825,6 +825,7 @@ class OathOrderSystem:
     def route_view(self, state: GameState) -> dict[str, Any]:
         self.validate_state(state)
         return {
+            "balance_status": self.rules.config_status.value,
             "page_unlocked": state.oath_order.page_unlocked or self._is_page_available(state),
             "selected_route": state.oath_order.selected_route,
             "signed_law_ids": list(state.oath_order.signed_law_ids),

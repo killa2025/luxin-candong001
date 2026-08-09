@@ -83,6 +83,7 @@ class SocialActionRules:
     memorial_trust_change: int
     memorial_panic_change: int
     firepit_daily_panic_change: int
+    firepit_daily_panic_floor: int
     unhandled_body_unit: int
     unhandled_body_trust_change: int
     unhandled_body_panic_change: int
@@ -186,6 +187,10 @@ class LawRules:
             raise LawConfigError("positive law numeric values must be greater than zero")
         if self.medical.temporary_capacity_through_day < 0:
             raise LawConfigError("temporary medical capacity day must be nonnegative")
+        if not 0 <= self.actions.firepit_daily_panic_floor <= 100:
+            raise LawConfigError("firepit daily panic floor must be between 0 and 100")
+        if self.actions.firepit_daily_panic_change >= 0:
+            raise LawConfigError("firepit daily panic change must remain negative")
         if (
             self.medical.triage_cooldown_days is not None
             and self.medical.triage_cooldown_days <= 0

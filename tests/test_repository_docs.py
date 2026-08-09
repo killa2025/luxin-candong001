@@ -19,7 +19,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("`docs/PENDING.md`", index)
         self.assertNotIn("handoff/PENDING 登记.md", index)
 
-    def test_repository_status_text_matches_patch_017_boundary(self) -> None:
+    def test_repository_status_text_matches_patch_018_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
@@ -33,14 +33,19 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("PATCH-011", readme)
         self.assertIn("PATCH-012", readme)
         self.assertIn("Patch 013", readme)
-        self.assertIn("Patch 016", readme)
         self.assertIn("Patch 017", readme)
-        self.assertIn("生产阶段开始时", readme)
-        self.assertIn("不删除或截断资源", readme)
+        self.assertIn("Patch 018", readme)
+        self.assertIn("暂行测试口径", readme)
+        self.assertIn("不代表最终封存平衡值", readme)
+        self.assertIn("铁腕路线", readme)
         self.assertIn("GameSession", readme)
-        self.assertIn("Patch 017", agents)
+        self.assertIn("Patch 018", agents)
         self.assertIn(
-            "不得借此修改誓言、铁腕、医疗效果、住房、资源产出、终霜强度或其他平衡数值",
+            "不得将这些值标成最终封存值",
+            agents,
+        )
+        self.assertIn(
+            "不得借此修改铁腕路线、医疗配给、第二研究所、住房、资源产出、科技成本、终霜强度或其他平衡数值",
             agents,
         )
         self.assertNotIn("完整结局报告正文、审问与 UI 仍留给 Patch 010", agents)

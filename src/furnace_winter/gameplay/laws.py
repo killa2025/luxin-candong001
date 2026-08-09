@@ -739,8 +739,6 @@ class LawSystem:
             state.social_policy.consecutive_long_shift_days = long_day
         else:
             state.social_policy.consecutive_long_shift_days = 0
-        if state.social_policy.firepit_enabled and state.daily_survival.effective_furnace_level > 0 and not state.daily_survival.heating_shortfall:
-            panic_change += self.rules.actions.firepit_daily_panic_change
         units = state.social_policy.unhandled_bodies // self.rules.actions.unhandled_body_unit
         trust_change += units * self.rules.actions.unhandled_body_trust_change
         body_panic_change = units * self.rules.actions.unhandled_body_panic_change
@@ -774,6 +772,21 @@ class LawSystem:
             )
             body_panic_change -= (current_day_component + 1) // 2
         panic_change += body_panic_change
+        if (
+            state.social_policy.firepit_enabled
+            and state.daily_survival.effective_furnace_level > 0
+            and not state.daily_survival.heating_shortfall
+        ):
+            projected_panic = max(
+                0,
+                min(100, state.trust_panic.panic + panic_change),
+            )
+            if projected_panic > self.rules.actions.firepit_daily_panic_floor:
+                panic_change += max(
+                    self.rules.actions.firepit_daily_panic_change,
+                    self.rules.actions.firepit_daily_panic_floor
+                    - projected_panic,
+                )
         self._change_emotion(state, trust=trust_change, panic=panic_change)
         context.emit("laws.trust_and_panic.resolved", {
             "trust_change": trust_change, "panic_change": panic_change,
@@ -879,6 +892,13 @@ class LawSystem:
             },
             "death_path": state.social_policy.death_path,
             "firepit_enabled": state.social_policy.firepit_enabled,
+            "firepit_daily_effect": {
+                "panic_change": self.rules.actions.firepit_daily_panic_change,
+                "panic_floor": self.rules.actions.firepit_daily_panic_floor,
+                "requires_effective_furnace": True,
+                "requires_full_heating_payment": True,
+                "balance_status": self.rules.status.value,
+            },
             "medical_capacity": self._current_medical_capacity(state),
             "medical_pressure": max(
                 state.population.sick_population + state.population.critical_population
