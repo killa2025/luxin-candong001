@@ -26,6 +26,7 @@ from furnace_winter.gameplay.survival import (
     furnace_level,
     is_building_expected_operational,
     is_over_capacity,
+    is_storage_production_blocked,
     projected_building_insulation_bonus,
     projected_building_temperature,
     projected_heating,
@@ -783,51 +784,59 @@ class BuildingSystem:
         state = context.state
         production: dict[str, int] = {"coal": 0, "wood": 0, "steel": 0, "raw_food": 0}
         depleted_points: list[str] = []
+        storage_used_at_start = storage_used(state.resources)
+        storage_blocked = is_storage_production_blocked(state.resources)
         sheltered_points = {
             building.bound_resource_id
             for building in state.buildings.values()
             if building.building_type == "gathering_shelter"
             and building.bound_resource_id is not None
         }
-        for resource_point_id, point in state.surface_resource_points.items():
-            if is_final_frost_collection_shutdown(context.settled_day):
-                continue
-            if point.is_depleted:
-                continue
-            point_rule = self.rules.surface_resource_points[resource_point_id]
-            assigned = point.assigned_workers + point.assigned_engineers
-            output = self._accumulate_fractional_output(
-                point,
-                point_rule.output_per_day,
-                assigned,
-                point_rule.staff_capacity,
-            )
-            output = min(output, point.remaining_amount)
-            point.remaining_amount -= output
-            setattr(
-                state.resources,
-                point.resource_type,
-                getattr(state.resources, point.resource_type) + output,
-            )
-            production[point.resource_type] += output
-            if point.remaining_amount == 0:
-                point.is_depleted = True
-                point.assigned_workers = 0
-                point.assigned_engineers = 0
-                point.production_remainder_numerator = 0
-                depleted_points.append(resource_point_id)
+        raw_processed = 0
+        cooked_produced = 0
+        if not storage_blocked:
+            for resource_point_id, point in state.surface_resource_points.items():
+                if is_final_frost_collection_shutdown(context.settled_day):
+                    continue
+                if point.is_depleted:
+                    continue
+                point_rule = self.rules.surface_resource_points[resource_point_id]
+                assigned = point.assigned_workers + point.assigned_engineers
+                output = self._accumulate_fractional_output(
+                    point,
+                    point_rule.output_per_day,
+                    assigned,
+                    point_rule.staff_capacity,
+                )
+                output = min(output, point.remaining_amount)
+                point.remaining_amount -= output
+                setattr(
+                    state.resources,
+                    point.resource_type,
+                    getattr(state.resources, point.resource_type) + output,
+                )
+                production[point.resource_type] += output
+                if point.remaining_amount == 0:
+                    point.is_depleted = True
+                    point.assigned_workers = 0
+                    point.assigned_engineers = 0
+                    point.production_remainder_numerator = 0
+                    depleted_points.append(resource_point_id)
 
-        building_production, raw_processed, cooked_produced = (
-            self._resolve_building_production(state)
-        )
-        for resource, output in building_production.items():
-            production[resource] += output
+            building_production, raw_processed, cooked_produced = (
+                self._resolve_building_production(state)
+            )
+            for resource, output in building_production.items():
+                production[resource] += output
         state.daily_survival.storage_used = storage_used(state.resources)
         state.daily_survival.is_over_capacity = is_over_capacity(state.resources)
         context.emit(
             "buildings.production.settled",
             {
                 "production": production,
+                "production_blocked_by_storage": storage_blocked,
+                "storage_used_at_stage_start": storage_used_at_start,
+                "storage_capacity": state.resources.storage_capacity,
                 "raw_food_processed": raw_processed,
                 "cooked_food_produced": cooked_produced,
                 "depleted_resource_point_ids": depleted_points,
@@ -858,6 +867,14 @@ class BuildingSystem:
             self.rules,
             self.technology_rules,
         )
+        working.resources.coal -= (
+            heating.base_coal_paid + heating.overload_coal_paid
+        )
+        if heating.woodfuel_contribution:
+            working.resources.wood -= (
+                heating.woodfuel_contribution
+                * self.rules.woodfuel.wood_per_fuel
+            )
         for building in working.buildings.values():
             building.is_operational = (
                 is_building_expected_operational(
@@ -870,9 +887,21 @@ class BuildingSystem:
                 )
             )
 
-        production, raw_processed, cooked_produced = (
-            self._resolve_building_production(working)
-        )
+        storage_used_at_start = storage_used(working.resources)
+        storage_blocked = is_storage_production_blocked(working.resources)
+        if storage_blocked:
+            production = {
+                "coal": 0,
+                "wood": 0,
+                "steel": 0,
+                "raw_food": 0,
+            }
+            raw_processed = 0
+            cooked_produced = 0
+        else:
+            production, raw_processed, cooked_produced = (
+                self._resolve_building_production(working)
+            )
         return {
             "available_food": (
                 working.resources.cooked_food + working.resources.raw_food
@@ -882,6 +911,9 @@ class BuildingSystem:
             "raw_food_produced": production["raw_food"],
             "raw_food_processed": raw_processed,
             "cooked_food_produced": cooked_produced,
+            "production_blocked_by_storage": storage_blocked,
+            "storage_used_at_stage_start": storage_used_at_start,
+            "storage_capacity": working.resources.storage_capacity,
         }
 
     def _resolve_building_production(

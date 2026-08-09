@@ -14,6 +14,7 @@ from furnace_winter.gameplay.end_day import (
     RiskWarningLevel,
 )
 from furnace_winter.gameplay.hunger import add_population_to_hunger_none
+from furnace_winter.gameplay.survival import medical_building_capacity
 from furnace_winter.interface import (
     ArgumentKind,
     CommandCatalog,
@@ -406,6 +407,8 @@ class EventSystem:
             if event_id in self.rules.fixed_arrivals
             else None,
         }
+        if event_id in self.rules.fixed_arrivals:
+            data["notices"] = self._arrival_notices()
         state.events.resolution_history.append(
             EventResolutionRecord(
                 event_id=event_id,
@@ -1095,12 +1098,7 @@ class EventSystem:
         population.disabled_population += effect.disabled
         population.housed_population = min(population.population_alive, state.housing.capacity)
         population.homeless_population = population.population_alive - population.housed_population
-        state.medical.medical_pressure = max(
-            population.sick_population
-            + population.critical_population
-            - state.medical.effective_capacity,
-            0,
-        )
+        self._sync_expected_medical_capacity(state)
         self._change_morale(state, effect.trust, effect.panic)
         state.events.fixed_arrival_choices[event_id] = option_id
         # Patch 007 exposes the day-37 delta but Patch 008 owns the faction count.
@@ -1110,13 +1108,20 @@ class EventSystem:
     def arrival_risk_preview(self, state: GameState) -> dict[str, Any]:
         alive = state.population.population_alive
         food = state.resources.raw_food + state.resources.cooked_food
+        medical_capacity = self._expected_medical_capacity(state)
+        medical_gap = max(
+            state.population.sick_population
+            + state.population.critical_population
+            - medical_capacity,
+            0,
+        )
         return {
             "population_after_event": alive,
             "housing_capacity": state.housing.capacity,
             "homeless_after_event": state.population.homeless_population,
             "food_days_x10_after_event": (food * 10) // alive if alive else 0,
-            "medical_capacity": state.medical.effective_capacity,
-            "medical_gap_after_event": state.medical.medical_pressure,
+            "medical_capacity": medical_capacity,
+            "medical_gap_after_event": medical_gap,
             "sick_after_event": state.population.sick_population,
             "critical_after_event": state.population.critical_population,
             "disabled_after_event": state.population.disabled_population,
@@ -1125,6 +1130,47 @@ class EventSystem:
             "panic_after_event": state.trust_panic.panic,
             "old_city_delta_pending": state.events.metrics.get("pending_old_city_arrival_delta", 0),
         }
+
+    def _expected_medical_capacity(self, state: GameState) -> int:
+        return state.medical.temporary_capacity + medical_building_capacity(
+            state,
+            expected=True,
+            building_rules=self.building_rules,
+            survival_rules=self.survival_rules,
+            technology_rules=self.technology_rules,
+        )
+
+    def _sync_expected_medical_capacity(self, state: GameState) -> None:
+        building_capacity = medical_building_capacity(
+            state,
+            expected=True,
+            building_rules=self.building_rules,
+            survival_rules=self.survival_rules,
+            technology_rules=self.technology_rules,
+        )
+        state.medical.building_capacity = building_capacity
+        state.medical.effective_capacity = (
+            state.medical.temporary_capacity + building_capacity
+        )
+        state.medical.medical_pressure = max(
+            state.population.sick_population
+            + state.population.critical_population
+            - state.medical.effective_capacity,
+            0,
+        )
+
+    def _arrival_notices(self) -> list[dict[str, str]]:
+        text_ids = (
+            "arrival.work_assignment.notice",
+            "arrival.immediate_pressure.notice",
+        )
+        return [
+            {
+                "text_id": text_id,
+                "text": self.text_registry.require(text_id).text,
+            }
+            for text_id in text_ids
+        ]
 
     def evaluate_risks(self, state: GameState) -> tuple[RiskWarning, ...]:
         warnings: list[RiskWarning] = []

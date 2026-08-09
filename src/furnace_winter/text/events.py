@@ -10,6 +10,30 @@ _SOURCE = (
 )
 
 _RUNTIME_TEXT = {
+    "event.children_request.title": "孩子们的请求",
+    "event.children_request.body": (
+        "几个孩子站在炉边，没有靠得太近。\n\n"
+        "他们问执政官：\n\n"
+        "我们今天要去哪儿？\n\n"
+        "没人回答。\n"
+        "因为城市还没决定，孩子在这里算未来，还是算劳动力。"
+    ),
+    "event.children_request.option_a": "承诺安置儿童",
+    "event.children_request.option_b": "暂时维持现状",
+    "event.children_request.option_c": "安排炉边杂务",
+    "arrival.day6.title": "早期求生者",
+    "arrival.day19.title": "中期工程残队",
+    "arrival.day37.title": "后期难民潮",
+    "arrival.option.accept_all": "全部接纳",
+    "arrival.option.accept_partial": "部分接纳",
+    "arrival.option.reject": "拒绝接纳",
+    "arrival.work_assignment.notice": (
+        "新增人口当天能够工作，但不会自动分配岗位。请手动调整工作分配。"
+    ),
+    "arrival.immediate_pressure.notice": (
+        "新增人口已经进城，并立即计入住房、食物、医疗和疾病压力。"
+    ),
+    "event.seventh_frost_start.title": "第七霜落",
     "event.black_frost_echo.title": "黑霜回声",
     "event.black_frost_echo.body": (
         "夜里，炉城外传来一种很低的声音。\n\n"
@@ -44,7 +68,7 @@ _RUNTIME_TEXT = {
 
 
 def build_event_text_registry() -> TextRegistry:
-    """Register sealed player-visible text used by fixed frost warnings."""
+    """Register sealed player-visible event and fixed-arrival text."""
 
     registry = TextRegistry()
     for text_id, text in _RUNTIME_TEXT.items():

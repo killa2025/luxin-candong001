@@ -13,6 +13,25 @@ from furnace_winter.models import GameState
 COMMAND_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*$")
 
 
+def invalid_command_format_details() -> dict[str, Any]:
+    """Return stable syntax guidance without recommending a game action."""
+
+    return {
+        "reason": "invalid_command_format",
+        "request_shape": {
+            "command_id": "STRING",
+            "name": "STRING",
+            "arguments": "OBJECT",
+            "expected_state_sequence": "INTEGER_OR_NULL",
+        },
+        "json_lines_envelope_example": {
+            "type": "command",
+            "name": "game.set_furnace",
+            "arguments": {"level": 2},
+        },
+    }
+
+
 class ErrorCode(StrEnum):
     OK = "OK"
     INVALID_COMMAND_FORMAT = "INVALID_COMMAND_FORMAT"
@@ -161,7 +180,11 @@ class CommandValidator:
         legality_check: LegalityCheck | None = None,
     ) -> CommandValidation:
         if not isinstance(request, CommandRequest):
-            return CommandValidation(False, ErrorCode.INVALID_COMMAND_FORMAT)
+            return CommandValidation(
+                False,
+                ErrorCode.INVALID_COMMAND_FORMAT,
+                invalid_command_format_details(),
+            )
         if (
             not isinstance(request.command_id, str)
             or not request.command_id.strip()
@@ -172,13 +195,18 @@ class CommandValidator:
             return CommandValidation(
                 False,
                 ErrorCode.INVALID_COMMAND_FORMAT,
+                invalid_command_format_details(),
             )
         if request.expected_state_sequence is not None and (
             not isinstance(request.expected_state_sequence, int)
             or isinstance(request.expected_state_sequence, bool)
             or request.expected_state_sequence < 0
         ):
-            return CommandValidation(False, ErrorCode.INVALID_COMMAND_FORMAT)
+            return CommandValidation(
+                False,
+                ErrorCode.INVALID_COMMAND_FORMAT,
+                invalid_command_format_details(),
+            )
         if not isinstance(request.arguments, Mapping) or not _is_json_value(request.arguments):
             return CommandValidation(False, ErrorCode.INVALID_ARGUMENTS)
 

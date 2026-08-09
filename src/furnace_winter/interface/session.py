@@ -44,6 +44,7 @@ from furnace_winter.interface.commands import (
     CommandValidation,
     CommandValidator,
     ErrorCode,
+    invalid_command_format_details,
 )
 from furnace_winter.interface.feedback import CommandResult
 from furnace_winter.interface.observation import Observation, PROTOCOL_VERSION
@@ -691,6 +692,7 @@ class GameSession:
                 accepted=False,
                 code=ErrorCode.INVALID_COMMAND_FORMAT,
                 state_sequence=self._state.command_sequence,
+                data=invalid_command_format_details(),
             ),
             status=self.status(),
         )

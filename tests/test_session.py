@@ -468,6 +468,18 @@ class GameSessionTests(unittest.TestCase):
             malformed_identity.result.code,
             ErrorCode.INVALID_COMMAND_FORMAT,
         )
+        self.assertEqual(
+            malformed_identity.result.data["reason"],
+            "invalid_command_format",
+        )
+        self.assertEqual(
+            malformed_identity.result.data["json_lines_envelope_example"],
+            {
+                "type": "command",
+                "name": "game.set_furnace",
+                "arguments": {"level": 2},
+            },
+        )
         self.assertIsNone(malformed_identity.replay_sequence)
         self.assertEqual(stale.result.code, ErrorCode.STALE_STATE)
 
