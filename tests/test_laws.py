@@ -176,12 +176,20 @@ class LawPatchTests(unittest.TestCase):
         state.daily_survival.heating_shortfall = False
 
         def resolve() -> None:
-            system.resolve_trust_and_panic(
+            context = EndDayContext(
+                state=state,
+                random=DeterministicRandom.from_state(state.random),
+                settled_day=state.calendar.current_day,
+                stage=EndDayStage.RESOLVE_TRUST_AND_PANIC,
+                _emit=lambda _code, _payload: None,
+            )
+            system.resolve_trust_and_panic(context)
+            system.apply_firepit_daily_relief(
                 EndDayContext(
                     state=state,
-                    random=DeterministicRandom.from_state(state.random),
+                    random=context.random,
                     settled_day=state.calendar.current_day,
-                    stage=EndDayStage.RESOLVE_TRUST_AND_PANIC,
+                    stage=EndDayStage.CLOSE_ACTION_EFFECTS,
                     _emit=lambda _code, _payload: None,
                 )
             )

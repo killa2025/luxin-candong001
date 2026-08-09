@@ -30,7 +30,7 @@ from furnace_winter.gameplay.end_day import (
     EndDayStage,
     RiskWarningLevel,
 )
-from furnace_winter.interface import CommandRequest, ErrorCode
+from furnace_winter.interface import CommandRequest, ErrorCode, GameSession
 from furnace_winter.models import (
     BuildingState,
     CURRENT_SAVE_DATA_VERSION,
@@ -429,6 +429,73 @@ class OathOrderPatchTests(unittest.TestCase):
                 "engineers": "absolute_target_count",
             },
         )
+
+    def test_patch017_guard_and_shared_meal_cooldowns_load_in_game_session(
+        self,
+    ) -> None:
+        cases = (
+            ("guard_oath", 35, 3, 4),
+            ("shared_meal", 37, 4, 5),
+        )
+        for action_id, used_day, old_cooldown, new_cooldown in cases:
+            with self.subTest(action_id=action_id), tempfile.TemporaryDirectory() as directory:
+                system = self.system()
+                state = self.make_state(day=35)
+                self.enter_oath_route(system, state)
+                self.assertEqual(
+                    self.execute(
+                        system,
+                        state,
+                        STAFF_OATH_ORDER_FACILITY_COMMAND,
+                        facility_id="oath_hall",
+                        workers=1,
+                        engineers=0,
+                    ).code,
+                    ErrorCode.OK,
+                )
+                if action_id == "shared_meal":
+                    state.calendar.current_day = used_day
+                    self.assertEqual(
+                        self.execute(
+                            system,
+                            state,
+                            SIGN_OATH_ORDER_LAW_COMMAND,
+                            law_id="shared_meal",
+                        ).code,
+                        ErrorCode.OK,
+                    )
+                result = self.execute(
+                    system,
+                    state,
+                    USE_OATH_ORDER_ACTION_COMMAND,
+                    action_id=action_id,
+                )
+                self.assertEqual(result.code, ErrorCode.OK)
+                self.assertEqual(
+                    result.data["next_available_day"], used_day + new_cooldown
+                )
+
+                state.oath_order.action_next_available_day[action_id] = (
+                    used_day + old_cooldown
+                )
+                self.add_rejected_arrival_history(
+                    state,
+                    through_day=state.calendar.current_day + 1,
+                )
+                save_path = Path(directory) / f"legacy-{action_id}-v14.json"
+                save_path.write_text(
+                    json.dumps(encode_game_state(state), ensure_ascii=False),
+                    encoding="utf-8",
+                )
+
+                restored = GameSession.load(save_path, config_dir=ROOT / "data")
+
+                self.assertEqual(
+                    restored.state.oath_order.action_next_available_day[
+                        action_id
+                    ],
+                    used_day + old_cooldown,
+                )
 
     def test_regular_staffing_respects_route_facility_assignment(self) -> None:
         system = self.system()
