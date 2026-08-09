@@ -187,6 +187,7 @@
     "memorial_trust_change": 2,
     "memorial_panic_change": -2,
     "firepit_daily_panic_change": -1,
+    "firepit_daily_panic_floor": 10,
     "unhandled_body_unit": 2,
     "unhandled_body_trust_change": -1,
     "unhandled_body_panic_change": 1,

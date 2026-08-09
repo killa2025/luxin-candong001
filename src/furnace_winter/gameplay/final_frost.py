@@ -61,7 +61,7 @@ class FinalFrostSystem:
             self.apply_hunger_social_pressure,
         )
         engine.register_stage_handler(
-            EndDayStage.UPDATE_PROMISE_TARGETS,
+            EndDayStage.CAPTURE_DAILY_RECORDS,
             self.capture_daily_record,
         )
         engine.register_stage_handler(

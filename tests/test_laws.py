@@ -31,9 +31,11 @@ from furnace_winter.gameplay import (
     SurvivalSystem,
     create_initial_survival_state,
 )
+from furnace_winter.gameplay.end_day import EndDayContext, EndDayStage
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
     CURRENT_SAVE_DATA_VERSION,
+    DeterministicRandom,
     EventResolutionRecord,
     SaveDataError,
     decode_game_state,
@@ -155,6 +157,63 @@ class LawPatchTests(unittest.TestCase):
         self.assertEqual(state.building_management.zone_slots_used, slots)
         self.assertNotIn("firepit", (item.building_type for item in state.buildings.values()))
         self.assertEqual(state.trust_panic.panic, panic - 1)
+
+    def test_patch018_firepit_daily_relief_stops_at_provisional_floor(self) -> None:
+        state = self.make_state()
+        self.assertTrue(self.sign(state, "firepit_law").accepted)
+        system = self.law_system()
+        self.assertEqual(
+            system.observe(state)["firepit_daily_effect"],
+            {
+                "panic_change": -1,
+                "panic_floor": 10,
+                "requires_effective_furnace": True,
+                "requires_full_heating_payment": True,
+                "balance_status": "TEST_NUMERIC",
+            },
+        )
+        state.daily_survival.effective_furnace_level = 1
+        state.daily_survival.heating_shortfall = False
+
+        def resolve() -> None:
+            context = EndDayContext(
+                state=state,
+                random=DeterministicRandom.from_state(state.random),
+                settled_day=state.calendar.current_day,
+                stage=EndDayStage.RESOLVE_TRUST_AND_PANIC,
+                _emit=lambda _code, _payload: None,
+            )
+            system.resolve_trust_and_panic(context)
+            system.apply_firepit_daily_relief(
+                EndDayContext(
+                    state=state,
+                    random=context.random,
+                    settled_day=state.calendar.current_day,
+                    stage=EndDayStage.APPLY_DAILY_SOCIAL_RELIEF,
+                    _emit=lambda _code, _payload: None,
+                )
+            )
+
+        state.trust_panic.panic = 12
+        resolve()
+        self.assertEqual(state.trust_panic.panic, 11)
+        resolve()
+        self.assertEqual(state.trust_panic.panic, 10)
+        resolve()
+        self.assertEqual(state.trust_panic.panic, 10)
+
+        state.trust_panic.panic = 8
+        resolve()
+        self.assertEqual(state.trust_panic.panic, 8)
+
+        state.trust_panic.panic = 10
+        state.social_policy.current_ration_mode = "coarse_soup"
+        state.social_policy.ration_food_numerator = 70
+        state.social_policy.ration_food_denominator = 100
+        state.social_policy.consecutive_ration_mode = "coarse_soup"
+        state.social_policy.consecutive_ration_days = 1
+        resolve()
+        self.assertEqual(state.trust_panic.panic, 10)
 
     def test_emergency_ration_is_confirmed_day_only_and_restores_previous_mode(self) -> None:
         state = self.make_state()
@@ -1474,6 +1533,8 @@ class LawPatchTests(unittest.TestCase):
             (("medical", "temporary_capacity_through_day"), -1),
             (("medical", "triage_cooldown_days"), 0),
             (("actions", "unhandled_body_crisis_threshold"), 0),
+            (("actions", "firepit_daily_panic_floor"), 101),
+            (("actions", "firepit_daily_panic_change"), 0),
             (("worktime", "overtime_sick_minimum_if_staffed"), 0),
         )
         with TemporaryDirectory() as temp_dir:

@@ -51,6 +51,10 @@ USE_OATH_ORDER_ACTION_COMMAND = "game.use_oath_order_action"
 _ROUTE_ENTRY_LAWS = {"oath": "guard_oath", "iron": "city_patrol_order"}
 _ROUTE_FACILITIES = {"oath": "oath_hall", "iron": "patrol_office"}
 _TERMINAL_LAWS = {"final_oath", "highest_order"}
+_PATCH017_ACTION_COOLDOWN_DAYS = {
+    "guard_oath": 3,
+    "shared_meal": 4,
+}
 _CRITICAL_BUILDING_TYPES = frozenset(
     {
         "medical_station",
@@ -783,12 +787,21 @@ class OathOrderSystem:
             raise SaveDataError("route action cooldowns and history must match")
         for action_id, used_day in state.oath_order.action_last_used_day.items():
             required_law = self.rules.actions[action_id].required_law
+            recorded_next_day = state.oath_order.action_next_available_day[
+                action_id
+            ]
+            allowed_next_days = {
+                used_day + self.rules.actions[action_id].cooldown_days
+            }
+            if action_id in _PATCH017_ACTION_COOLDOWN_DAYS:
+                allowed_next_days.add(
+                    used_day + _PATCH017_ACTION_COOLDOWN_DAYS[action_id]
+                )
             if (
                 used_day > state.calendar.current_day
                 or required_law not in state.oath_order.law_signed_days
                 or used_day < state.oath_order.law_signed_days[required_law]
-                or state.oath_order.action_next_available_day[action_id]
-                != used_day + self.rules.actions[action_id].cooldown_days
+                or recorded_next_day not in allowed_next_days
             ):
                 raise SaveDataError("route action cooldown disagrees with usage history")
         if (
@@ -825,6 +838,7 @@ class OathOrderSystem:
     def route_view(self, state: GameState) -> dict[str, Any]:
         self.validate_state(state)
         return {
+            "balance_status": self.rules.config_status.value,
             "page_unlocked": state.oath_order.page_unlocked or self._is_page_available(state),
             "selected_route": state.oath_order.selected_route,
             "signed_law_ids": list(state.oath_order.signed_law_ids),

@@ -196,6 +196,33 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(settled.status["day"], 2)
         self.assertEqual(settled.result.data["settled_day"], 1)
 
+    def test_firepit_relief_runs_after_same_day_hunger_panic(self) -> None:
+        session = self.new_session(seed=1118)
+        self.assertEqual(
+            session.command(
+                "game.sign_law",
+                {"law_id": "firepit_law"},
+            ).result.code,
+            ErrorCode.OK,
+        )
+        session._state.trust_panic.panic = 9
+        session._state.resources.raw_food = 0
+        session._state.resources.cooked_food = 0
+
+        execution = session.command("game.end_day")
+        if execution.result.code is ErrorCode.END_DAY_CONFIRMATION_REQUIRED:
+            execution = session.command(
+                "game.confirm_end_day",
+                execution.result.data["confirmation"],
+            )
+
+        self.assertEqual(execution.result.code, ErrorCode.OK)
+        self.assertEqual(
+            session.state.events.metrics["patch013_hunger_panic_gain"],
+            5,
+        )
+        self.assertEqual(session.state.trust_panic.panic, 13)
+
     def test_end_day_save_failure_restores_confirmation_and_autosaves(
         self,
     ) -> None:

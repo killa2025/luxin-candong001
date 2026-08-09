@@ -30,7 +30,7 @@ from furnace_winter.gameplay.end_day import (
     EndDayStage,
     RiskWarningLevel,
 )
-from furnace_winter.interface import CommandRequest, ErrorCode
+from furnace_winter.interface import CommandRequest, ErrorCode, GameSession
 from furnace_winter.models import (
     BuildingState,
     CURRENT_SAVE_DATA_VERSION,
@@ -327,6 +327,7 @@ class OathOrderPatchTests(unittest.TestCase):
         state = self.make_state(day=35)
 
         view = system.route_view(state)
+        self.assertEqual(view["balance_status"], "TEST_NUMERIC")
         laws = {item["law_id"]: item for item in view["law_rules"]}
         actions = {item["action_id"]: item for item in view["action_rules"]}
 
@@ -348,6 +349,74 @@ class OathOrderPatchTests(unittest.TestCase):
         )
         self.assertTrue(actions["patrol"]["facility_required"])
 
+        self.assertEqual(
+            {
+                law_id: (laws[law_id]["trust_change"], laws[law_id]["panic_change"])
+                for law_id in (
+                    "guard_oath",
+                    "mourning_bell",
+                    "shared_meal",
+                    "ember_roster",
+                    "stay_oath",
+                    "final_oath",
+                )
+            },
+            {
+                "guard_oath": (1, -1),
+                "mourning_bell": (0, -1),
+                "shared_meal": (0, 0),
+                "ember_roster": (0, 0),
+                "stay_oath": (0, 0),
+                "final_oath": (0, 8),
+            },
+        )
+        self.assertEqual(
+            (
+                actions["guard_oath"]["cooldown_days"],
+                actions["guard_oath"]["trust_change"],
+                actions["guard_oath"]["panic_change"],
+            ),
+            (4, 2, -1),
+        )
+        self.assertEqual(
+            (
+                actions["shared_meal"]["cooldown_days"],
+                actions["shared_meal"]["trust_change"],
+                actions["shared_meal"]["panic_change"],
+            ),
+            (5, 1, -2),
+        )
+
+    def test_patch018_guard_oath_action_applies_provisional_values(self) -> None:
+        system = self.system()
+        state = self.make_state(day=35)
+        self.enter_oath_route(system, state)
+        self.assertEqual((state.trust_panic.trust, state.trust_panic.panic), (51, 29))
+        self.assertEqual(
+            self.execute(
+                system,
+                state,
+                STAFF_OATH_ORDER_FACILITY_COMMAND,
+                facility_id="oath_hall",
+                workers=1,
+                engineers=0,
+            ).code,
+            ErrorCode.OK,
+        )
+
+        result = self.execute(
+            system,
+            state,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="guard_oath",
+        )
+
+        self.assertEqual(result.code, ErrorCode.OK)
+        self.assertEqual(result.data["trust_change"], 2)
+        self.assertEqual(result.data["panic_change"], -1)
+        self.assertEqual(result.data["next_available_day"], 39)
+        self.assertEqual((state.trust_panic.trust, state.trust_panic.panic), (53, 28))
+
         spec = next(
             item
             for item in system.command_specs()
@@ -360,6 +429,73 @@ class OathOrderPatchTests(unittest.TestCase):
                 "engineers": "absolute_target_count",
             },
         )
+
+    def test_patch017_guard_and_shared_meal_cooldowns_load_in_game_session(
+        self,
+    ) -> None:
+        cases = (
+            ("guard_oath", 35, 3, 4),
+            ("shared_meal", 37, 4, 5),
+        )
+        for action_id, used_day, old_cooldown, new_cooldown in cases:
+            with self.subTest(action_id=action_id), tempfile.TemporaryDirectory() as directory:
+                system = self.system()
+                state = self.make_state(day=35)
+                self.enter_oath_route(system, state)
+                self.assertEqual(
+                    self.execute(
+                        system,
+                        state,
+                        STAFF_OATH_ORDER_FACILITY_COMMAND,
+                        facility_id="oath_hall",
+                        workers=1,
+                        engineers=0,
+                    ).code,
+                    ErrorCode.OK,
+                )
+                if action_id == "shared_meal":
+                    state.calendar.current_day = used_day
+                    self.assertEqual(
+                        self.execute(
+                            system,
+                            state,
+                            SIGN_OATH_ORDER_LAW_COMMAND,
+                            law_id="shared_meal",
+                        ).code,
+                        ErrorCode.OK,
+                    )
+                result = self.execute(
+                    system,
+                    state,
+                    USE_OATH_ORDER_ACTION_COMMAND,
+                    action_id=action_id,
+                )
+                self.assertEqual(result.code, ErrorCode.OK)
+                self.assertEqual(
+                    result.data["next_available_day"], used_day + new_cooldown
+                )
+
+                state.oath_order.action_next_available_day[action_id] = (
+                    used_day + old_cooldown
+                )
+                self.add_rejected_arrival_history(
+                    state,
+                    through_day=state.calendar.current_day + 1,
+                )
+                save_path = Path(directory) / f"legacy-{action_id}-v14.json"
+                save_path.write_text(
+                    json.dumps(encode_game_state(state), ensure_ascii=False),
+                    encoding="utf-8",
+                )
+
+                restored = GameSession.load(save_path, config_dir=ROOT / "data")
+
+                self.assertEqual(
+                    restored.state.oath_order.action_next_available_day[
+                        action_id
+                    ],
+                    used_day + old_cooldown,
+                )
 
     def test_regular_staffing_respects_route_facility_assignment(self) -> None:
         system = self.system()

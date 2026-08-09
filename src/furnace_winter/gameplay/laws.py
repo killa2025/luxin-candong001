@@ -476,6 +476,10 @@ class LawSystem:
         )
         engine.register_stage_handler(EndDayStage.RESOLVE_MEDICAL_DISEASE_AND_DEATH, self.resolve_medical_disease_and_death)
         engine.register_stage_handler(EndDayStage.RESOLVE_TRUST_AND_PANIC, self.resolve_trust_and_panic)
+        engine.register_stage_handler(
+            EndDayStage.APPLY_DAILY_SOCIAL_RELIEF,
+            self.apply_firepit_daily_relief,
+        )
         engine.register_stage_handler(EndDayStage.CLOSE_ACTION_EFFECTS, self.close_action_effects)
         engine.register_stage_handler(EndDayStage.CLOSE_DAILY_EFFECTS, self.close_daily_effects)
         engine.register_new_day_handler(self.prepare_new_day)
@@ -739,8 +743,6 @@ class LawSystem:
             state.social_policy.consecutive_long_shift_days = long_day
         else:
             state.social_policy.consecutive_long_shift_days = 0
-        if state.social_policy.firepit_enabled and state.daily_survival.effective_furnace_level > 0 and not state.daily_survival.heating_shortfall:
-            panic_change += self.rules.actions.firepit_daily_panic_change
         units = state.social_policy.unhandled_bodies // self.rules.actions.unhandled_body_unit
         trust_change += units * self.rules.actions.unhandled_body_trust_change
         body_panic_change = units * self.rules.actions.unhandled_body_panic_change
@@ -782,6 +784,33 @@ class LawSystem:
             "long_shift_days": state.social_policy.consecutive_long_shift_days,
             "unhandled_bodies": state.social_policy.unhandled_bodies,
         })
+
+    def apply_firepit_daily_relief(self, context: EndDayContext) -> None:
+        """Apply the provisional floor after every same-day social pressure."""
+
+        state = context.state
+        panic_change = 0
+        if (
+            state.social_policy.firepit_enabled
+            and state.daily_survival.effective_furnace_level > 0
+            and not state.daily_survival.heating_shortfall
+            and state.trust_panic.panic is not None
+            and state.trust_panic.panic
+            > self.rules.actions.firepit_daily_panic_floor
+        ):
+            panic_change = max(
+                self.rules.actions.firepit_daily_panic_change,
+                self.rules.actions.firepit_daily_panic_floor
+                - state.trust_panic.panic,
+            )
+            self._change_emotion(state, trust=0, panic=panic_change)
+        context.emit(
+            "laws.firepit_daily_relief.resolved",
+            {
+                "panic_change": panic_change,
+                "panic_floor": self.rules.actions.firepit_daily_panic_floor,
+            },
+        )
 
     def close_action_effects(self, context: EndDayContext) -> None:
         state = context.state
@@ -879,6 +908,13 @@ class LawSystem:
             },
             "death_path": state.social_policy.death_path,
             "firepit_enabled": state.social_policy.firepit_enabled,
+            "firepit_daily_effect": {
+                "panic_change": self.rules.actions.firepit_daily_panic_change,
+                "panic_floor": self.rules.actions.firepit_daily_panic_floor,
+                "requires_effective_furnace": True,
+                "requires_full_heating_payment": True,
+                "balance_status": self.rules.status.value,
+            },
             "medical_capacity": self._current_medical_capacity(state),
             "medical_pressure": max(
                 state.population.sick_population + state.population.critical_population
