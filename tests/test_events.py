@@ -593,14 +593,171 @@ class EventPatchTests(unittest.TestCase):
         )
 
         self.assertEqual(view["title_text_id"], "arrival.day6.title")
+        self.assertEqual(view["title_text"], "早期求生者")
         self.assertEqual(view["body_status"], "TODO_TEXT")
         accept_all = next(
             item for item in view["options"] if item["option_id"] == "accept_all"
         )
         self.assertEqual(accept_all["text_id"], "arrival.option.accept_all")
+        self.assertEqual(accept_all["text"], "全部接纳")
         self.assertEqual(accept_all["preview"]["population_added"], 12)
         self.assertEqual(accept_all["preview"]["resource_changes"]["coal"], 0)
         self.assertEqual(state.population.population_alive, 80)
+
+    def test_arrival_preview_recomputes_medical_capacity_after_staffing(self) -> None:
+        state = self.make_state(day=6)
+        state.medical.temporary_capacity = 0
+        state.medical.building_capacity = 0
+        state.medical.effective_capacity = 0
+        state.medical.medical_pressure = 0
+        state.laws.signed_law_ids.append("basic_medical_law")
+        events = self.event_system()
+        events.initialize_day(state)
+        buildings = self.building_system()
+        built = self.execute_command(
+            buildings,
+            state,
+            BUILD_COMMAND,
+            {"building_type": "medical_station", "zone": "inner_ring"},
+        )
+        building_id = built.data["building_id"]
+        assigned = self.execute_command(
+            buildings,
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": building_id,
+                "population_type": "engineers",
+                "count": 5,
+            },
+        )
+        before_preview = deepcopy(state)
+
+        view = next(
+            item
+            for item in events.active_event_views(state)
+            if item["event_id"] == "arrival_day6"
+        )
+        accept_all = next(
+            item for item in view["options"] if item["option_id"] == "accept_all"
+        )
+
+        self.assertTrue(assigned.accepted)
+        self.assertEqual(accept_all["preview"]["risk_preview"]["medical_capacity"], 10)
+        self.assertEqual(
+            accept_all["preview"]["risk_preview"]["medical_gap_after_event"],
+            0,
+        )
+        self.assertEqual(state, before_preview)
+
+        resolved = self.execute(events, state, "arrival_day6", "accept_all")
+
+        self.assertEqual(resolved.data["risk_preview"]["medical_capacity"], 10)
+        self.assertEqual(resolved.data["risk_preview"]["medical_gap_after_event"], 0)
+        self.assertEqual(state.medical.building_capacity, 10)
+        self.assertEqual(state.medical.effective_capacity, 10)
+        self.assertEqual(state.medical.medical_pressure, 0)
+        self.assertEqual(
+            [item["text_id"] for item in resolved.data["notices"]],
+            [
+                "arrival.work_assignment.notice",
+                "arrival.immediate_pressure.notice",
+            ],
+        )
+        self.assertIn("不会自动分配岗位", resolved.data["notices"][0]["text"])
+
+    def test_rejected_arrival_previews_omit_acceptance_notices(self) -> None:
+        for day, event_id in (
+            (6, "arrival_day6"),
+            (19, "arrival_day19"),
+            (37, "arrival_day37"),
+        ):
+            with self.subTest(event_id=event_id):
+                state = self.make_state(day=day)
+                system = self.event_system()
+                system.initialize_day(state)
+                before_preview = deepcopy(state)
+
+                view = next(
+                    item
+                    for item in system.active_event_views(state)
+                    if item["event_id"] == event_id
+                )
+                reject = next(
+                    item
+                    for item in view["options"]
+                    if item["option_id"] == "reject"
+                )
+
+                self.assertEqual(reject["preview"]["population_added"], 0)
+                self.assertNotIn("notices", reject["preview"])
+                self.assertEqual(state, before_preview)
+
+    def test_rejected_arrival_results_omit_acceptance_notices(self) -> None:
+        for day, event_id in (
+            (6, "arrival_day6"),
+            (19, "arrival_day19"),
+            (37, "arrival_day37"),
+        ):
+            with self.subTest(event_id=event_id):
+                state = self.make_state(day=day)
+                system = self.event_system()
+                system.initialize_day(state)
+
+                result = self.execute(system, state, event_id, "reject")
+
+                self.assertEqual(result.code, ErrorCode.OK)
+                self.assertEqual(result.data["population_added"], 0)
+                self.assertNotIn("notices", result.data)
+
+    def test_children_and_final_frost_titles_use_sealed_text(self) -> None:
+        children = self.make_state(day=5)
+        children_system = self.event_system()
+        children_system.initialize_day(children)
+        child_view = next(
+            item
+            for item in children_system.active_event_views(children)
+            if item["event_id"] == "children_request"
+        )
+
+        self.assertEqual(child_view["title_text"], "孩子们的请求")
+        self.assertEqual(child_view["body_status"], "AVAILABLE")
+        self.assertIn("我们今天要去哪儿", child_view["body_text"])
+        self.assertEqual(
+            [item["text"] for item in child_view["options"]],
+            ["承诺安置儿童", "暂时维持现状", "安排炉边杂务"],
+        )
+
+        frost = self.make_state(day=49)
+        frost.final_frost.entered = True
+        frost.final_frost.baseline_day = 49
+        frost.final_frost.baseline_alive_population = (
+            frost.population.population_alive
+        )
+        frost.final_frost.baseline_healthy_population = (
+            frost.population.healthy_population
+        )
+        frost.final_frost.baseline_sick_population = (
+            frost.population.sick_population
+        )
+        frost.final_frost.baseline_critical_population = (
+            frost.population.critical_population
+        )
+        frost.final_frost.baseline_disabled_population = (
+            frost.population.disabled_population
+        )
+        frost.final_frost.baseline_workable_population = (
+            frost.population.workers + frost.population.engineers
+        )
+        frost_system = self.event_system()
+        frost_system.initialize_day(frost)
+        frost_view = next(
+            item
+            for item in frost_system.active_event_views(frost)
+            if item["event_id"] == "seventh_frost_start"
+        )
+        self.assertEqual(frost_view["title_text"], "第七霜落")
+        self.assertEqual(frost_view["body_status"], "TODO_TEXT")
 
     def test_fixed_frost_warning_view_exposes_sealed_player_text(self) -> None:
         state = self.make_state(day=34)

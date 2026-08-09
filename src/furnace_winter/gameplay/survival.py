@@ -82,6 +82,12 @@ def is_over_capacity(resources: ResourceState) -> bool:
     return storage_used(resources) > resources.storage_capacity
 
 
+def is_storage_production_blocked(resources: ResourceState) -> bool:
+    """Return whether ordinary production must stop at the stage boundary."""
+
+    return storage_used(resources) >= resources.storage_capacity
+
+
 def projected_woodfuel_available(
     state: GameState,
     building_rules: BuildingRules | None,
@@ -845,6 +851,7 @@ class SurvivalSystem:
                     },
                 )
             )
+        used = storage_used(state.resources)
         if is_over_capacity(state.resources):
             warnings.append(
                 RiskWarning(
@@ -852,7 +859,20 @@ class SurvivalSystem:
                     RiskWarningLevel.A_INFO,
                     {
                         "capacity": state.resources.storage_capacity,
-                        "used": storage_used(state.resources),
+                        "used": used,
+                        "ordinary_production_blocked_if_capacity_not_freed": True,
+                    },
+                )
+            )
+        elif used == state.resources.storage_capacity:
+            warnings.append(
+                RiskWarning(
+                    "survival.storage_at_capacity",
+                    RiskWarningLevel.A_INFO,
+                    {
+                        "capacity": state.resources.storage_capacity,
+                        "used": used,
+                        "ordinary_production_blocked_if_capacity_not_freed": True,
                     },
                 )
             )

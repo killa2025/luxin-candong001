@@ -28,7 +28,7 @@ def confirmed_entry(text_id: str = "test.confirmed") -> TextEntry:
 
 
 class TextRegistryTests(unittest.TestCase):
-    def test_fixed_frost_warning_text_is_registered_from_sealed_assets(self) -> None:
+    def test_event_text_is_registered_from_sealed_assets(self) -> None:
         registry = build_event_text_registry()
 
         self.assertEqual(
@@ -42,6 +42,22 @@ class TextRegistryTests(unittest.TestCase):
         self.assertEqual(
             registry.require("event.city_night_terror.option_c").text,
             "不再粉饰情况",
+        )
+        self.assertIn(
+            "我们今天要去哪儿",
+            registry.require("event.children_request.body").text,
+        )
+        self.assertEqual(
+            registry.require("arrival.day37.title").text,
+            "后期难民潮",
+        )
+        self.assertEqual(
+            registry.require("arrival.option.accept_partial").text,
+            "部分接纳",
+        )
+        self.assertEqual(
+            registry.require("event.seventh_frost_start.title").text,
+            "第七霜落",
         )
 
     def test_confirmed_text_can_be_looked_up(self) -> None:

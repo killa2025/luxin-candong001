@@ -35,6 +35,7 @@ from furnace_winter.gameplay.survival import (
     furnace_level,
     furnace_mode_id,
     is_over_capacity,
+    is_storage_production_blocked,
     storage_used,
 )
 from furnace_winter.gameplay.laws import (
@@ -146,6 +147,7 @@ __all__ = [
     "furnace_level",
     "furnace_mode_id",
     "is_over_capacity",
+    "is_storage_production_blocked",
     "storage_used",
     "select_initial_map",
 ]

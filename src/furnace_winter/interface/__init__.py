@@ -7,6 +7,7 @@ from furnace_winter.interface.commands import (
     CommandValidator,
     ErrorCode,
     LegalityCheck,
+    invalid_command_format_details,
 )
 from furnace_winter.interface.feedback import (
     CommandResult,
@@ -42,6 +43,7 @@ __all__ = [
     "FeedbackItem",
     "FeedbackLevel",
     "GameSession",
+    "invalid_command_format_details",
     "LegalityCheck",
     "LogCategory",
     "LogEntry",

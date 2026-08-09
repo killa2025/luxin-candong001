@@ -31,6 +31,8 @@ from furnace_winter.gameplay import (
     FinalFrostSystem,
     SurvivalSystem,
     create_initial_survival_state,
+    is_over_capacity,
+    storage_used,
 )
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
@@ -511,6 +513,229 @@ class BuildingPatchTests(unittest.TestCase):
         self.assertTrue(execution.result.accepted)
         self.assertEqual(state.daily_survival.food_shortfall, 0)
         self.assertEqual(state.daily_survival.unfed_population, 0)
+
+    def test_full_or_over_capacity_blocks_all_ordinary_production(self) -> None:
+        for coal in (400, 401):
+            with self.subTest(storage_used=coal + 400):
+                state = self.make_state()
+                lodge = self.execute(
+                    state,
+                    BUILD_COMMAND,
+                    {"building_type": "hunting_lodge", "zone": "outer_ring"},
+                )
+                canteen = self.execute(
+                    state,
+                    BUILD_COMMAND,
+                    {"building_type": "canteen", "zone": "inner_ring"},
+                )
+                self.execute(
+                    state,
+                    ASSIGN_COMMAND,
+                    {
+                        "building_id": lodge.data["building_id"],
+                        "population_type": "workers",
+                        "count": 15,
+                    },
+                )
+                self.execute(
+                    state,
+                    ASSIGN_COMMAND,
+                    {
+                        "building_id": canteen.data["building_id"],
+                        "population_type": "workers",
+                        "count": 5,
+                    },
+                )
+                point_id = "surface-coal-2"
+                self.execute(
+                    state,
+                    ASSIGN_RESOURCE_COMMAND,
+                    {
+                        "resource_point_id": point_id,
+                        "population_type": "workers",
+                        "count": 1,
+                    },
+                )
+                state.furnace.mode_id = "off"
+                state.furnace.is_active = False
+                state.resources.coal = coal
+                state.resources.wood = 200
+                state.resources.steel = 100
+                state.resources.raw_food = 40
+                state.resources.cooked_food = 60
+                state.daily_survival.storage_used = storage_used(state.resources)
+                state.daily_survival.is_over_capacity = is_over_capacity(
+                    state.resources
+                )
+                point_before = deepcopy(state.surface_resource_points[point_id])
+                lodge_before = deepcopy(state.buildings[lodge.data["building_id"]])
+
+                warnings = SurvivalSystem(
+                    self.survival_rules,
+                    self.building_rules,
+                    self.technology_rules,
+                ).evaluate_risks(state)
+                execution = self.settle_day(
+                    state,
+                    self.make_engine(with_technology_rules=True),
+                    f"blocked-{coal}",
+                )
+                production_log = next(
+                    item
+                    for item in execution.logs
+                    if item.code == "buildings.production.settled"
+                )
+
+                self.assertTrue(execution.result.accepted)
+                self.assertEqual(
+                    {warning.warning_id for warning in warnings}
+                    & {
+                        "survival.storage_at_capacity",
+                        "survival.storage_over_capacity",
+                    },
+                    {
+                        "survival.storage_at_capacity"
+                        if coal == 400
+                        else "survival.storage_over_capacity"
+                    },
+                )
+                self.assertTrue(
+                    production_log.payload["production_blocked_by_storage"]
+                )
+                self.assertEqual(
+                    production_log.payload["storage_used_at_stage_start"],
+                    coal + 400,
+                )
+                self.assertEqual(
+                    production_log.payload["production"],
+                    {"coal": 0, "wood": 0, "steel": 0, "raw_food": 0},
+                )
+                self.assertEqual(production_log.payload["raw_food_processed"], 0)
+                self.assertEqual(production_log.payload["cooked_food_produced"], 0)
+                self.assertEqual(
+                    state.surface_resource_points[point_id], point_before
+                )
+                self.assertEqual(
+                    state.buildings[lodge.data["building_id"]]
+                    .production_remainder_numerator,
+                    lodge_before.production_remainder_numerator,
+                )
+                self.assertEqual(state.resources.coal, coal)
+                self.assertEqual(state.resources.wood, 200)
+                self.assertEqual(state.resources.steel, 100)
+
+    def test_heating_can_free_capacity_before_production_stage(self) -> None:
+        state = self.make_state()
+        lodge = self.execute(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "hunting_lodge", "zone": "outer_ring"},
+        )
+        canteen = self.execute(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        for building_id, count in (
+            (lodge.data["building_id"], 15),
+            (canteen.data["building_id"], 5),
+        ):
+            self.execute(
+                state,
+                ASSIGN_COMMAND,
+                {
+                    "building_id": building_id,
+                    "population_type": "workers",
+                    "count": count,
+                },
+            )
+        state.resources.coal = 400
+        state.resources.wood = 200
+        state.resources.steel = 100
+        state.resources.raw_food = 0
+        state.resources.cooked_food = 100
+        state.daily_survival.storage_used = storage_used(state.resources)
+        state.daily_survival.is_over_capacity = False
+
+        projection = self.make_system(
+            with_technology_rules=True
+        ).project_food_inventory(state)
+        execution = self.settle_day(
+            state,
+            self.make_engine(with_technology_rules=True),
+            "heating-frees-storage",
+        )
+        production_log = next(
+            item
+            for item in execution.logs
+            if item.code == "buildings.production.settled"
+        )
+
+        self.assertFalse(projection["production_blocked_by_storage"])
+        self.assertLess(projection["storage_used_at_stage_start"], 800)
+        self.assertEqual(projection["raw_food_produced"], 40)
+        self.assertEqual(projection["cooked_food_produced"], 80)
+        self.assertTrue(execution.result.accepted)
+        self.assertFalse(
+            production_log.payload["production_blocked_by_storage"]
+        )
+        self.assertEqual(production_log.payload["production"]["raw_food"], 40)
+
+    def test_crossing_capacity_is_kept_then_blocks_next_day(self) -> None:
+        state = self.make_state()
+        state.technologies.researched_tech_ids.append("tech_wood_processing_1")
+        built = self.execute(
+            state,
+            BUILD_COMMAND,
+            {
+                "building_type": "logging_camp",
+                "zone": "outer_ring",
+                "binding_id": "forest-zone-1",
+            },
+        )
+        self.execute(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": built.data["building_id"],
+                "population_type": "workers",
+                "count": 15,
+            },
+        )
+        state.furnace.mode_id = "off"
+        state.furnace.is_active = False
+        state.resources.coal = 400
+        state.resources.wood = 299
+        state.resources.steel = 100
+        state.resources.raw_food = 0
+        state.resources.cooked_food = 0
+        state.daily_survival.storage_used = storage_used(state.resources)
+        state.daily_survival.is_over_capacity = False
+        engine = self.make_engine(with_technology_rules=True)
+
+        first = self.settle_day(state, engine, "cross-capacity")
+        first_log = next(
+            item
+            for item in first.logs
+            if item.code == "buildings.production.settled"
+        )
+        wood_after_first = state.resources.wood
+        second = self.settle_day(state, engine, "blocked-next-day")
+        second_log = next(
+            item
+            for item in second.logs
+            if item.code == "buildings.production.settled"
+        )
+
+        self.assertTrue(first.result.accepted)
+        self.assertFalse(first_log.payload["production_blocked_by_storage"])
+        self.assertEqual(first_log.payload["production"]["wood"], 55)
+        self.assertEqual(wood_after_first, 354)
+        self.assertGreater(first_log.payload["storage_used_at_stage_start"] + 55, 800)
+        self.assertTrue(second.result.accepted)
+        self.assertTrue(second_log.payload["production_blocked_by_storage"])
+        self.assertEqual(second_log.payload["production"]["wood"], 0)
+        self.assertEqual(state.resources.wood, wood_after_first)
 
     def test_final_frost_food_warning_matches_greenhouse_output_and_shutdown(self) -> None:
         operating = self.make_final_frost_food_state()
@@ -1728,8 +1953,8 @@ class BuildingPatchTests(unittest.TestCase):
         for building_type, zone, binding_id, prerequisite, enhancement, resource, expected, staff in cases:
             with self.subTest(building_type=building_type):
                 state = self.make_state()
-                state.resources.wood = 500
-                state.resources.steel = 500
+                state.resources.wood = 200
+                state.resources.steel = 100
                 state.technologies.researched_tech_ids.extend([prerequisite, enhancement])
                 arguments = {"building_type": building_type, "zone": zone}
                 if binding_id is not None:
@@ -1747,7 +1972,7 @@ class BuildingPatchTests(unittest.TestCase):
                 self.assertEqual(production_log.payload["production"][resource], expected)
 
         state = self.make_state()
-        state.resources.raw_food = 500
+        state.resources.raw_food = 200
         state.technologies.researched_tech_ids.append("tech_canteen_process_improvement")
         canteen = self.execute(
             state, BUILD_COMMAND, {"building_type": "canteen", "zone": "inner_ring"}
