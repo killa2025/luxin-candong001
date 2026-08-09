@@ -602,6 +602,27 @@ class EventPatchTests(unittest.TestCase):
         self.assertEqual(accept_all["preview"]["resource_changes"]["coal"], 0)
         self.assertEqual(state.population.population_alive, 80)
 
+    def test_fixed_frost_warning_view_exposes_sealed_player_text(self) -> None:
+        state = self.make_state(day=34)
+        system = self.event_system()
+        system.initialize_day(state)
+        history_before = deepcopy(state.events.resolution_history)
+
+        view = next(
+            item
+            for item in system.active_event_views(state)
+            if item["event_id"] == "black_frost_echo"
+        )
+
+        self.assertEqual(view["title_text"], "黑霜回声")
+        self.assertIn("真正的第七霜落", view["body_text"])
+        self.assertEqual(view["body_status"], "AVAILABLE")
+        self.assertEqual(
+            [item["text"] for item in view["options"]],
+            ["公开预警", "只通知管理与工程人员", "暂缓公布"],
+        )
+        self.assertEqual(state.events.resolution_history, history_before)
+
     def test_observation_exposes_formal_event_and_promise_views(self) -> None:
         state = self.make_empty_pot_state()
         system = self.event_system()

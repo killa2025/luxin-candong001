@@ -36,6 +36,7 @@ from furnace_winter.models import (
     SaveDataError,
     validate_game_state,
 )
+from furnace_winter.text import TextRegistry, build_event_text_registry
 
 
 RESOLVE_EVENT_COMMAND = "game.resolve_event"
@@ -125,11 +126,13 @@ class EventSystem:
         building_rules: BuildingRules,
         survival_rules: SurvivalRules,
         technology_rules: TechnologyRules | None = None,
+        text_registry: TextRegistry | None = None,
     ) -> None:
         self.rules = rules
         self.building_rules = building_rules
         self.survival_rules = survival_rules
         self.technology_rules = technology_rules
+        self.text_registry = text_registry or build_event_text_registry()
         self._catalog = build_event_catalog()
         self._validator = CommandValidator(self._catalog)
 
@@ -158,12 +161,14 @@ class EventSystem:
                     option_id in event.option_ids and option_id in available
                 )
                 if not is_available:
+                    option_text_id = self._option_text_id(
+                        event.event_id, option_id, canonical
+                    )
                     unavailable_views.append(
                         {
                             "option_id": option_id,
-                            "text_id": self._option_text_id(
-                                event.event_id, option_id, canonical
-                            ),
+                            "text_id": option_text_id,
+                            "text": self._registered_text(option_text_id),
                             "reason": self._option_unavailable_reason(
                                 state, event.event_id, option_id
                             ),
@@ -175,18 +180,22 @@ class EventSystem:
                 preview = self._resolve(
                     preview_state, event.event_id, option_id
                 )
+                option_text_id = self._option_text_id(
+                    event.event_id, option_id, canonical
+                )
                 option_views.append(
                     {
                         "option_id": option_id,
-                        "text_id": self._option_text_id(
-                            event.event_id, option_id, canonical
-                        ),
+                        "text_id": option_text_id,
+                        "text": self._registered_text(option_text_id),
                         "available": True,
                         "followup_command": _FOLLOWUP_COMMANDS.get(option_id),
                         "preview": preview,
                     }
                 )
             title_id, body_id = self._event_text_ids(event.event_id)
+            title_text = self._registered_text(title_id)
+            body_text = self._registered_text(body_id)
             views.append(
                 {
                     "instance_id": event.instance_id,
@@ -198,11 +207,15 @@ class EventSystem:
                     "trigger_reason_ids": list(event.trigger_reason_ids),
                     "priority": event.priority,
                     "title_text_id": title_id,
+                    "title_text": title_text,
                     "body_text_id": body_id,
+                    "body_text": body_text,
                     "body_status": (
                         "TODO_TEXT"
                         if event.event_id in _TODO_BODY_EVENTS
                         else "AVAILABLE"
+                        if body_text is not None
+                        else "TEXT_ID_ONLY"
                     ),
                     "status_summary": self._event_status_snapshot(state),
                     "options": option_views,
@@ -210,6 +223,10 @@ class EventSystem:
                 }
             )
         return tuple(views)
+
+    def _registered_text(self, text_id: str) -> str | None:
+        entry = self.text_registry.get(text_id)
+        return entry.text if entry is not None else None
 
     def active_promise_views(self, state: GameState) -> tuple[dict[str, Any], ...]:
         """Return targets and exact settlement directions without strategy hints."""

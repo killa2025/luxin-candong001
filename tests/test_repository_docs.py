@@ -19,7 +19,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("`docs/PENDING.md`", index)
         self.assertNotIn("handoff/PENDING 登记.md", index)
 
-    def test_repository_status_text_matches_patch_015_boundary(self) -> None:
+    def test_repository_status_text_matches_patch_016_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
@@ -33,10 +33,10 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("PATCH-011", readme)
         self.assertIn("PATCH-012", readme)
         self.assertIn("Patch 013", readme)
-        self.assertIn("Patch 014", readme)
         self.assertIn("Patch 015", readme)
+        self.assertIn("Patch 016", readme)
         self.assertIn("GameSession", readme)
-        self.assertIn("Patch 015", agents)
+        self.assertIn("Patch 016", agents)
         self.assertIn(
             "不得借此修改誓言、铁腕、医疗、住房、资源产出、终霜强度或其他平衡数值",
             agents,

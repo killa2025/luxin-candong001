@@ -737,6 +737,17 @@ class BuildingSystem:
         engine.register_stage_handler(EndDayStage.RESOLVE_BUILDING_OPERATION, self.resolve_building_operation)
         engine.register_stage_handler(EndDayStage.RESOLVE_COLLECTION_AND_PRODUCTION, self.resolve_production)
         engine.register_stage_handler(EndDayStage.CLOSE_DAILY_EFFECTS, self.close_daily_effects)
+        engine.register_new_day_handler(self.prepare_new_day)
+
+    @staticmethod
+    def prepare_new_day(state: GameState) -> None:
+        """Synchronize persisted operation flags at the D49 shutdown boundary."""
+
+        if not is_final_frost_collection_shutdown(state.calendar.current_day):
+            return
+        for building in state.buildings.values():
+            if building.building_type in FINAL_FROST_SHUTDOWN_BUILDING_TYPES:
+                building.is_operational = False
 
     def validate_state(self, state: GameState) -> None:
         validate_game_state(

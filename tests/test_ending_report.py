@@ -444,6 +444,11 @@ class EndingReportPatchTests(unittest.TestCase):
         report = json.loads(output.getvalue())
         self.assertEqual(exit_code, 0)
         self.assertTrue(report["available"])
+        self.assertEqual(report["content_status"], "partial_pending_text")
+        self.assertFalse(report["body_complete"])
+        self.assertEqual(
+            report["pending_text_count"], len(report["pending_text_ids"])
+        )
         self.assertEqual(
             report["ending_state"], state.final_result.ending_id
         )

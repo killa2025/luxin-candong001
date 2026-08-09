@@ -1527,6 +1527,27 @@ class LawPatchTests(unittest.TestCase):
         self.assertIn("stable_therapy_law", observation["available_law_ids"])
         self.assertIn("child_school_law", observation["locked_laws"])
 
+    def test_apprentice_mode_reports_unsealed_population_generation(self) -> None:
+        state = self.make_state()
+        for law_id in (
+            "child_protection_law",
+            "child_school_law",
+            "engineering_apprentices_law",
+        ):
+            self.assertTrue(self.sign(state, law_id).accepted)
+            self.advance_to_law_day(state)
+
+        observation = self.law_system().observe(state)
+
+        self.assertIn(
+            "engineering_apprentices", observation["unlocked_mode_ids"]
+        )
+        self.assertIn(
+            "engineering_apprentices.population_generation",
+            observation["pending_mode_effect_ids"],
+        )
+        self.assertEqual(state.population.engineering_apprentices, 0)
+
     def test_law_hooks_complete_all_55_days_deterministically(self) -> None:
         def run():
             state = self.make_state()

@@ -850,6 +850,45 @@ class BuildingPatchTests(unittest.TestCase):
             warning.details["affected_surface_resource_point_ids"],
         )
 
+    def test_d49_boundary_synchronizes_forced_shutdown_operation_flags(self) -> None:
+        state = self.make_state()
+        hunting_lodge = self.execute(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "hunting_lodge", "zone": "outer_ring"},
+        )
+        canteen = self.execute(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        state.buildings[hunting_lodge.data["building_id"]].is_operational = True
+        state.buildings[canteen.data["building_id"]].is_operational = True
+        state.calendar.current_day = 49
+
+        self.make_system().prepare_new_day(state)
+
+        self.assertFalse(
+            state.buildings[hunting_lodge.data["building_id"]].is_operational
+        )
+        self.assertTrue(state.buildings[canteen.data["building_id"]].is_operational)
+
+    def test_new_day_before_d49_does_not_rewrite_operation_flags(self) -> None:
+        state = self.make_state()
+        hunting_lodge = self.execute(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "hunting_lodge", "zone": "outer_ring"},
+        )
+        state.buildings[hunting_lodge.data["building_id"]].is_operational = True
+        state.calendar.current_day = 48
+
+        self.make_system().prepare_new_day(state)
+
+        self.assertTrue(
+            state.buildings[hunting_lodge.data["building_id"]].is_operational
+        )
+
     def test_woodfuel_can_cover_the_shortfall_created_by_heat(self) -> None:
         state = self.make_state()
         state.calendar.current_day = 55
