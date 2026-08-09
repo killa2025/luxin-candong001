@@ -80,6 +80,7 @@ class EndDayStage(StrEnum):
     CLOSE_ACTION_EFFECTS = "close_action_effects"
     ADVANCE_AND_COMMIT_RESEARCH = "advance_and_commit_research"
     UPDATE_PROMISE_TARGETS = "update_promise_targets"
+    APPLY_DAILY_SOCIAL_RELIEF = "apply_daily_social_relief"
     CHECK_HARD_FAILS = "check_hard_fails"
     CHECK_HIDDEN_ACHIEVEMENTS = "check_hidden_achievements"
     RECORD_DAILY_LOG_AND_ENDING_TAGS = "record_daily_log_and_ending_tags"

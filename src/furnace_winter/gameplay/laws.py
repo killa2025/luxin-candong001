@@ -477,7 +477,7 @@ class LawSystem:
         engine.register_stage_handler(EndDayStage.RESOLVE_MEDICAL_DISEASE_AND_DEATH, self.resolve_medical_disease_and_death)
         engine.register_stage_handler(EndDayStage.RESOLVE_TRUST_AND_PANIC, self.resolve_trust_and_panic)
         engine.register_stage_handler(
-            EndDayStage.CLOSE_ACTION_EFFECTS,
+            EndDayStage.APPLY_DAILY_SOCIAL_RELIEF,
             self.apply_firepit_daily_relief,
         )
         engine.register_stage_handler(EndDayStage.CLOSE_ACTION_EFFECTS, self.close_action_effects)

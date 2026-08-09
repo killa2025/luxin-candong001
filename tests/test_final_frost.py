@@ -1413,6 +1413,51 @@ class FinalFrostPatchTests(unittest.TestCase):
         with self.assertRaisesRegex(SaveDataError, "discontinuous"):
             decode_game_state(encode_game_state(state))
 
+    def test_d48_old_city_panic_settles_before_firepit_and_hard_fail_check(
+        self,
+    ) -> None:
+        state = self.make_state(day=48)
+        self.set_population(state, healthy=20, housed=20)
+        state.resources.coal = 2000
+        state.resources.cooked_food = 1000
+        state.resources.raw_food = 0
+        state.furnace.is_active = True
+        state.furnace.mode_id = "level_3"
+        state.laws.signed_law_ids = ["firepit_law"]
+        state.laws.active_law_ids = ["firepit_law"]
+        state.social_policy.firepit_enabled = True
+        state.trust_panic.panic = 9
+
+        old = state.old_city
+        old.is_unlocked = True
+        old.reference_population = 20
+        old.low_threshold = 10
+        old.middle_threshold = 18
+        old.high_threshold = 28
+        old.member_count = 20
+        old.active_stage_id = "public_gathering"
+        old.stage_events_seen = [
+            "southern_letter",
+            "rumors",
+            "public_gathering",
+        ]
+
+        engine, _events, _oath_order = self.full_engine()
+        execution = self.settle(engine, state, "d48-old-city-firepit")
+
+        self.assertEqual(execution.result.code, ErrorCode.OK)
+        self.assertEqual(state.old_city.result_id, "partial_exodus")
+        self.assertEqual(state.trust_panic.panic, 13)
+        codes = [item.code for item in execution.logs]
+        self.assertLess(
+            codes.index("old_city.daily.updated"),
+            codes.index("laws.firepit_daily_relief.resolved"),
+        )
+        self.assertLess(
+            codes.index("laws.firepit_daily_relief.resolved"),
+            codes.index("end_day.stage.check_hard_fails"),
+        )
+
     def test_full_d48_to_d55_pipeline_uses_every_real_system_and_rolls_back(
         self,
     ) -> None:

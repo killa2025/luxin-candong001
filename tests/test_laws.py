@@ -189,7 +189,7 @@ class LawPatchTests(unittest.TestCase):
                     state=state,
                     random=context.random,
                     settled_day=state.calendar.current_day,
-                    stage=EndDayStage.CLOSE_ACTION_EFFECTS,
+                    stage=EndDayStage.APPLY_DAILY_SOCIAL_RELIEF,
                     _emit=lambda _code, _payload: None,
                 )
             )
