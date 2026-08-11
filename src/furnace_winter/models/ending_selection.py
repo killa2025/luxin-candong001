@@ -135,6 +135,10 @@ _PENDING_LONG_TEXT_IDS = {
     "oath": "ending.route.oath.full_text",
     "old_city": "ending.old_city.full_text",
 }
+_PENDING_MEDICAL_TEXT_IDS = (
+    "ending.additional.medical.01",
+    "ending.additional.medical.02",
+)
 
 
 def _choose(state: GameState, key: str, candidates: tuple[str, ...]) -> str:
@@ -274,10 +278,6 @@ def _additional_text_ids(state: GameState) -> list[str]:
     limit = _ADDITIONAL_LIMITS[ending_id]
     selected: list[str] = []
     records = tuple(state.final_frost.daily_records.values())
-    has_medical = any(
-        _has_building(state, building_type)
-        for building_type in ("medical_station", "hospital")
-    )
     has_active_doctor_and_medical_apprentice = any(
         building.building_type in {"medical_station", "hospital"}
         and building.is_built
@@ -297,25 +297,6 @@ def _additional_text_ids(state: GameState) -> list[str]:
                 candidates.append("ending.additional.death.03")
         if topic == "medical":
             candidates = []
-            if (
-                has_medical
-                and any(
-                    item.actual_disease_deaths > 0
-                    and not item.medical_collapse
-                    and not item.hospital_shutdown
-                    for item in records
-                )
-            ):
-                candidates.append("ending.additional.medical.01")
-            if (
-                has_medical
-                and any(
-                    item.actual_disease_deaths > 0
-                    and item.medical_overflow
-                    for item in records
-                )
-            ):
-                candidates.append("ending.additional.medical.02")
             if has_active_doctor_and_medical_apprentice:
                 candidates.append("ending.additional.medical.03")
             if not candidates:
@@ -477,6 +458,12 @@ def canonical_report_pending_text_ids(state: GameState) -> list[str]:
     pending: set[str] = set()
     ordinary_laws = set(state.laws.signed_law_ids)
     route_laws = set(state.oath_order.signed_law_ids)
+    ending_tags = {
+        *state.final_result.defining_tags,
+        *state.final_result.major_tags,
+    }
+    if ending_tags & _ADDITIONAL_TOPICS["medical"]:
+        pending.update(_PENDING_MEDICAL_TEXT_IDS)
     if ordinary_laws & {
         "child_labor_low_risk_law",
         "child_labor_all_jobs_law",

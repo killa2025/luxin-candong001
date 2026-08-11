@@ -324,14 +324,29 @@ _PENDING_LONG_TEXT_IDS = (
     "ending.death_handling.full_text",
     "ending.entertainment.full_text",
 )
-_PENDING_RUNTIME_TEXT_IDS = ("ending.trace.children_protected",)
+_PENDING_RUNTIME_TEXT_NOTES = {
+    "ending.trace.children_protected": (
+        "现有正文同时暗示互斥的医疗与工程学徒路线；"
+        "分支适配文案封存前暂停运行时导入。"
+    ),
+    "ending.additional.medical.01": (
+        "当前没有逐日医疗建筑及运行状态历史，无法证明疾病死亡当天"
+        "存在医疗服务；补齐可验证历史前暂停运行时导入。"
+    ),
+    "ending.additional.medical.02": (
+        "当前没有逐日医疗建筑、运行状态或容量历史，无法证明疾病死亡"
+        "与床位溢出发生于实际医疗服务期间；补齐可验证历史前暂停运行时导入。"
+    ),
+}
 
 
 def _expanded_runtime_text() -> dict[str, str]:
     text = dict(_RUNTIME_TEXT)
     for prefix, candidates in _TEXT_POOLS.items():
         for index, candidate in enumerate(candidates, start=1):
-            text[f"{prefix}.{index:02d}"] = candidate
+            text_id = f"{prefix}.{index:02d}"
+            if text_id not in _PENDING_RUNTIME_TEXT_NOTES:
+                text[text_id] = candidate
     return text
 
 
@@ -365,16 +380,13 @@ def build_ending_pending_registry() -> PendingRegistry:
                 note="009-C 完整长文案尚未封存；当前只使用已封存的一句式痕迹。",
             )
         )
-    for entry_id in _PENDING_RUNTIME_TEXT_IDS:
+    for entry_id, note in _PENDING_RUNTIME_TEXT_NOTES.items():
         registry.register(
             PendingEntry(
                 entry_id=entry_id,
                 status=ConfigStatus.PENDING,
                 source=_SOURCE,
-                note=(
-                    "现有正文同时暗示互斥的医疗与工程学徒路线；"
-                    "分支适配文案封存前暂停运行时导入。"
-                ),
+                note=note,
             )
         )
     return registry

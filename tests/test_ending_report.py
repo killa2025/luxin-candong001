@@ -410,40 +410,43 @@ class EndingReportPatchTests(unittest.TestCase):
         selected = canonical_report_body_text_ids(medical_state)
         self.assertIn("ending.additional.medical.03", selected)
 
-        station.assigned_medical_apprentices = 0
-        station.assigned_engineers = 0
-        medical_state.population.population_dead = 5
-        records = list(medical_state.final_frost.daily_records.values())
-        first_record = records[0]
-        second_record = records[1]
-        first_record.actual_disease_deaths = 1
-        for record in records:
-            record.medical_collapse = True
-            record.medical_overflow = False
-        for seed in range(32):
-            medical_state.random = DeterministicRandom(seed).snapshot()
-            selected = canonical_report_body_text_ids(medical_state)
-            self.assertNotIn("ending.additional.medical.01", selected)
+    def test_unprovable_medical_history_text_is_pending(self) -> None:
+        state = self.completed_state()
+        state.population.population_dead = 5
+        state.final_result.defining_tags = ["medical_collapse"]
+        state.final_result.major_tags = []
+        state.buildings["late-medical-station"] = BuildingState(
+            building_id="late-medical-station",
+            building_type="medical_station",
+            zone="inner_ring",
+            slot_size=1,
+            is_built=True,
+            is_operational=True,
+        )
+        death_day = next(iter(state.final_frost.daily_records.values()))
+        death_day.actual_disease_deaths = 1
+        death_day.medical_collapse = False
+        death_day.hospital_shutdown = False
+        death_day.medical_overflow = True
 
-        first_record.medical_collapse = False
-        second_record.medical_overflow = True
-        medical_state.final_frost.frost_deaths = 1
-        for seed in range(32):
-            medical_state.random = DeterministicRandom(seed).snapshot()
-            selected = canonical_report_body_text_ids(medical_state)
-            self.assertIn("ending.additional.medical.01", selected)
-            self.assertNotIn("ending.additional.medical.02", selected)
-
-        first_record.medical_overflow = True
-        selected_medical_ids: set[str] = set()
+        pending_ids = {
+            "ending.additional.medical.01",
+            "ending.additional.medical.02",
+        }
         for seed in range(64):
-            medical_state.random = DeterministicRandom(seed).snapshot()
-            selected_medical_ids.update(
-                text_id
-                for text_id in canonical_report_body_text_ids(medical_state)
-                if text_id.startswith("ending.additional.medical.")
-            )
-        self.assertIn("ending.additional.medical.02", selected_medical_ids)
+            state.random = DeterministicRandom(seed).snapshot()
+            selected = canonical_report_body_text_ids(state)
+            self.assertTrue(pending_ids.isdisjoint(selected))
+
+        registry = build_ending_text_registry()
+        pending_entries = {
+            entry.entry_id: entry
+            for entry in build_ending_pending_registry().entries()
+        }
+        for text_id in pending_ids:
+            self.assertIsNone(registry.get(text_id))
+            self.assertEqual(pending_entries[text_id].status.value, "PENDING")
+            self.assertIn(text_id, canonical_report_pending_text_ids(state))
 
     def test_food_additional_does_not_invent_a_canteen_history(self) -> None:
         state = self.completed_state()
