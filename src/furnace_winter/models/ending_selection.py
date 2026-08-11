@@ -274,15 +274,15 @@ def _additional_text_ids(state: GameState) -> list[str]:
     limit = _ADDITIONAL_LIMITS[ending_id]
     selected: list[str] = []
     records = tuple(state.final_frost.daily_records.values())
-    disease_deaths = sum(item.actual_disease_deaths for item in records)
     has_medical = any(
         _has_building(state, building_type)
         for building_type in ("medical_station", "hospital")
     )
-    has_active_medical_apprentice = any(
+    has_active_doctor_and_medical_apprentice = any(
         building.building_type in {"medical_station", "hospital"}
         and building.is_built
         and building.is_operational
+        and building.assigned_engineers > 0
         and building.assigned_medical_apprentices > 0
         for building in state.buildings.values()
     )
@@ -299,22 +299,29 @@ def _additional_text_ids(state: GameState) -> list[str]:
             candidates = []
             if (
                 has_medical
-                and disease_deaths > 0
-                and any(not item.hospital_shutdown for item in records)
+                and any(
+                    item.actual_disease_deaths > 0
+                    and not item.medical_collapse
+                    and not item.hospital_shutdown
+                    for item in records
+                )
             ):
                 candidates.append("ending.additional.medical.01")
             if (
                 has_medical
-                and disease_deaths > 0
-                and any(item.medical_overflow for item in records)
+                and any(
+                    item.actual_disease_deaths > 0
+                    and item.medical_overflow
+                    for item in records
+                )
             ):
                 candidates.append("ending.additional.medical.02")
-            if has_active_medical_apprentice:
+            if has_active_doctor_and_medical_apprentice:
                 candidates.append("ending.additional.medical.03")
             if not candidates:
                 continue
         if topic == "food":
-            candidates.remove("ending.additional.food.03")
+            candidates = ["ending.additional.food.02"]
         if topic == "core":
             candidates = []
             if any(item.overload_redline for item in records):
