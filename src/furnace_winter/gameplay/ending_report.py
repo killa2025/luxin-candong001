@@ -17,6 +17,7 @@ from furnace_winter.interface import (
     FeedbackLevel,
 )
 from furnace_winter.models import (
+    CURRENT_ENDING_REPORT_FORMAT_VERSION,
     FINAL_DAY,
     GameState,
     RunState,
@@ -25,16 +26,14 @@ from furnace_winter.models import (
     validate_game_state,
 )
 from furnace_winter.models.state import (
-    ENDING_ADDITIONAL_POOL_TAGS,
     ENDING_BODY_POOL_TEXT_IDS,
-    ENDING_HARD_FAIL_BODY_POOL_TEXT_IDS,
-    ENDING_HARD_FAIL_REASON_TEXT_IDS,
-    ENDING_INTERROGATION_POOL_BY_ENDING,
-    ENDING_PLAYER_ENDED_BODY_TEXT_IDS,
-    ENDING_REPORT_DEATH_RECORD_TEXT_ID,
-    ENDING_REPORT_NARRATIVE_POOL_TEXT_IDS,
-    ENDING_REPORT_ZERO_FROST_DEATHS_TEXT_ID,
-    ENDING_TITLE_TEXT_IDS,
+)
+from furnace_winter.models.ending_selection import (
+    canonical_report_body_text_ids,
+    canonical_report_pending_text_ids,
+    canonical_report_title_text_id,
+    legacy_report_pending_text_ids,
+    report_template_values,
 )
 from furnace_winter.text import (
     PendingRegistry,
@@ -56,37 +55,6 @@ def build_ending_report_catalog() -> CommandCatalog:
         )
     )
     return catalog
-
-
-def _pending_text_ids(state: GameState) -> list[str]:
-    final = state.final_result
-    pending: set[str] = {ENDING_REPORT_DEATH_RECORD_TEXT_ID}
-    if final.ending_id == "hard_fail":
-        if final.hard_fail_type is not None:
-            pending.add(
-                ENDING_HARD_FAIL_BODY_POOL_TEXT_IDS[
-                    final.hard_fail_type.value
-                ]
-            )
-        pending.add("ending.hard_fail.closing_pool")
-    else:
-        pending.update(ENDING_REPORT_NARRATIVE_POOL_TEXT_IDS)
-        if final.ending_id is not None:
-            pending.add(ENDING_BODY_POOL_TEXT_IDS[final.ending_id])
-            interrogation_id = ENDING_INTERROGATION_POOL_BY_ENDING.get(
-                final.ending_id
-            )
-            if interrogation_id is not None:
-                pending.add(interrogation_id)
-        tags = set(final.major_tags) | set(final.defining_tags)
-        for text_id, matching_tags in ENDING_ADDITIONAL_POOL_TAGS.items():
-            if tags & matching_tags:
-                pending.add(text_id)
-    if final.run_state is RunState.ENDED:
-        pending.add(ENDING_BODY_POOL_TEXT_IDS["player_ended"])
-    if state.final_frost.frost_deaths == 0:
-        pending.add(ENDING_REPORT_ZERO_FROST_DEATHS_TEXT_ID)
-    return sorted(pending)
 
 
 def _limiting_factor_ids(state: GameState) -> list[str]:
@@ -123,11 +91,6 @@ class EndingReportSystem:
         if final.hard_fail_type is not None:
             if final.ending_id != "hard_fail":
                 raise ValueError("hard-fail report requires a canonical result")
-            body_text_ids = [
-                ENDING_HARD_FAIL_REASON_TEXT_IDS[
-                    final.hard_fail_type.value
-                ]
-            ]
         else:
             if (
                 state.final_frost.final_score_day != FINAL_DAY
@@ -136,15 +99,15 @@ class EndingReportSystem:
                 raise ValueError(
                     "survival report requires a completed D55 score"
                 )
-            body_text_ids = []
         report = final.report
+        report.format_version = CURRENT_ENDING_REPORT_FORMAT_VERSION
         report.is_generated = True
         report.generated_day = state.calendar.current_day
         report.ending_state = final.ending_id
         report.display_result_id = final.ending_id
-        report.title_text_id = ENDING_TITLE_TEXT_IDS[final.ending_id]
-        report.body_text_ids = body_text_ids
-        report.pending_text_ids = _pending_text_ids(state)
+        report.title_text_id = canonical_report_title_text_id(state)
+        report.body_text_ids = canonical_report_body_text_ids(state)
+        report.pending_text_ids = canonical_report_pending_text_ids(state)
         report.hidden_achievement_ids = sorted(
             set(state.events.hidden_achievements_unlocked)
         )
@@ -185,10 +148,13 @@ class EndingReportSystem:
         final.termination_reason = TerminationReason.PLAYER_ENDED
         final.termination_day = FINAL_DAY
         final.termination_command_sequence = working.command_sequence + 1
+        final.report.format_version = CURRENT_ENDING_REPORT_FORMAT_VERSION
         final.report.display_result_id = TerminationReason.PLAYER_ENDED.value
-        final.report.title_text_id = ENDING_TITLE_TEXT_IDS["player_ended"]
-        final.report.body_text_ids = list(ENDING_PLAYER_ENDED_BODY_TEXT_IDS)
-        final.report.pending_text_ids = _pending_text_ids(working)
+        final.report.title_text_id = canonical_report_title_text_id(working)
+        final.report.body_text_ids = canonical_report_body_text_ids(working)
+        final.report.pending_text_ids = canonical_report_pending_text_ids(
+            working
+        )
         working.command_sequence += 1
         try:
             self.validate_state(working)
@@ -222,6 +188,7 @@ class EndingReportSystem:
         pending_ids = {
             entry.entry_id for entry in self.pending_registry.entries()
         }
+        pending_ids.update(legacy_report_pending_text_ids(state))
         if set(report.pending_text_ids) - pending_ids:
             raise ValueError("ending report contains an unknown pending text id")
 
@@ -243,13 +210,16 @@ class EndingReportSystem:
                 ),
             }
         title = self.text_registry.require(str(report.title_text_id))
-        body = [
-            {
-                "text_id": text_id,
-                "text": self.text_registry.require(text_id).text,
-            }
-            for text_id in report.body_text_ids
-        ]
+        template_values = report_template_values(state)
+        body = []
+        for text_id in report.body_text_ids:
+            text = self.text_registry.require(text_id).text
+            body.append(
+                {
+                    "text_id": text_id,
+                    "text": text.format_map(template_values),
+                }
+            )
         return {
             "available": True,
             "content_status": (

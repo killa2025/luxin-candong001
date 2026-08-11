@@ -7,8 +7,14 @@ from dataclasses import dataclass, field, fields
 from typing import Any
 
 from furnace_winter.models.randomness import RANDOM_ALGORITHM, RandomState
+from furnace_winter.models.ending_selection import (
+    canonical_report_body_text_ids,
+    canonical_report_pending_text_ids,
+    canonical_report_title_text_id,
+)
 from furnace_winter.models.serialization import to_primitive
 from furnace_winter.models.state import (
+    CURRENT_ENDING_REPORT_FORMAT_VERSION,
     CURRENT_SAVE_DATA_VERSION,
     FINAL_DAY,
     OVERTIME_BUILDING_TYPES,
@@ -32,6 +38,7 @@ from furnace_winter.models.state import (
     HousingState,
     HungerState,
     LawState,
+    LEGACY_ENDING_REPORT_FORMAT_VERSION,
     MapState,
     MedicalState,
     OathOrderState,
@@ -208,6 +215,23 @@ class SaveMigrationRegistry:
             raise SaveDataError("save_data_version must be an integer")
         if version > self.current_version:
             raise SaveDataError(f"save version {version} is newer than supported version")
+        if version < 14 and isinstance(migrated.get("final_result"), Mapping):
+            raw_final_result = dict(migrated["final_result"])
+            raw_report = raw_final_result.get("report")
+            if isinstance(raw_report, Mapping):
+                report = dict(raw_report)
+                if "format_version" in report:
+                    if (
+                        report["format_version"]
+                        != CURRENT_ENDING_REPORT_FORMAT_VERSION
+                        or report.get("is_generated") is not False
+                    ):
+                        raise SaveDataError(
+                            "pre-v14 save cannot contain a generated versioned report"
+                        )
+                    report.pop("format_version")
+                    raw_final_result["report"] = report
+                    migrated["final_result"] = raw_final_result
         if version < 14:
             if "cold_exposure" in migrated:
                 if migrated["cold_exposure"] != to_primitive(ColdExposureState()):
@@ -363,6 +387,7 @@ class SaveMigrationRegistry:
                     expected = defaults[name]
                     if name == "report" and isinstance(expected, dict):
                         expected = dict(expected)
+                        expected.pop("format_version", None)
                         expected.pop("limiting_factor_ids", None)
                     if raw_final_result[name] != expected:
                         raise SaveDataError(
@@ -444,6 +469,11 @@ def _field_names(model: type[Any]) -> tuple[str, ...]:
 
 _V13_GAME_STATE_FIELDS = tuple(
     name for name in _field_names(GameState) if name != "cold_exposure"
+)
+_V14_ENDING_REPORT_FIELDS = tuple(
+    name
+    for name in _field_names(EndingReportState)
+    if name != "format_version"
 )
 _V12_GAME_STATE_FIELDS = tuple(
     name for name in _V13_GAME_STATE_FIELDS if name != "map"
@@ -1777,6 +1807,12 @@ def _decode_oath_order(value: Any) -> OathOrderState:
 def _decode_ending_report(value: Any) -> EndingReportState:
     data = _object(value, "final_result.report", _field_names(EndingReportState))
     return EndingReportState(
+        format_version=_integer(
+            data["format_version"],
+            "final_result.report.format_version",
+            minimum=LEGACY_ENDING_REPORT_FORMAT_VERSION,
+            maximum=CURRENT_ENDING_REPORT_FORMAT_VERSION,
+        ),
         is_generated=_boolean(
             data["is_generated"], "final_result.report.is_generated"
         ),
@@ -2099,6 +2135,7 @@ def _decode_game_state(
         migrations.register(11, _migrate_v11_to_v12)
         migrations.register(12, _migrate_v12_to_v13)
         migrations.register(13, _migrate_v13_to_v14)
+        migrations.register(14, _migrate_v14_to_v15)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -3115,6 +3152,7 @@ def _migrate_v11_to_v12(document: dict[str, Any]) -> dict[str, Any]:
         is_finalized = True
 
     report = to_primitive(EndingReportState())
+    report.pop("format_version")
     if is_finalized:
         calendar = _object(
             migrated["calendar"], "calendar", _field_names(CalendarState)
@@ -3366,6 +3404,39 @@ def _migrate_v13_to_v14(document: dict[str, Any]) -> dict[str, Any]:
     final_result["report"] = report
     migrated["final_result"] = final_result
     migrated["save_data_version"] = 14
+    return migrated
+
+
+def _migrate_v14_to_v15(document: dict[str, Any]) -> dict[str, Any]:
+    """Add an explicit report format discriminator to legacy v14 saves."""
+
+    legacy = _object(document, "$", _field_names(GameState))
+    migrated = deepcopy(legacy)
+    final_result = dict(
+        _object(
+            migrated["final_result"],
+            "final_result",
+            _field_names(FinalResultState),
+        )
+    )
+    report = dict(
+        _object(
+            final_result["report"],
+            "final_result.report",
+            _V14_ENDING_REPORT_FIELDS,
+        )
+    )
+    report["format_version"] = (
+        LEGACY_ENDING_REPORT_FORMAT_VERSION
+        if _boolean(
+            report["is_generated"],
+            "final_result.report.is_generated",
+        )
+        else CURRENT_ENDING_REPORT_FORMAT_VERSION
+    )
+    final_result["report"] = report
+    migrated["final_result"] = final_result
+    migrated["save_data_version"] = 15
     return migrated
 
 
@@ -4929,35 +5000,39 @@ def _validate_state_invariants(
             if final.run_state is RunState.ENDED
             else final.ending_id
         )
-        if (
-            report.display_result_id != expected_display_result
-            or report.title_text_id
-            != ENDING_TITLE_TEXT_IDS[expected_display_result]
-        ):
+        if report.display_result_id != expected_display_result:
             raise SaveDataError(
                 "ending report presentation result is not canonical"
             )
         if final.run_state is RunState.ENDED:
-            expected_body_text_ids = list(
-                ENDING_PLAYER_ENDED_BODY_TEXT_IDS
-            )
+            legacy_body_text_ids = list(ENDING_PLAYER_ENDED_BODY_TEXT_IDS)
         elif final.hard_fail_type is not None:
-            expected_body_text_ids = [
+            legacy_body_text_ids = [
                 ENDING_HARD_FAIL_REASON_TEXT_IDS[
                     final.hard_fail_type.value
                 ]
             ]
         else:
-            expected_body_text_ids = []
-        if report.body_text_ids != expected_body_text_ids:
+            legacy_body_text_ids = []
+        legacy_pending_text_ids = _expected_report_pending_text_ids(state)
+        canonical_body_text_ids = canonical_report_body_text_ids(state)
+        canonical_pending_text_ids = canonical_report_pending_text_ids(state)
+        is_legacy_report = (
+            report.format_version == LEGACY_ENDING_REPORT_FORMAT_VERSION
+            and report.title_text_id
+            == ENDING_TITLE_TEXT_IDS[expected_display_result]
+            and report.body_text_ids == legacy_body_text_ids
+            and report.pending_text_ids == legacy_pending_text_ids
+        )
+        is_patch020_report = (
+            report.format_version == CURRENT_ENDING_REPORT_FORMAT_VERSION
+            and report.title_text_id == canonical_report_title_text_id(state)
+            and report.body_text_ids == canonical_body_text_ids
+            and report.pending_text_ids == canonical_pending_text_ids
+        )
+        if not (is_legacy_report or is_patch020_report):
             raise SaveDataError(
-                "ending report body text ids are not canonical"
-            )
-        if report.pending_text_ids != _expected_report_pending_text_ids(
-            state
-        ):
-            raise SaveDataError(
-                "ending report pending text ids are not canonical"
+                "ending report text selection is not canonical"
             )
         if report.hidden_achievement_ids != sorted(
             set(events.hidden_achievements_unlocked)

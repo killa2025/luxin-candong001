@@ -24,6 +24,9 @@ from furnace_winter.gameplay import (
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayStage
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
+    CURRENT_ENDING_REPORT_FORMAT_VERSION,
+    LEGACY_ENDING_REPORT_FORMAT_VERSION,
+    BuildingState,
     DeterministicRandom,
     EndingReportState,
     EventResolutionRecord,
@@ -33,6 +36,16 @@ from furnace_winter.models import (
     SaveDataError,
     decode_game_state,
     encode_game_state,
+)
+from furnace_winter.models.ending_selection import (
+    canonical_report_body_text_ids,
+    canonical_report_pending_text_ids,
+    legacy_report_pending_text_ids,
+    report_template_values,
+)
+from furnace_winter.text import (
+    build_ending_pending_registry,
+    build_ending_text_registry,
 )
 
 
@@ -136,8 +149,9 @@ class EndingReportPatchTests(unittest.TestCase):
         state.final_frost.frost_population_person_days = population * 7
         return state
 
-    def completed_state(self):
+    def completed_state(self, seed: int = 1010):
         state = self.state_before_finalization()
+        state.random = DeterministicRandom(seed).snapshot()
         system = self.frost_system()
         context = EndDayContext(
             state=state,
@@ -226,14 +240,15 @@ class EndingReportPatchTests(unittest.TestCase):
         final.report = EndingReportState()
         EndingReportSystem().generate(hard_fail)
         hard_fail_view = system.observe(hard_fail)
-        self.assertIn(
-            "ending.report.death_record_sentence",
-            hard_fail_view["pending_text_ids"],
+        self.assertEqual(
+            hard_fail_view["title"]["text_id"],
+            "ending.hard_fail.population_zero.title",
         )
         self.assertIn(
-            "ending.report.frostfall_deaths.zero_sentence",
-            hard_fail_view["pending_text_ids"],
+            "ending.report.death_record.none",
+            [item["text_id"] for item in hard_fail_view["body"]],
         )
+        self.assertEqual(hard_fail_view["pending_text_ids"], [])
         rejected = self.execute(
             system, hard_fail, "hard-fail-end", {"confirm": True}
         )
@@ -288,26 +303,24 @@ class EndingReportPatchTests(unittest.TestCase):
         self.assertEqual(state, first_state)
         self.assertEqual(system.observe(state), first_report)
 
-    def test_report_omits_unsealed_text_and_is_seed_independent(self) -> None:
+    def test_report_uses_seeded_persisted_selection_and_omits_placeholders(
+        self,
+    ) -> None:
         first = self.completed_state()
-        second = deepcopy(first)
-        second.random = DeterministicRandom(999999).snapshot()
+        same = self.completed_state()
+        second = self.completed_state(seed=999999)
         first_view = EndingReportSystem().observe(first)
+        same_view = EndingReportSystem().observe(same)
         second_view = EndingReportSystem().observe(second)
 
+        self.assertEqual(first_view, same_view)
         self.assertEqual(
-            first_view["pending_text_ids"],
-            second_view["pending_text_ids"],
+            first.final_result.report.format_version,
+            CURRENT_ENDING_REPORT_FORMAT_VERSION,
         )
-        self.assertEqual(first_view["body"], [])
-        self.assertIn(
-            "ending.report.death_record_sentence",
-            first_view["pending_text_ids"],
-        )
-        self.assertIn(
-            "ending.report.frostfall_deaths.zero_sentence",
-            first_view["pending_text_ids"],
-        )
+        self.assertNotEqual(first_view["body"], second_view["body"])
+        self.assertTrue(first_view["body"])
+        self.assertEqual(first_view["pending_text_ids"], [])
         self.assertEqual(
             first_view["pending_text_ids"],
             sorted(set(first_view["pending_text_ids"])),
@@ -316,11 +329,179 @@ class EndingReportPatchTests(unittest.TestCase):
             first_view["title"]["text_id"],
             *(item["text_id"] for item in first_view["body"]),
         }
-        self.assertNotIn(
-            "ending.report.death_record_sentence", rendered_ids
+        self.assertEqual(
+            first_view["body"][0]["text_id"],
+            "ending.high_victory.body.02",
+        )
+        self.assertIn(
+            "ending.report.death_record.none", rendered_ids
+        )
+        self.assertNotIn("ending.report.frostfall_deaths", rendered_ids)
+        self.assertFalse(
+            any(
+                text_id.startswith("ending.report.illness.")
+                for text_id in rendered_ids
+            )
         )
         self.assertFalse(any(text_id.endswith(".pool") for text_id in rendered_ids))
         self.assertNotIn("TODO_TEXT", json.dumps(first_view, ensure_ascii=False))
+        self.assertNotIn("PENDING", json.dumps(first_view, ensure_ascii=False))
+        self.assertIn(
+            "没有任何人被霜落吞噬，你做得很好，执政官。",
+            [item["text"] for item in first_view["body"]],
+        )
+
+    def test_additional_death_and_medical_text_require_exact_facts(
+        self,
+    ) -> None:
+        death_state = self.completed_state()
+        death_state.population.population_dead = 5
+        death_state.final_result.defining_tags = ["mass_death"]
+        death_state.final_result.major_tags = []
+        death_state.final_frost.frost_deaths = 0
+        for seed in range(32):
+            death_state.random = DeterministicRandom(seed).snapshot()
+            selected = canonical_report_body_text_ids(death_state)
+            self.assertNotIn("ending.additional.death.03", selected)
+
+        medical_state = self.completed_state()
+        medical_state.population.population_dead = 0
+        medical_state.final_result.defining_tags = ["medical_collapse"]
+        medical_state.final_result.major_tags = []
+        medical_state.buildings["medical-station-test"] = BuildingState(
+            building_id="medical-station-test",
+            building_type="medical_station",
+            zone="inner_ring",
+            slot_size=1,
+            is_built=True,
+            is_operational=True,
+        )
+        for record in medical_state.final_frost.daily_records.values():
+            record.actual_disease_deaths = 0
+            record.medical_overflow = True
+        for seed in range(32):
+            medical_state.random = DeterministicRandom(seed).snapshot()
+            selected = canonical_report_body_text_ids(medical_state)
+            self.assertFalse(
+                any(
+                    text_id.startswith("ending.additional.medical.")
+                    for text_id in selected
+                )
+            )
+
+        station = medical_state.buildings["medical-station-test"]
+        station.assigned_medical_apprentices = 1
+        selected = canonical_report_body_text_ids(medical_state)
+        self.assertNotIn("ending.additional.medical.03", selected)
+
+        medical_state.buildings["hospital-doctor-test"] = BuildingState(
+            building_id="hospital-doctor-test",
+            building_type="hospital",
+            zone="inner_ring",
+            slot_size=1,
+            is_built=True,
+            is_operational=True,
+            assigned_engineers=1,
+        )
+        selected = canonical_report_body_text_ids(medical_state)
+        self.assertNotIn("ending.additional.medical.03", selected)
+
+        station.assigned_engineers = 1
+        selected = canonical_report_body_text_ids(medical_state)
+        self.assertIn("ending.additional.medical.03", selected)
+
+    def test_unprovable_medical_history_text_is_pending(self) -> None:
+        state = self.completed_state()
+        state.population.population_dead = 5
+        state.final_result.defining_tags = ["medical_collapse"]
+        state.final_result.major_tags = []
+        state.buildings["late-medical-station"] = BuildingState(
+            building_id="late-medical-station",
+            building_type="medical_station",
+            zone="inner_ring",
+            slot_size=1,
+            is_built=True,
+            is_operational=True,
+        )
+        death_day = next(iter(state.final_frost.daily_records.values()))
+        death_day.actual_disease_deaths = 1
+        death_day.medical_collapse = False
+        death_day.hospital_shutdown = False
+        death_day.medical_overflow = True
+
+        pending_ids = {
+            "ending.additional.medical.01",
+            "ending.additional.medical.02",
+        }
+        for seed in range(64):
+            state.random = DeterministicRandom(seed).snapshot()
+            selected = canonical_report_body_text_ids(state)
+            self.assertTrue(pending_ids.isdisjoint(selected))
+
+        registry = build_ending_text_registry()
+        pending_entries = {
+            entry.entry_id: entry
+            for entry in build_ending_pending_registry().entries()
+        }
+        for text_id in pending_ids:
+            self.assertIsNone(registry.get(text_id))
+            self.assertEqual(pending_entries[text_id].status.value, "PENDING")
+            self.assertIn(text_id, canonical_report_pending_text_ids(state))
+
+    def test_food_additional_does_not_invent_a_canteen_history(self) -> None:
+        state = self.completed_state()
+        state.final_result.defining_tags = ["famine_city"]
+        state.final_result.major_tags = []
+        self.assertFalse(
+            any(
+                building.building_type == "canteen"
+                for building in state.buildings.values()
+            )
+        )
+        for seed in range(64):
+            state.random = DeterministicRandom(seed).snapshot()
+            selected = canonical_report_body_text_ids(state)
+            self.assertNotIn("ending.additional.food.01", selected)
+            self.assertIn("ending.additional.food.02", selected)
+
+    def test_children_protected_trace_is_pending_and_not_runtime_text(
+        self,
+    ) -> None:
+        registry = build_ending_text_registry()
+        pending_registry = build_ending_pending_registry()
+        self.assertIsNone(registry.get("ending.trace.children_protected"))
+        pending_entries = {
+            entry.entry_id: entry for entry in pending_registry.entries()
+        }
+        self.assertIn("ending.trace.children_protected", pending_entries)
+        self.assertEqual(
+            pending_entries["ending.trace.children_protected"].status.value,
+            "PENDING",
+        )
+
+        state = self.completed_state()
+        state.laws.signed_law_ids = [
+            "child_protection_law",
+            "child_school_law",
+        ]
+        for building_type in ("child_shelter", "school"):
+            building_id = f"{building_type}-test"
+            state.buildings[building_id] = BuildingState(
+                building_id=building_id,
+                building_type=building_type,
+                zone="inner_ring",
+                slot_size=1,
+                is_built=True,
+                is_operational=True,
+            )
+        self.assertNotIn(
+            "ending.trace.children_protected",
+            canonical_report_body_text_ids(state),
+        )
+        self.assertIn(
+            "ending.trace.children_protected",
+            canonical_report_pending_text_ids(state),
+        )
 
     def test_report_save_is_strict_and_v11_migrates_without_terminal_state(
         self,
@@ -333,12 +514,32 @@ class EndingReportPatchTests(unittest.TestCase):
         )
         tampered["final_result"]["report"]["pending_text_ids"].sort()
         with self.assertRaisesRegex(
-            SaveDataError, "pending text ids are not canonical"
+            SaveDataError, "text selection is not canonical"
         ):
             decode_game_state(tampered)
 
+        wrong_body = deepcopy(document)
+        wrong_body["final_result"]["report"]["body_text_ids"][0] = (
+            "ending.ember_survival.body.01"
+        )
+        with self.assertRaisesRegex(
+            SaveDataError, "text selection is not canonical"
+        ):
+            decode_game_state(wrong_body)
+
+        disguised_as_legacy = deepcopy(document)
+        disguised_as_legacy["final_result"]["report"]["body_text_ids"] = []
+        disguised_as_legacy["final_result"]["report"][
+            "pending_text_ids"
+        ] = legacy_report_pending_text_ids(state)
+        with self.assertRaisesRegex(
+            SaveDataError, "text selection is not canonical"
+        ):
+            decode_game_state(disguised_as_legacy)
+
         deleted_report = deepcopy(document)
         deleted_report["final_result"]["report"] = {
+            "format_version": CURRENT_ENDING_REPORT_FORMAT_VERSION,
             "is_generated": False,
             "generated_day": None,
             "ending_state": None,
@@ -382,9 +583,13 @@ class EndingReportPatchTests(unittest.TestCase):
         ):
             del legacy["final_result"][field]
         migrated = decode_game_state(legacy)
-        self.assertEqual(migrated.save_data_version, 14)
+        self.assertEqual(migrated.save_data_version, 15)
         self.assertIs(migrated.final_result.run_state, RunState.ACTIVE)
         self.assertFalse(migrated.final_result.report.is_generated)
+        self.assertEqual(
+            migrated.final_result.report.format_version,
+            CURRENT_ENDING_REPORT_FORMAT_VERSION,
+        )
 
         terminal_legacy = encode_game_state(self.completed_state())
         terminal_legacy["save_data_version"] = 11
@@ -430,6 +635,119 @@ class EndingReportPatchTests(unittest.TestCase):
             terminal_migrated.final_result.ending_id,
         )
 
+    def test_legacy_patch010_report_remains_readable_without_reselection(
+        self,
+    ) -> None:
+        state = self.completed_state()
+        legacy_document = encode_game_state(state)
+        legacy_report = legacy_document["final_result"]["report"]
+        legacy_report["body_text_ids"] = []
+        legacy_report["pending_text_ids"] = legacy_report_pending_text_ids(
+            state
+        )
+        del legacy_report["format_version"]
+        legacy_document["save_data_version"] = 14
+
+        restored = decode_game_state(legacy_document)
+        view = EndingReportSystem().observe(restored)
+
+        self.assertEqual(restored.save_data_version, 15)
+        self.assertEqual(
+            restored.final_result.report.format_version,
+            LEGACY_ENDING_REPORT_FORMAT_VERSION,
+        )
+        self.assertEqual(restored.final_result.report.body_text_ids, [])
+        self.assertEqual(
+            view["pending_text_ids"], legacy_report["pending_text_ids"]
+        )
+        self.assertEqual(view["content_status"], "partial_pending_text")
+
+    def test_user_confirmed_death_lines_are_selected_and_rendered_verbatim(
+        self,
+    ) -> None:
+        registry = build_ending_text_registry()
+        templates = {
+            "ending.report.death_record.none": (
+                "没有任何人被霜落吞噬，你做得很好，执政官。"
+            ),
+            "ending.report.death_record.cemetery": (
+                "5 人没能走到最后。你为他们留下了墓园，那些名字化成了"
+                "一个个墓碑被纪念。"
+            ),
+            "ending.report.death_record.cold_pit": (
+                "5 人没能走到最后。他们被安置在冷藏坑的冰冷秩序里，"
+                "等待炉城决定他们还有什么价值。"
+            ),
+            "ending.report.death_record.unhandled": (
+                "5 人没能走到最后。档案封存时，3 具遗体掩埋进风雪里。"
+            ),
+            "ending.report.death_record.ember_roster": (
+                "5 人没能走到最后。余烬名册记下了他们的名字，让死者没有"
+                "只成为冰冷的数字。"
+            ),
+        }
+        values = {"total_deaths": 5, "unhandled_bodies": 3}
+        for text_id, expected in templates.items():
+            rendered = registry.require(text_id).text.format_map(values)
+            self.assertEqual(rendered, expected)
+            self.assertNotIn("本局共有", rendered)
+
+        state = self.completed_state()
+        self.assertIn(
+            "ending.report.death_record.none",
+            canonical_report_body_text_ids(state),
+        )
+        state.population.population_dead = 5
+        state.social_policy.death_path = "cemetery"
+        state.social_policy.unhandled_bodies = 3
+        self.assertIn(
+            "ending.report.death_record.unhandled",
+            canonical_report_body_text_ids(state),
+        )
+        state.social_policy.unhandled_bodies = 0
+        self.assertIn(
+            "ending.report.death_record.cemetery",
+            canonical_report_body_text_ids(state),
+        )
+        state.social_policy.death_path = "cold_pit"
+        self.assertIn(
+            "ending.report.death_record.cold_pit",
+            canonical_report_body_text_ids(state),
+        )
+        state.social_policy.death_path = "none"
+        state.oath_order.signed_law_ids = ["ember_roster"]
+        self.assertIn(
+            "ending.report.death_record.ember_roster",
+            canonical_report_body_text_ids(state),
+        )
+
+    def test_pending_ids_only_describe_unsealed_long_form_text(self) -> None:
+        state = self.completed_state()
+        self.assertEqual(canonical_report_pending_text_ids(state), [])
+
+        state.oath_order.selected_route = "oath"
+        state.oath_order.signed_law_ids = ["final_oath"]
+        state.oath_order.final_oath_active = True
+        state.old_city.is_unlocked = True
+        state.population.population_dead = 1
+        pending = canonical_report_pending_text_ids(state)
+
+        self.assertEqual(pending, sorted(set(pending)))
+        self.assertIn("ending.route.oath.full_text", pending)
+        self.assertIn("ending.route.final_oath.full_text", pending)
+        self.assertIn("ending.old_city.full_text", pending)
+        self.assertIn("ending.death_handling.full_text", pending)
+        self.assertFalse(any(text_id.endswith(".pool") for text_id in pending))
+
+    def test_report_template_values_recover_the_original_start_population(
+        self,
+    ) -> None:
+        state = self.completed_state()
+        state.population.population_total_ever += 12
+        state.events.resolution_history[0].population_added = 12
+        values = report_template_values(state)
+        self.assertEqual(values["start_population"], 80)
+
     def test_cli_reads_the_persisted_machine_report(self) -> None:
         state = self.completed_state()
         with tempfile.TemporaryDirectory() as directory:
@@ -444,8 +762,8 @@ class EndingReportPatchTests(unittest.TestCase):
         report = json.loads(output.getvalue())
         self.assertEqual(exit_code, 0)
         self.assertTrue(report["available"])
-        self.assertEqual(report["content_status"], "partial_pending_text")
-        self.assertFalse(report["body_complete"])
+        self.assertEqual(report["content_status"], "complete")
+        self.assertTrue(report["body_complete"])
         self.assertEqual(
             report["pending_text_count"], len(report["pending_text_ids"])
         )

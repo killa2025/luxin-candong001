@@ -6,7 +6,9 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 14
+CURRENT_SAVE_DATA_VERSION = 15
+LEGACY_ENDING_REPORT_FORMAT_VERSION = 1
+CURRENT_ENDING_REPORT_FORMAT_VERSION = 2
 FINAL_DAY = 55
 ENDING_TITLE_TEXT_IDS = {
     "hard_fail": "ending.title.hard_fail",
@@ -661,8 +663,9 @@ class FinalFrostState:
 
 @dataclass(slots=True)
 class EndingReportState:
-    """Persisted text selections for the deterministic Patch 010 report."""
+    """Persisted text selections for a versioned deterministic report."""
 
+    format_version: int = CURRENT_ENDING_REPORT_FORMAT_VERSION
     is_generated: bool = False
     generated_day: int | None = None
     ending_state: str | None = None
