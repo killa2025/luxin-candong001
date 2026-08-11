@@ -17,6 +17,7 @@ from furnace_winter.interface import (
     FeedbackLevel,
 )
 from furnace_winter.models import (
+    CURRENT_ENDING_REPORT_FORMAT_VERSION,
     FINAL_DAY,
     GameState,
     RunState,
@@ -99,6 +100,7 @@ class EndingReportSystem:
                     "survival report requires a completed D55 score"
                 )
         report = final.report
+        report.format_version = CURRENT_ENDING_REPORT_FORMAT_VERSION
         report.is_generated = True
         report.generated_day = state.calendar.current_day
         report.ending_state = final.ending_id
@@ -146,6 +148,7 @@ class EndingReportSystem:
         final.termination_reason = TerminationReason.PLAYER_ENDED
         final.termination_day = FINAL_DAY
         final.termination_command_sequence = working.command_sequence + 1
+        final.report.format_version = CURRENT_ENDING_REPORT_FORMAT_VERSION
         final.report.display_result_id = TerminationReason.PLAYER_ENDED.value
         final.report.title_text_id = canonical_report_title_text_id(working)
         final.report.body_text_ids = canonical_report_body_text_ids(working)

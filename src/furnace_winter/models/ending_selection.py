@@ -126,6 +126,7 @@ _ADDITIONAL_LIMITS = {
 }
 _PENDING_LONG_TEXT_IDS = {
     "children": "ending.children.full_text",
+    "children_trace": "ending.trace.children_protected",
     "death": "ending.death_handling.full_text",
     "entertainment": "ending.entertainment.full_text",
     "final_decree": "ending.route.final_decree.full_text",
@@ -264,7 +265,7 @@ def _additional_text_ids(state: GameState) -> list[str]:
                 tag in matching_tags
                 and topic not in topics
                 and not (
-                    topic in {"death", "medical"}
+                    topic == "death"
                     and state.population.population_dead == 0
                 )
             ):
@@ -273,12 +274,47 @@ def _additional_text_ids(state: GameState) -> list[str]:
     limit = _ADDITIONAL_LIMITS[ending_id]
     selected: list[str] = []
     records = tuple(state.final_frost.daily_records.values())
-    for topic in topics[:limit]:
+    disease_deaths = sum(item.actual_disease_deaths for item in records)
+    has_medical = any(
+        _has_building(state, building_type)
+        for building_type in ("medical_station", "hospital")
+    )
+    has_active_medical_apprentice = any(
+        building.building_type in {"medical_station", "hospital"}
+        and building.is_built
+        and building.is_operational
+        and building.assigned_medical_apprentices > 0
+        for building in state.buildings.values()
+    )
+    for topic in topics:
         candidates = list(ADDITIONAL_CANDIDATES[topic])
+        if topic == "death":
+            candidates = [
+                "ending.additional.death.01",
+                "ending.additional.death.02",
+            ]
+            if state.final_frost.frost_deaths > 0:
+                candidates.append("ending.additional.death.03")
+        if topic == "medical":
+            candidates = []
+            if (
+                has_medical
+                and disease_deaths > 0
+                and any(not item.hospital_shutdown for item in records)
+            ):
+                candidates.append("ending.additional.medical.01")
+            if (
+                has_medical
+                and disease_deaths > 0
+                and any(item.medical_overflow for item in records)
+            ):
+                candidates.append("ending.additional.medical.02")
+            if has_active_medical_apprentice:
+                candidates.append("ending.additional.medical.03")
+            if not candidates:
+                continue
         if topic == "food":
             candidates.remove("ending.additional.food.03")
-        if topic == "medical" and state.population.population_dead == 0:
-            candidates.remove("ending.additional.medical.02")
         if topic == "core":
             candidates = []
             if any(item.overload_redline for item in records):
@@ -292,6 +328,8 @@ def _additional_text_ids(state: GameState) -> list[str]:
         selected.append(
             _choose(state, f"additional.{topic}", tuple(candidates))
         )
+        if len(selected) == limit:
+            break
     return selected
 
 
@@ -308,14 +346,6 @@ def _trace_text_ids(state: GameState) -> list[str]:
         for building in state.buildings.values()
     ):
         child_trace = "ending.trace.child_labor"
-    elif (
-        "child_protection_law" in ordinary_laws
-        and "child_school_law" in ordinary_laws
-        and _has_building(state, "child_shelter")
-        and _has_building(state, "school")
-    ):
-        child_trace = "ending.trace.children_protected"
-
     route_trace: str | None = None
     if {
         "guard_oath",
@@ -446,6 +476,13 @@ def canonical_report_pending_text_ids(state: GameState) -> list[str]:
         "child_protection_law",
     }:
         pending.add(_PENDING_LONG_TEXT_IDS["children"])
+    if (
+        "child_protection_law" in ordinary_laws
+        and "child_school_law" in ordinary_laws
+        and _has_building(state, "child_shelter")
+        and _has_building(state, "school")
+    ):
+        pending.add(_PENDING_LONG_TEXT_IDS["children_trace"])
     if state.population.population_dead > 0:
         pending.add(_PENDING_LONG_TEXT_IDS["death"])
     if ordinary_laws & {"tavern_law", "casino_law"}:

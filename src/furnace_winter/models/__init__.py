@@ -13,6 +13,7 @@ from furnace_winter.models.save import (
 from furnace_winter.models.serialization import dumps, snapshot_json, to_primitive
 from furnace_winter.models.state import (
     CURRENT_SAVE_DATA_VERSION,
+    CURRENT_ENDING_REPORT_FORMAT_VERSION,
     FINAL_DAY,
     OVERTIME_BUILDING_TYPES,
     BuildingManagementState,
@@ -32,6 +33,7 @@ from furnace_winter.models.state import (
     FurnaceState,
     GameState,
     HardFailType,
+    LEGACY_ENDING_REPORT_FORMAT_VERSION,
     HousingState,
     HungerState,
     LawState,
@@ -56,6 +58,7 @@ from furnace_winter.models.state import (
 __all__ = [
     "RANDOM_ALGORITHM",
     "CURRENT_SAVE_DATA_VERSION",
+    "CURRENT_ENDING_REPORT_FORMAT_VERSION",
     "FINAL_DAY",
     "OVERTIME_BUILDING_TYPES",
     "BuildingManagementState",
@@ -76,6 +79,7 @@ __all__ = [
     "FurnaceState",
     "GameState",
     "HardFailType",
+    "LEGACY_ENDING_REPORT_FORMAT_VERSION",
     "HousingState",
     "HungerState",
     "LawState",

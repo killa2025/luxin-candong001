@@ -24,6 +24,9 @@ from furnace_winter.gameplay import (
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayStage
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
+    CURRENT_ENDING_REPORT_FORMAT_VERSION,
+    LEGACY_ENDING_REPORT_FORMAT_VERSION,
+    BuildingState,
     DeterministicRandom,
     EndingReportState,
     EventResolutionRecord,
@@ -40,7 +43,10 @@ from furnace_winter.models.ending_selection import (
     legacy_report_pending_text_ids,
     report_template_values,
 )
-from furnace_winter.text import build_ending_text_registry
+from furnace_winter.text import (
+    build_ending_pending_registry,
+    build_ending_text_registry,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -308,6 +314,10 @@ class EndingReportPatchTests(unittest.TestCase):
         second_view = EndingReportSystem().observe(second)
 
         self.assertEqual(first_view, same_view)
+        self.assertEqual(
+            first.final_result.report.format_version,
+            CURRENT_ENDING_REPORT_FORMAT_VERSION,
+        )
         self.assertNotEqual(first_view["body"], second_view["body"])
         self.assertTrue(first_view["body"])
         self.assertEqual(first_view["pending_text_ids"], [])
@@ -341,6 +351,112 @@ class EndingReportPatchTests(unittest.TestCase):
             [item["text"] for item in first_view["body"]],
         )
 
+    def test_additional_death_and_medical_text_require_exact_facts(
+        self,
+    ) -> None:
+        death_state = self.completed_state()
+        death_state.population.population_dead = 5
+        death_state.final_result.defining_tags = ["mass_death"]
+        death_state.final_result.major_tags = []
+        death_state.final_frost.frost_deaths = 0
+        for seed in range(32):
+            death_state.random = DeterministicRandom(seed).snapshot()
+            selected = canonical_report_body_text_ids(death_state)
+            self.assertNotIn("ending.additional.death.03", selected)
+
+        medical_state = self.completed_state()
+        medical_state.population.population_dead = 0
+        medical_state.final_result.defining_tags = ["medical_collapse"]
+        medical_state.final_result.major_tags = []
+        medical_state.buildings["medical-station-test"] = BuildingState(
+            building_id="medical-station-test",
+            building_type="medical_station",
+            zone="inner_ring",
+            slot_size=1,
+            is_built=True,
+            is_operational=True,
+        )
+        for record in medical_state.final_frost.daily_records.values():
+            record.actual_disease_deaths = 0
+            record.medical_overflow = True
+        for seed in range(32):
+            medical_state.random = DeterministicRandom(seed).snapshot()
+            selected = canonical_report_body_text_ids(medical_state)
+            self.assertFalse(
+                any(
+                    text_id.startswith("ending.additional.medical.")
+                    for text_id in selected
+                )
+            )
+
+        station = medical_state.buildings["medical-station-test"]
+        station.assigned_medical_apprentices = 1
+        selected = canonical_report_body_text_ids(medical_state)
+        self.assertIn("ending.additional.medical.03", selected)
+
+        station.assigned_medical_apprentices = 0
+        medical_state.population.population_dead = 5
+        first_record = next(
+            iter(medical_state.final_frost.daily_records.values())
+        )
+        first_record.actual_disease_deaths = 1
+        medical_state.final_frost.frost_deaths = 1
+        for seed in range(32):
+            medical_state.random = DeterministicRandom(seed).snapshot()
+            selected = canonical_report_body_text_ids(medical_state)
+            medical_ids = {
+                text_id
+                for text_id in selected
+                if text_id.startswith("ending.additional.medical.")
+            }
+            self.assertTrue(
+                medical_ids
+                <= {
+                    "ending.additional.medical.01",
+                    "ending.additional.medical.02",
+                }
+            )
+            self.assertTrue(medical_ids)
+
+    def test_children_protected_trace_is_pending_and_not_runtime_text(
+        self,
+    ) -> None:
+        registry = build_ending_text_registry()
+        pending_registry = build_ending_pending_registry()
+        self.assertIsNone(registry.get("ending.trace.children_protected"))
+        pending_entries = {
+            entry.entry_id: entry for entry in pending_registry.entries()
+        }
+        self.assertIn("ending.trace.children_protected", pending_entries)
+        self.assertEqual(
+            pending_entries["ending.trace.children_protected"].status.value,
+            "PENDING",
+        )
+
+        state = self.completed_state()
+        state.laws.signed_law_ids = [
+            "child_protection_law",
+            "child_school_law",
+        ]
+        for building_type in ("child_shelter", "school"):
+            building_id = f"{building_type}-test"
+            state.buildings[building_id] = BuildingState(
+                building_id=building_id,
+                building_type=building_type,
+                zone="inner_ring",
+                slot_size=1,
+                is_built=True,
+                is_operational=True,
+            )
+        self.assertNotIn(
+            "ending.trace.children_protected",
+            canonical_report_body_text_ids(state),
+        )
+        self.assertIn(
+            "ending.trace.children_protected",
+            canonical_report_pending_text_ids(state),
+        )
+
     def test_report_save_is_strict_and_v11_migrates_without_terminal_state(
         self,
     ) -> None:
@@ -365,8 +481,19 @@ class EndingReportPatchTests(unittest.TestCase):
         ):
             decode_game_state(wrong_body)
 
+        disguised_as_legacy = deepcopy(document)
+        disguised_as_legacy["final_result"]["report"]["body_text_ids"] = []
+        disguised_as_legacy["final_result"]["report"][
+            "pending_text_ids"
+        ] = legacy_report_pending_text_ids(state)
+        with self.assertRaisesRegex(
+            SaveDataError, "text selection is not canonical"
+        ):
+            decode_game_state(disguised_as_legacy)
+
         deleted_report = deepcopy(document)
         deleted_report["final_result"]["report"] = {
+            "format_version": CURRENT_ENDING_REPORT_FORMAT_VERSION,
             "is_generated": False,
             "generated_day": None,
             "ending_state": None,
@@ -410,9 +537,13 @@ class EndingReportPatchTests(unittest.TestCase):
         ):
             del legacy["final_result"][field]
         migrated = decode_game_state(legacy)
-        self.assertEqual(migrated.save_data_version, 14)
+        self.assertEqual(migrated.save_data_version, 15)
         self.assertIs(migrated.final_result.run_state, RunState.ACTIVE)
         self.assertFalse(migrated.final_result.report.is_generated)
+        self.assertEqual(
+            migrated.final_result.report.format_version,
+            CURRENT_ENDING_REPORT_FORMAT_VERSION,
+        )
 
         terminal_legacy = encode_game_state(self.completed_state())
         terminal_legacy["save_data_version"] = 11
@@ -462,18 +593,26 @@ class EndingReportPatchTests(unittest.TestCase):
         self,
     ) -> None:
         state = self.completed_state()
-        legacy = deepcopy(state)
-        legacy.final_result.report.body_text_ids = []
-        legacy.final_result.report.pending_text_ids = (
-            legacy_report_pending_text_ids(legacy)
+        legacy_document = encode_game_state(state)
+        legacy_report = legacy_document["final_result"]["report"]
+        legacy_report["body_text_ids"] = []
+        legacy_report["pending_text_ids"] = legacy_report_pending_text_ids(
+            state
         )
+        del legacy_report["format_version"]
+        legacy_document["save_data_version"] = 14
 
-        restored = decode_game_state(encode_game_state(legacy))
+        restored = decode_game_state(legacy_document)
         view = EndingReportSystem().observe(restored)
 
+        self.assertEqual(restored.save_data_version, 15)
+        self.assertEqual(
+            restored.final_result.report.format_version,
+            LEGACY_ENDING_REPORT_FORMAT_VERSION,
+        )
         self.assertEqual(restored.final_result.report.body_text_ids, [])
         self.assertEqual(
-            view["pending_text_ids"], legacy.final_result.report.pending_text_ids
+            view["pending_text_ids"], legacy_report["pending_text_ids"]
         )
         self.assertEqual(view["content_status"], "partial_pending_text")
 

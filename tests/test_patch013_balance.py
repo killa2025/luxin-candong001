@@ -33,6 +33,7 @@ from furnace_winter.gameplay.hunger import (
     remove_starvation_deaths,
 )
 from furnace_winter.models import (
+    LEGACY_ENDING_REPORT_FORMAT_VERSION,
     BuildingState,
     DeterministicRandom,
     EventResolutionRecord,
@@ -40,6 +41,9 @@ from furnace_winter.models import (
     SaveDataError,
     decode_game_state,
     encode_game_state,
+)
+from furnace_winter.models.ending_selection import (
+    legacy_report_pending_text_ids,
 )
 from furnace_winter.interface import (
     CommandRequest,
@@ -157,6 +161,7 @@ class Patch013BalanceTests(unittest.TestCase):
     @staticmethod
     def downgrade_v14_to_v13(document: dict) -> dict:
         document["save_data_version"] = 13
+        del document["final_result"]["report"]["format_version"]
         del document["cold_exposure"]
         document["hunger"] = {
             "mild_population": document["hunger"]["light_population"],
@@ -762,7 +767,7 @@ class Patch013BalanceTests(unittest.TestCase):
         document = self.downgrade_v14_to_v13(encode_game_state(state))
 
         migrated = decode_game_state(document)
-        self.assertEqual(migrated.save_data_version, 14)
+        self.assertEqual(migrated.save_data_version, 15)
         self.assertEqual(migrated.hunger.none_population, 80)
 
         invalid = encode_game_state(migrated)
@@ -811,6 +816,13 @@ class Patch013BalanceTests(unittest.TestCase):
             )
         )
         self.assertEqual(state.final_result.system_scores["food"], 2)
+        state.final_result.report.format_version = (
+            LEGACY_ENDING_REPORT_FORMAT_VERSION
+        )
+        state.final_result.report.body_text_ids = []
+        state.final_result.report.pending_text_ids = (
+            legacy_report_pending_text_ids(state)
+        )
         original_result = deepcopy(state.final_result)
 
         legacy = self.downgrade_v14_to_v13(encode_game_state(state))

@@ -29,7 +29,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("data/oath_order.json", readme)
         self.assertIn("data/final_frost.json", readme)
         self.assertIn("data/maps.json", readme)
-        self.assertIn("当前存档数据版本为 v14", readme)
+        self.assertIn("当前存档数据版本为 v15", readme)
         self.assertIn("PATCH-011", readme)
         self.assertIn("PATCH-012", readme)
         self.assertIn("Patch 013", readme)

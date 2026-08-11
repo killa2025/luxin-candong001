@@ -74,11 +74,6 @@ _RUNTIME_TEXT = {
         "甚至在最冷的日子里跟着成年人走近风雪。炉城因此多撑住了"
         "一些时刻，而这些时刻会永远记得他们的年纪。"
     ),
-    "ending.trace.children_protected": (
-        "你修建了儿童保护所。孩子们在炉火旁学会数数、识字，拿起"
-        "尺子、绷带和小小的手术刀。炉城没有急着把他们变成工人，"
-        "而是把未来暂时藏进了更暖的屋子里。"
-    ),
     "ending.trace.cemetery": (
         "你为死者留下了墓园。那些名字没有只停在数字里，人们仍能"
         "在风雪间找到一处地方，承认他们曾经活过。"
@@ -329,6 +324,7 @@ _PENDING_LONG_TEXT_IDS = (
     "ending.death_handling.full_text",
     "ending.entertainment.full_text",
 )
+_PENDING_RUNTIME_TEXT_IDS = ("ending.trace.children_protected",)
 
 
 def _expanded_runtime_text() -> dict[str, str]:
@@ -357,7 +353,7 @@ def build_ending_text_registry() -> TextRegistry:
 
 
 def build_ending_pending_registry() -> PendingRegistry:
-    """Keep only the unsealed 009-C long-form ending text out of runtime."""
+    """Keep unsealed or condition-conflicted ending text out of runtime."""
 
     registry = PendingRegistry()
     for entry_id in _PENDING_LONG_TEXT_IDS:
@@ -367,6 +363,18 @@ def build_ending_pending_registry() -> PendingRegistry:
                 status=ConfigStatus.TODO_TEXT,
                 source=_SOURCE,
                 note="009-C 完整长文案尚未封存；当前只使用已封存的一句式痕迹。",
+            )
+        )
+    for entry_id in _PENDING_RUNTIME_TEXT_IDS:
+        registry.register(
+            PendingEntry(
+                entry_id=entry_id,
+                status=ConfigStatus.PENDING,
+                source=_SOURCE,
+                note=(
+                    "现有正文同时暗示互斥的医疗与工程学徒路线；"
+                    "分支适配文案封存前暂停运行时导入。"
+                ),
             )
         )
     return registry
