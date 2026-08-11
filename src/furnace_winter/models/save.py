@@ -7,6 +7,11 @@ from dataclasses import dataclass, field, fields
 from typing import Any
 
 from furnace_winter.models.randomness import RANDOM_ALGORITHM, RandomState
+from furnace_winter.models.ending_selection import (
+    canonical_report_body_text_ids,
+    canonical_report_pending_text_ids,
+    canonical_report_title_text_id,
+)
 from furnace_winter.models.serialization import to_primitive
 from furnace_winter.models.state import (
     CURRENT_SAVE_DATA_VERSION,
@@ -4929,35 +4934,37 @@ def _validate_state_invariants(
             if final.run_state is RunState.ENDED
             else final.ending_id
         )
-        if (
-            report.display_result_id != expected_display_result
-            or report.title_text_id
-            != ENDING_TITLE_TEXT_IDS[expected_display_result]
-        ):
+        if report.display_result_id != expected_display_result:
             raise SaveDataError(
                 "ending report presentation result is not canonical"
             )
         if final.run_state is RunState.ENDED:
-            expected_body_text_ids = list(
-                ENDING_PLAYER_ENDED_BODY_TEXT_IDS
-            )
+            legacy_body_text_ids = list(ENDING_PLAYER_ENDED_BODY_TEXT_IDS)
         elif final.hard_fail_type is not None:
-            expected_body_text_ids = [
+            legacy_body_text_ids = [
                 ENDING_HARD_FAIL_REASON_TEXT_IDS[
                     final.hard_fail_type.value
                 ]
             ]
         else:
-            expected_body_text_ids = []
-        if report.body_text_ids != expected_body_text_ids:
+            legacy_body_text_ids = []
+        legacy_pending_text_ids = _expected_report_pending_text_ids(state)
+        canonical_body_text_ids = canonical_report_body_text_ids(state)
+        canonical_pending_text_ids = canonical_report_pending_text_ids(state)
+        is_legacy_report = (
+            report.title_text_id
+            == ENDING_TITLE_TEXT_IDS[expected_display_result]
+            and report.body_text_ids == legacy_body_text_ids
+            and report.pending_text_ids == legacy_pending_text_ids
+        )
+        is_patch020_report = (
+            report.title_text_id == canonical_report_title_text_id(state)
+            and report.body_text_ids == canonical_body_text_ids
+            and report.pending_text_ids == canonical_pending_text_ids
+        )
+        if not (is_legacy_report or is_patch020_report):
             raise SaveDataError(
-                "ending report body text ids are not canonical"
-            )
-        if report.pending_text_ids != _expected_report_pending_text_ids(
-            state
-        ):
-            raise SaveDataError(
-                "ending report pending text ids are not canonical"
+                "ending report text selection is not canonical"
             )
         if report.hidden_achievement_ids != sorted(
             set(events.hidden_achievements_unlocked)
