@@ -158,7 +158,7 @@ class LawPatchTests(unittest.TestCase):
         self.assertNotIn("firepit", (item.building_type for item in state.buildings.values()))
         self.assertEqual(state.trust_panic.panic, panic - 1)
 
-    def test_patch018_firepit_daily_relief_stops_at_provisional_floor(self) -> None:
+    def test_patch019_firepit_daily_relief_stops_at_provisional_floor(self) -> None:
         state = self.make_state()
         self.assertTrue(self.sign(state, "firepit_law").accepted)
         system = self.law_system()
@@ -166,7 +166,7 @@ class LawPatchTests(unittest.TestCase):
             system.observe(state)["firepit_daily_effect"],
             {
                 "panic_change": -1,
-                "panic_floor": 10,
+                "panic_floor": 20,
                 "requires_effective_furnace": True,
                 "requires_full_heating_payment": True,
                 "balance_status": "TEST_NUMERIC",
@@ -194,26 +194,26 @@ class LawPatchTests(unittest.TestCase):
                 )
             )
 
-        state.trust_panic.panic = 12
+        state.trust_panic.panic = 22
         resolve()
-        self.assertEqual(state.trust_panic.panic, 11)
+        self.assertEqual(state.trust_panic.panic, 21)
         resolve()
-        self.assertEqual(state.trust_panic.panic, 10)
+        self.assertEqual(state.trust_panic.panic, 20)
         resolve()
-        self.assertEqual(state.trust_panic.panic, 10)
+        self.assertEqual(state.trust_panic.panic, 20)
 
         state.trust_panic.panic = 8
         resolve()
         self.assertEqual(state.trust_panic.panic, 8)
 
-        state.trust_panic.panic = 10
+        state.trust_panic.panic = 20
         state.social_policy.current_ration_mode = "coarse_soup"
         state.social_policy.ration_food_numerator = 70
         state.social_policy.ration_food_denominator = 100
         state.social_policy.consecutive_ration_mode = "coarse_soup"
         state.social_policy.consecutive_ration_days = 1
         resolve()
-        self.assertEqual(state.trust_panic.panic, 10)
+        self.assertEqual(state.trust_panic.panic, 20)
 
     def test_emergency_ration_is_confirmed_day_only_and_restores_previous_mode(self) -> None:
         state = self.make_state()

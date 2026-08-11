@@ -376,7 +376,14 @@ class OathOrderPatchTests(unittest.TestCase):
                 actions["guard_oath"]["trust_change"],
                 actions["guard_oath"]["panic_change"],
             ),
-            (4, 2, -1),
+            (5, 1, 0),
+        )
+        self.assertEqual(
+            (
+                actions["mourning_bell"]["cooldown_days"],
+                actions["mourning_bell"]["panic_change"],
+            ),
+            (6, -2),
         )
         self.assertEqual(
             (
@@ -386,8 +393,17 @@ class OathOrderPatchTests(unittest.TestCase):
             ),
             (5, 1, -2),
         )
+        self.assertEqual(
+            (
+                actions["stay_persuasion"]["cooldown_days"],
+                actions["stay_persuasion"]["trust_change"],
+                actions["stay_persuasion"]["current_cooked_food_cost"],
+                actions["stay_persuasion"]["old_city_change"],
+            ),
+            (5, 0, 40, -6),
+        )
 
-    def test_patch018_guard_oath_action_applies_provisional_values(self) -> None:
+    def test_patch019_guard_oath_action_applies_provisional_values(self) -> None:
         system = self.system()
         state = self.make_state(day=35)
         self.enter_oath_route(system, state)
@@ -412,10 +428,10 @@ class OathOrderPatchTests(unittest.TestCase):
         )
 
         self.assertEqual(result.code, ErrorCode.OK)
-        self.assertEqual(result.data["trust_change"], 2)
-        self.assertEqual(result.data["panic_change"], -1)
-        self.assertEqual(result.data["next_available_day"], 39)
-        self.assertEqual((state.trust_panic.trust, state.trust_panic.panic), (53, 28))
+        self.assertEqual(result.data["trust_change"], 1)
+        self.assertEqual(result.data["panic_change"], 0)
+        self.assertEqual(result.data["next_available_day"], 40)
+        self.assertEqual((state.trust_panic.trust, state.trust_panic.panic), (52, 29))
 
         spec = next(
             item
@@ -430,72 +446,89 @@ class OathOrderPatchTests(unittest.TestCase):
             },
         )
 
-    def test_patch017_guard_and_shared_meal_cooldowns_load_in_game_session(
+    def test_legacy_oath_action_cooldowns_load_in_game_session(
         self,
     ) -> None:
         cases = (
-            ("guard_oath", 35, 3, 4),
-            ("shared_meal", 37, 4, 5),
+            ("guard_oath", 35, (3, 4), 5),
+            ("mourning_bell", 37, (4,), 6),
+            ("shared_meal", 37, (4,), 5),
+            ("stay_persuasion", 39, (3,), 5),
         )
-        for action_id, used_day, old_cooldown, new_cooldown in cases:
-            with self.subTest(action_id=action_id), tempfile.TemporaryDirectory() as directory:
-                system = self.system()
-                state = self.make_state(day=35)
-                self.enter_oath_route(system, state)
-                self.assertEqual(
-                    self.execute(
-                        system,
-                        state,
-                        STAFF_OATH_ORDER_FACILITY_COMMAND,
-                        facility_id="oath_hall",
-                        workers=1,
-                        engineers=0,
-                    ).code,
-                    ErrorCode.OK,
-                )
-                if action_id == "shared_meal":
-                    state.calendar.current_day = used_day
+        for action_id, used_day, old_cooldowns, new_cooldown in cases:
+            for old_cooldown in old_cooldowns:
+                with self.subTest(
+                    action_id=action_id, old_cooldown=old_cooldown
+                ), tempfile.TemporaryDirectory() as directory:
+                    system = self.system()
+                    state = self.make_state(day=35)
+                    system.prepare_new_day(state)
+                    self.enter_oath_route(system, state)
                     self.assertEqual(
                         self.execute(
                             system,
                             state,
-                            SIGN_OATH_ORDER_LAW_COMMAND,
-                            law_id="shared_meal",
+                            STAFF_OATH_ORDER_FACILITY_COMMAND,
+                            facility_id="oath_hall",
+                            workers=1,
+                            engineers=0,
                         ).code,
                         ErrorCode.OK,
                     )
-                result = self.execute(
-                    system,
-                    state,
-                    USE_OATH_ORDER_ACTION_COMMAND,
-                    action_id=action_id,
-                )
-                self.assertEqual(result.code, ErrorCode.OK)
-                self.assertEqual(
-                    result.data["next_available_day"], used_day + new_cooldown
-                )
+                    prerequisite_laws = {
+                        "mourning_bell": ("mourning_bell",),
+                        "shared_meal": ("shared_meal",),
+                        "stay_persuasion": ("shared_meal", "stay_oath"),
+                    }.get(action_id, ())
+                    for law_id in prerequisite_laws:
+                        state.calendar.current_day = state.oath_order.next_law_day
+                        self.assertEqual(
+                            self.execute(
+                                system,
+                                state,
+                                SIGN_OATH_ORDER_LAW_COMMAND,
+                                law_id=law_id,
+                            ).code,
+                            ErrorCode.OK,
+                        )
+                    state.calendar.current_day = used_day
+                    if action_id == "mourning_bell":
+                        state.events.deaths_today_by_cause = {"cold": 1}
+                    if action_id == "stay_persuasion":
+                        state.resources.cooked_food = 100
+                        state.old_city.member_count = 20
+                    result = self.execute(
+                        system,
+                        state,
+                        USE_OATH_ORDER_ACTION_COMMAND,
+                        action_id=action_id,
+                    )
+                    self.assertEqual(result.code, ErrorCode.OK)
+                    self.assertEqual(
+                        result.data["next_available_day"], used_day + new_cooldown
+                    )
 
-                state.oath_order.action_next_available_day[action_id] = (
-                    used_day + old_cooldown
-                )
-                self.add_rejected_arrival_history(
-                    state,
-                    through_day=state.calendar.current_day + 1,
-                )
-                save_path = Path(directory) / f"legacy-{action_id}-v14.json"
-                save_path.write_text(
-                    json.dumps(encode_game_state(state), ensure_ascii=False),
-                    encoding="utf-8",
-                )
+                    state.oath_order.action_next_available_day[action_id] = (
+                        used_day + old_cooldown
+                    )
+                    self.add_rejected_arrival_history(
+                        state,
+                        through_day=state.calendar.current_day + 1,
+                    )
+                    save_path = Path(directory) / f"legacy-{action_id}-v14.json"
+                    save_path.write_text(
+                        json.dumps(encode_game_state(state), ensure_ascii=False),
+                        encoding="utf-8",
+                    )
 
-                restored = GameSession.load(save_path, config_dir=ROOT / "data")
+                    restored = GameSession.load(save_path, config_dir=ROOT / "data")
 
-                self.assertEqual(
-                    restored.state.oath_order.action_next_available_day[
-                        action_id
-                    ],
-                    used_day + old_cooldown,
-                )
+                    self.assertEqual(
+                        restored.state.oath_order.action_next_available_day[
+                            action_id
+                        ],
+                        used_day + old_cooldown,
+                    )
 
     def test_regular_staffing_respects_route_facility_assignment(self) -> None:
         system = self.system()
@@ -590,6 +623,67 @@ class OathOrderPatchTests(unittest.TestCase):
             system, state, USE_OATH_ORDER_ACTION_COMMAND, action_id="shared_meal"
         )
         self.assertEqual(repeated.data["reason"], "action_cooldown_active")
+
+    def test_stay_persuasion_pays_fixed_food_and_reduces_old_city_by_six(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=35)
+        system.prepare_new_day(state)
+        self.enter_oath_route(system, state)
+        self.assertEqual(
+            self.execute(
+                system,
+                state,
+                STAFF_OATH_ORDER_FACILITY_COMMAND,
+                facility_id="oath_hall",
+                workers=1,
+                engineers=0,
+            ).code,
+            ErrorCode.OK,
+        )
+        for law_id in ("shared_meal", "stay_oath"):
+            state.calendar.current_day = state.oath_order.next_law_day
+            self.assertEqual(
+                self.execute(
+                    system,
+                    state,
+                    SIGN_OATH_ORDER_LAW_COMMAND,
+                    law_id=law_id,
+                ).code,
+                ErrorCode.OK,
+            )
+        state.old_city.member_count = 20
+        state.resources.cooked_food = 39
+        before = deepcopy(state)
+
+        rejected = self.execute(
+            system,
+            state,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="stay_persuasion",
+        )
+
+        self.assertEqual(rejected.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(rejected.data["reason"], "insufficient_cooked_food")
+        self.assertEqual(rejected.data["required"], 40)
+        self.assertEqual(state, before)
+
+        state.resources.cooked_food = 100
+        result = self.execute(
+            system,
+            state,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="stay_persuasion",
+        )
+
+        self.assertEqual(result.code, ErrorCode.OK)
+        self.assertEqual(result.data["cooked_food_paid"], 40)
+        self.assertEqual(result.data["old_city_change"], -6)
+        self.assertEqual(result.data["trust_change"], 0)
+        self.assertEqual(result.data["next_available_day"], 44)
+        self.assertEqual(state.resources.cooked_food, 60)
+        self.assertEqual(state.old_city.member_count, 14)
 
     def test_action_view_exposes_dynamic_cost_boundaries_and_facility_block(self) -> None:
         system = self.system()

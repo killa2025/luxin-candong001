@@ -283,6 +283,7 @@ class EndDayEngine:
         self._state_validators: list[StateValidator] = []
         self._new_day_handlers: list[NewDayHandler] = []
         self._new_day_context_handlers: list[NewDayContextHandler] = []
+        self._post_new_day_context_handlers: list[NewDayContextHandler] = []
         self._autosave_sink = autosave_sink
         self._last_autosave: AutosaveRecord | None = None
         self._pending_confirmation: EndDayConfirmation | None = None
@@ -337,6 +338,19 @@ class EndDayEngine:
         if not callable(handler):
             raise TypeError("new day context handler must be callable")
         self._new_day_context_handlers.append(handler)
+
+    def register_post_new_day_context_handler(
+        self, handler: NewDayContextHandler
+    ) -> None:
+        """Run logged transactional work after ordinary new-day handlers.
+
+        This boundary is for observing work performed by an ordinary new-day
+        handler without moving that handler earlier in the settlement order.
+        """
+
+        if not callable(handler):
+            raise TypeError("post new day context handler must be callable")
+        self._post_new_day_context_handlers.append(handler)
 
     def last_autosave(self) -> AutosaveRecord | None:
         return deepcopy(self._last_autosave)
@@ -716,6 +730,8 @@ class EndDayEngine:
                         if working.final_result.hard_fail_type is None:
                             for handler in self._new_day_handlers:
                                 handler(working)
+                            for handler in self._post_new_day_context_handlers:
+                                handler(new_day_context)
                 else:
                     context = EndDayContext(
                         state=working,

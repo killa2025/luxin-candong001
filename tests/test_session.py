@@ -196,7 +196,7 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(settled.status["day"], 2)
         self.assertEqual(settled.result.data["settled_day"], 1)
 
-    def test_firepit_relief_runs_after_same_day_hunger_panic(self) -> None:
+    def test_firepit_floor_does_not_mask_moderate_same_day_hunger_panic(self) -> None:
         session = self.new_session(seed=1118)
         self.assertEqual(
             session.command(
@@ -221,7 +221,7 @@ class GameSessionTests(unittest.TestCase):
             session.state.events.metrics["patch013_hunger_panic_gain"],
             5,
         )
-        self.assertEqual(session.state.trust_panic.panic, 13)
+        self.assertEqual(session.state.trust_panic.panic, 14)
 
     def test_end_day_save_failure_restores_confirmation_and_autosaves(
         self,

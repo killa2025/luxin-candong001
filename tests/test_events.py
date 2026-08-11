@@ -458,6 +458,75 @@ class EventPatchTests(unittest.TestCase):
         ):
             decode_game_state(duplicate_instance)
 
+    def test_new_day_promise_settlement_has_its_own_structured_log(self) -> None:
+        state = self.make_state()
+        state.events.generated_for_day = 1
+        state.events.resolved_event_ids.append("trust_crack")
+        state.events.occurrence_counts["trust_crack"] = 1
+        state.events.resolution_history.append(
+            EventResolutionRecord(
+                event_id="trust_crack",
+                option_id="promise_trust",
+                event_type="major",
+                resolved_day=1,
+                instance_id="trust_crack#0001",
+                occurrence_index=1,
+                promise_id="promise-0001",
+                trust_change=0,
+                panic_change=0,
+                resource_changes={
+                    "coal": 0,
+                    "wood": 0,
+                    "steel": 0,
+                    "raw_food": 0,
+                    "cooked_food": 0,
+                },
+            )
+        )
+        state.promises.active_promises["promise-0001"] = PromiseRecord(
+            promise_id="promise-0001",
+            promise_type="trust",
+            source_event_id="trust_crack",
+            created_day=1,
+            deadline_day=5,
+            severity="serious",
+            target={"trust_at_creation": 20, "panic_at_creation": 30},
+        )
+        state.promises.next_sequence = 2
+
+        execution = self.settle(self.full_engine(), state)
+
+        self.assertEqual(
+            execution.result.code,
+            ErrorCode.OK,
+            msg={
+                "result": execution.result.data,
+                "logs": [
+                    (item.code, dict(item.payload)) for item in execution.logs
+                ],
+            },
+        )
+        settlement_log = next(
+            item
+            for item in execution.logs
+            if item.code == "events.promise.settled"
+        )
+        self.assertEqual(
+            settlement_log.payload,
+            {
+                "promise_id": "promise-0001",
+                "promise_type": "trust",
+                "source_event_id": "trust_crack",
+                "source_instance_id": "trust_crack#0001",
+                "settled_day": 2,
+                "outcome": "success",
+                "severity": "serious",
+                "trust_change": 3,
+                "panic_change": -2,
+            },
+        )
+        self.assertIn("promise-0001", state.promises.completed_promise_ids)
+
     def test_late_promise_is_capped_at_day48_and_day49_opens_none(self) -> None:
         state = self.make_state(day=46)
         state.trust_panic.trust = 30

@@ -51,9 +51,11 @@ USE_OATH_ORDER_ACTION_COMMAND = "game.use_oath_order_action"
 _ROUTE_ENTRY_LAWS = {"oath": "guard_oath", "iron": "city_patrol_order"}
 _ROUTE_FACILITIES = {"oath": "oath_hall", "iron": "patrol_office"}
 _TERMINAL_LAWS = {"final_oath", "highest_order"}
-_PATCH017_ACTION_COOLDOWN_DAYS = {
-    "guard_oath": 3,
-    "shared_meal": 4,
+_LEGACY_ACTION_COOLDOWN_DAYS = {
+    "guard_oath": frozenset({3, 4}),
+    "mourning_bell": frozenset({4}),
+    "shared_meal": frozenset({4}),
+    "stay_persuasion": frozenset({3}),
 }
 _CRITICAL_BUILDING_TYPES = frozenset(
     {
@@ -342,13 +344,12 @@ class OathOrderSystem:
             or state.old_city.member_count <= 0
         ):
             return self._illegal("old_city_not_active")
-        if action_id == "shared_meal":
-            cost = self._shared_meal_cost(state)
-            if state.resources.cooked_food < cost:
-                return self._illegal(
-                    "insufficient_cooked_food", required=cost,
-                    available=state.resources.cooked_food,
-                )
+        cost = self._action_cooked_food_cost(state, action_id)
+        if state.resources.cooked_food < cost:
+            return self._illegal(
+                "insufficient_cooked_food", required=cost,
+                available=state.resources.cooked_food,
+            )
         return CommandValidation.valid()
 
     def _resolve_old_city(
@@ -476,9 +477,8 @@ class OathOrderSystem:
     ) -> dict[str, Any]:
         action_id = str(request.arguments["action_id"])
         rule = self.rules.actions[action_id]
-        cooked_food_paid = 0
-        if action_id == "shared_meal":
-            cooked_food_paid = self._shared_meal_cost(state)
+        cooked_food_paid = self._action_cooked_food_cost(state, action_id)
+        if cooked_food_paid:
             state.resources.cooked_food -= cooked_food_paid
         if action_id == "mourning_bell":
             state.oath_order.death_panic_aftershock_halved_day = (
@@ -793,10 +793,12 @@ class OathOrderSystem:
             allowed_next_days = {
                 used_day + self.rules.actions[action_id].cooldown_days
             }
-            if action_id in _PATCH017_ACTION_COOLDOWN_DAYS:
-                allowed_next_days.add(
-                    used_day + _PATCH017_ACTION_COOLDOWN_DAYS[action_id]
+            allowed_next_days.update(
+                used_day + cooldown_days
+                for cooldown_days in _LEGACY_ACTION_COOLDOWN_DAYS.get(
+                    action_id, ()
                 )
+            )
             if (
                 used_day > state.calendar.current_day
                 or required_law not in state.oath_order.law_signed_days
@@ -868,10 +870,8 @@ class OathOrderSystem:
                     "cooldown_days": rule.cooldown_days,
                     "trust_change": rule.trust,
                     "panic_change": rule.panic,
-                    "current_cooked_food_cost": (
-                        self._shared_meal_cost(state)
-                        if action_id == "shared_meal"
-                        else rule.cooked_food
+                    "current_cooked_food_cost": self._action_cooked_food_cost(
+                        state, action_id
                     ),
                     "cooked_food_cost_formula": (
                         {
@@ -1545,6 +1545,13 @@ class OathOrderSystem:
     def _shared_meal_cost(state: GameState) -> int:
         scaled_population = (state.population.population_alive + 1) // 2
         return min(80, max(30, scaled_population))
+
+    def _action_cooked_food_cost(
+        self, state: GameState, action_id: str
+    ) -> int:
+        if action_id == "shared_meal":
+            return self._shared_meal_cost(state)
+        return max(self.rules.actions[action_id].cooked_food, 0)
 
     @staticmethod
     def _change_emotion(
