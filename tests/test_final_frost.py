@@ -1413,7 +1413,7 @@ class FinalFrostPatchTests(unittest.TestCase):
         with self.assertRaisesRegex(SaveDataError, "discontinuous"):
             decode_game_state(encode_game_state(state))
 
-    def test_d48_old_city_panic_settles_before_firepit_and_hard_fail_check(
+    def test_d48_old_city_panic_below_new_floor_is_not_erased_by_firepit(
         self,
     ) -> None:
         state = self.make_state(day=48)
@@ -1447,7 +1447,7 @@ class FinalFrostPatchTests(unittest.TestCase):
 
         self.assertEqual(execution.result.code, ErrorCode.OK)
         self.assertEqual(state.old_city.result_id, "partial_exodus")
-        self.assertEqual(state.trust_panic.panic, 13)
+        self.assertEqual(state.trust_panic.panic, 14)
         codes = [item.code for item in execution.logs]
         self.assertLess(
             codes.index("old_city.daily.updated"),

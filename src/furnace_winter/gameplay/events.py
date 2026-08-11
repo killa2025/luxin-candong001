@@ -277,6 +277,9 @@ class EventSystem:
             self.check_hidden_achievements,
         )
         engine.register_new_day_handler(self.begin_new_day)
+        engine.register_post_new_day_context_handler(
+            self.log_new_day_promise_settlements
+        )
 
     def initialize_day(self, state: GameState) -> None:
         """Generate the current day once, including a fresh game's day 1."""
@@ -481,6 +484,46 @@ class EventSystem:
     def begin_new_day(self, state: GameState) -> None:
         self._settle_promises(state)
         self._prepare_day(state)
+
+    def log_new_day_promise_settlements(
+        self, context: EndDayContext
+    ) -> None:
+        """Expose promise settlement separately from the prior day's relief."""
+
+        state = context.state
+        source_by_promise_id = {
+            item.promise_id: item
+            for item in state.events.resolution_history
+            if item.promise_id is not None
+        }
+        settlements = sorted(
+            (
+                item
+                for item in state.promises.settlement_history
+                if item.settled_day == state.calendar.current_day
+            ),
+            key=lambda item: item.promise_id,
+        )
+        for settlement in settlements:
+            source = source_by_promise_id.get(settlement.promise_id)
+            context.emit(
+                "events.promise.settled",
+                {
+                    "promise_id": settlement.promise_id,
+                    "promise_type": settlement.promise_type,
+                    "source_event_id": (
+                        source.event_id if source is not None else None
+                    ),
+                    "source_instance_id": (
+                        source.instance_id if source is not None else None
+                    ),
+                    "settled_day": settlement.settled_day,
+                    "outcome": settlement.outcome,
+                    "severity": settlement.severity,
+                    "trust_change": settlement.trust_change,
+                    "panic_change": settlement.panic_change,
+                },
+            )
 
     def _settle_promises(self, state: GameState) -> None:
         for promise_id in list(state.promises.active_promises):

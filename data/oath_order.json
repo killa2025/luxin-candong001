@@ -38,10 +38,10 @@
     "highest_order": {"route": "iron", "requires": ["city_patrol_order", "morning_roll_call", "unified_announcement", "temporary_detain", "household_registry_check"], "trust": -8, "panic": 0}
   },
   "actions": {
-    "guard_oath": {"route": "oath", "required_law": "guard_oath", "cooldown_days": 4, "trust": 2, "panic": -1, "cooked_food": 0, "old_city": 0},
-    "mourning_bell": {"route": "oath", "required_law": "mourning_bell", "cooldown_days": 4, "trust": 0, "panic": -3, "cooked_food": 0, "old_city": 0},
+    "guard_oath": {"route": "oath", "required_law": "guard_oath", "cooldown_days": 5, "trust": 1, "panic": 0, "cooked_food": 0, "old_city": 0},
+    "mourning_bell": {"route": "oath", "required_law": "mourning_bell", "cooldown_days": 6, "trust": 0, "panic": -2, "cooked_food": 0, "old_city": 0},
     "shared_meal": {"route": "oath", "required_law": "shared_meal", "cooldown_days": 5, "trust": 1, "panic": -2, "cooked_food": -1, "old_city": 0},
-    "stay_persuasion": {"route": "oath", "required_law": "stay_oath", "cooldown_days": 3, "trust": 1, "panic": 0, "cooked_food": 0, "old_city": -8},
+    "stay_persuasion": {"route": "oath", "required_law": "stay_oath", "cooldown_days": 5, "trust": 0, "panic": 0, "cooked_food": 40, "old_city": -6},
     "patrol": {"route": "iron", "required_law": "city_patrol_order", "cooldown_days": 3, "trust": -1, "panic": -3, "cooked_food": 0, "old_city": 0},
     "announcement": {"route": "iron", "required_law": "unified_announcement", "cooldown_days": 3, "trust": -2, "panic": -2, "cooked_food": 0, "old_city": 0},
     "detain": {"route": "iron", "required_law": "temporary_detain", "cooldown_days": 5, "trust": -4, "panic": -5, "cooked_food": 0, "old_city": 0},
