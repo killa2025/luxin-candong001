@@ -55,7 +55,9 @@
 - 留城劝诫覆盖 39 熟食拒绝并完整回滚，以及 100 熟食成功后支付 40、旧城成员减少 6。
 - `GameSession.load` 覆盖四项行动全部历史冷却差值，旧档加载后不追溯改写。
 - 承诺跨日成功结算覆盖独立日志的来源实例、结算日、结果和数值变化。
-- `python -m unittest discover -s tests -q`：404 项通过。
+- 承诺到期失败覆盖一次性结构化日志、失败列表、活动记录消费和下一日不重复输出。
+- 后置日初处理器异常覆盖完整事务回滚：原状态不变、承诺不消费、不写自动存档。
+- `python -m unittest discover -s tests -q`：406 项通过。
 - `python -m furnace_winter validate-config data`：9 份 JSON 配置通过。
 - `python -m compileall -q src tests`：通过。
 - `git diff --check`：通过。

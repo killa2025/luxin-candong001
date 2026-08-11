@@ -210,6 +210,44 @@ class EventPatchTests(unittest.TestCase):
         state.events.metrics["food_warning_streak"] = 1
         return state
 
+    def make_trust_promise_state(self, *, day: int, trust: int):
+        state = self.make_state(day=day)
+        state.trust_panic.trust = trust
+        state.events.generated_for_day = day
+        state.events.resolved_event_ids.append("trust_crack")
+        state.events.occurrence_counts["trust_crack"] = 1
+        state.events.resolution_history.append(
+            EventResolutionRecord(
+                event_id="trust_crack",
+                option_id="promise_trust",
+                event_type="major",
+                resolved_day=1,
+                instance_id="trust_crack#0001",
+                occurrence_index=1,
+                promise_id="promise-0001",
+                trust_change=0,
+                panic_change=0,
+                resource_changes={
+                    "coal": 0,
+                    "wood": 0,
+                    "steel": 0,
+                    "raw_food": 0,
+                    "cooked_food": 0,
+                },
+            )
+        )
+        state.promises.active_promises["promise-0001"] = PromiseRecord(
+            promise_id="promise-0001",
+            promise_type="trust",
+            source_event_id="trust_crack",
+            created_day=1,
+            deadline_day=5,
+            severity="serious",
+            target={"trust_at_creation": 20, "panic_at_creation": 30},
+        )
+        state.promises.next_sequence = 2
+        return state
+
     def make_reopened_coal_event_state(self):
         state = self.make_state(day=11)
         state.resources.coal = 50
@@ -459,40 +497,7 @@ class EventPatchTests(unittest.TestCase):
             decode_game_state(duplicate_instance)
 
     def test_new_day_promise_settlement_has_its_own_structured_log(self) -> None:
-        state = self.make_state()
-        state.events.generated_for_day = 1
-        state.events.resolved_event_ids.append("trust_crack")
-        state.events.occurrence_counts["trust_crack"] = 1
-        state.events.resolution_history.append(
-            EventResolutionRecord(
-                event_id="trust_crack",
-                option_id="promise_trust",
-                event_type="major",
-                resolved_day=1,
-                instance_id="trust_crack#0001",
-                occurrence_index=1,
-                promise_id="promise-0001",
-                trust_change=0,
-                panic_change=0,
-                resource_changes={
-                    "coal": 0,
-                    "wood": 0,
-                    "steel": 0,
-                    "raw_food": 0,
-                    "cooked_food": 0,
-                },
-            )
-        )
-        state.promises.active_promises["promise-0001"] = PromiseRecord(
-            promise_id="promise-0001",
-            promise_type="trust",
-            source_event_id="trust_crack",
-            created_day=1,
-            deadline_day=5,
-            severity="serious",
-            target={"trust_at_creation": 20, "panic_at_creation": 30},
-        )
-        state.promises.next_sequence = 2
+        state = self.make_trust_promise_state(day=1, trust=50)
 
         execution = self.settle(self.full_engine(), state)
 
@@ -526,6 +531,74 @@ class EventPatchTests(unittest.TestCase):
             },
         )
         self.assertIn("promise-0001", state.promises.completed_promise_ids)
+
+    def test_failed_promise_logs_once_and_is_consumed_once(self) -> None:
+        state = self.make_trust_promise_state(day=5, trust=20)
+
+        execution = self.settle(self.full_engine(), state)
+
+        self.assertEqual(execution.result.code, ErrorCode.OK)
+        settlement_logs = [
+            item
+            for item in execution.logs
+            if item.code == "events.promise.settled"
+        ]
+        self.assertEqual(len(settlement_logs), 1)
+        self.assertEqual(
+            settlement_logs[0].payload,
+            {
+                "promise_id": "promise-0001",
+                "promise_type": "trust",
+                "source_event_id": "trust_crack",
+                "source_instance_id": "trust_crack#0001",
+                "settled_day": 6,
+                "outcome": "failure",
+                "severity": "serious",
+                "trust_change": -8,
+                "panic_change": 8,
+            },
+        )
+        self.assertNotIn("promise-0001", state.promises.active_promises)
+        self.assertEqual(state.promises.failed_promise_ids, ["promise-0001"])
+        self.assertEqual(len(state.promises.settlement_history), 1)
+
+        arrival = self.execute(
+            self.event_system(), state, "arrival_day6", "reject"
+        )
+        self.assertEqual(arrival.code, ErrorCode.OK)
+        next_execution = self.settle(self.full_engine(), state)
+
+        self.assertEqual(next_execution.result.code, ErrorCode.OK)
+        self.assertFalse(
+            any(
+                item.code == "events.promise.settled"
+                for item in next_execution.logs
+            )
+        )
+        self.assertEqual(state.promises.failed_promise_ids, ["promise-0001"])
+        self.assertEqual(len(state.promises.settlement_history), 1)
+
+    def test_post_new_day_failure_rolls_back_promise_settlement(self) -> None:
+        state = self.make_trust_promise_state(day=5, trust=20)
+        before = deepcopy(state)
+        saved = []
+        engine = self.full_engine(saved.append)
+
+        def fail_after_new_day(_context: EndDayContext) -> None:
+            raise RuntimeError("post-new-day probe failed")
+
+        engine.register_post_new_day_context_handler(fail_after_new_day)
+
+        execution = self.settle(engine, state)
+
+        self.assertEqual(execution.result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(execution.result.data["failed_stage"], "advance_day")
+        self.assertEqual(state, before)
+        self.assertIn("promise-0001", state.promises.active_promises)
+        self.assertEqual(state.promises.failed_promise_ids, [])
+        self.assertEqual(state.promises.settlement_history, [])
+        self.assertEqual(saved, [])
+        self.assertIsNone(engine.last_autosave())
 
     def test_late_promise_is_capped_at_day48_and_day49_opens_none(self) -> None:
         state = self.make_state(day=46)
