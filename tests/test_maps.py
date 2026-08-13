@@ -420,6 +420,7 @@ class MapPatchTests(unittest.TestCase):
         )
         legacy = encode_game_state(state)
         legacy["save_data_version"] = 12
+        del legacy["final_frost"]["balance_profile_id"]
         legacy.pop("map")
         random_before = deepcopy(legacy["random"])
 

@@ -1580,6 +1580,7 @@ class OathOrderPatchTests(unittest.TestCase):
         state = self.make_state()
         document = encode_game_state(state)
         document["save_data_version"] = 9
+        del document["final_frost"]["balance_profile_id"]
         migrated = decode_game_state(document)
         self.assertEqual(migrated.save_data_version, CURRENT_SAVE_DATA_VERSION)
         self.assertEqual(migrated.oath_order.selected_route, None)
@@ -1595,6 +1596,7 @@ class OathOrderPatchTests(unittest.TestCase):
                 state.old_city.activation_pending = activation_pending
                 document = encode_game_state(state)
                 document["save_data_version"] = 9
+                del document["final_frost"]["balance_profile_id"]
 
                 migrated = decode_game_state(document)
 
@@ -1611,6 +1613,7 @@ class OathOrderPatchTests(unittest.TestCase):
                 self.add_rejected_arrival_history(state, through_day=day)
                 document = encode_game_state(state)
                 document["save_data_version"] = 9
+                del document["final_frost"]["balance_profile_id"]
                 with self.assertRaisesRegex(
                     SaveDataError, "after day 24"
                 ):
@@ -1620,6 +1623,7 @@ class OathOrderPatchTests(unittest.TestCase):
         state = self.make_state(day=24)
         document = encode_game_state(state)
         document["save_data_version"] = 9
+        del document["final_frost"]["balance_profile_id"]
         with self.assertRaises(SaveDataError):
             decode_game_state(document)
 

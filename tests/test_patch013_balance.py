@@ -33,6 +33,7 @@ from furnace_winter.gameplay.hunger import (
     remove_starvation_deaths,
 )
 from furnace_winter.models import (
+    CURRENT_SAVE_DATA_VERSION,
     LEGACY_ENDING_REPORT_FORMAT_VERSION,
     BuildingState,
     DeterministicRandom,
@@ -161,6 +162,7 @@ class Patch013BalanceTests(unittest.TestCase):
     @staticmethod
     def downgrade_v14_to_v13(document: dict) -> dict:
         document["save_data_version"] = 13
+        del document["final_frost"]["balance_profile_id"]
         del document["final_result"]["report"]["format_version"]
         del document["cold_exposure"]
         document["hunger"] = {
@@ -767,7 +769,9 @@ class Patch013BalanceTests(unittest.TestCase):
         document = self.downgrade_v14_to_v13(encode_game_state(state))
 
         migrated = decode_game_state(document)
-        self.assertEqual(migrated.save_data_version, 16)
+        self.assertEqual(
+            migrated.save_data_version, CURRENT_SAVE_DATA_VERSION
+        )
         self.assertEqual(migrated.hunger.none_population, 80)
 
         invalid = encode_game_state(migrated)

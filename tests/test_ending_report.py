@@ -332,7 +332,7 @@ class EndingReportPatchTests(unittest.TestCase):
         }
         self.assertEqual(
             first_view["body"][0]["text_id"],
-            "ending.high_victory.body.02",
+            "ending.standard_victory.body.03",
         )
         self.assertIn(
             "ending.report.death_record.none", rendered_ids
@@ -629,6 +629,7 @@ class EndingReportPatchTests(unittest.TestCase):
             )
         )
         legacy["save_data_version"] = 11
+        del legacy["final_frost"]["balance_profile_id"]
         for field in (
             "run_state",
             "termination_reason",
@@ -650,6 +651,7 @@ class EndingReportPatchTests(unittest.TestCase):
 
         terminal_legacy = encode_game_state(self.completed_state())
         terminal_legacy["save_data_version"] = 11
+        del terminal_legacy["final_frost"]["balance_profile_id"]
         terminal_legacy["hunger"] = {
             "mild_population": 0,
             "severe_population": 0,
@@ -704,6 +706,7 @@ class EndingReportPatchTests(unittest.TestCase):
         )
         del legacy_report["format_version"]
         legacy_document["save_data_version"] = 14
+        del legacy_document["final_frost"]["balance_profile_id"]
 
         restored = decode_game_state(legacy_document)
         view = EndingReportSystem().observe(restored)
@@ -725,6 +728,7 @@ class EndingReportPatchTests(unittest.TestCase):
         state = self.completed_state()
         document = encode_game_state(state)
         document["save_data_version"] = 15
+        del document["final_frost"]["balance_profile_id"]
         for record in document["final_frost"]["daily_records"].values():
             for field in (
                 "service_history_known",
@@ -774,6 +778,7 @@ class EndingReportPatchTests(unittest.TestCase):
 
         pre_v16 = encode_game_state(state)
         pre_v16["save_data_version"] = 15
+        del pre_v16["final_frost"]["balance_profile_id"]
         pre_v16["final_frost"]["daily_records"]["49"][
             "service_history_known"
         ] = True

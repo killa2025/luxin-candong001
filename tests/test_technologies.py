@@ -607,6 +607,7 @@ class TechnologyPatchTests(unittest.TestCase):
 
         legacy = deepcopy(encoded)
         legacy["save_data_version"] = 6
+        del legacy["final_frost"]["balance_profile_id"]
         legacy["furnace"].pop("overload_level")
         legacy["furnace"].pop("pressure_redline_warned")
         for field in (
@@ -636,6 +637,7 @@ class TechnologyPatchTests(unittest.TestCase):
             with self.subTest(pressure=pressure):
                 legacy = deepcopy(current)
                 legacy["save_data_version"] = 6
+                del legacy["final_frost"]["balance_profile_id"]
                 legacy["furnace"].pop("overload_level")
                 legacy["furnace"].pop("pressure_redline_warned")
                 legacy["furnace"]["pressure"] = pressure

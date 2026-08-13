@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 16
+CURRENT_SAVE_DATA_VERSION = 17
 LEGACY_ENDING_REPORT_FORMAT_VERSION = 1
 CURRENT_ENDING_REPORT_FORMAT_VERSION = 2
 FINAL_DAY = 55
@@ -632,6 +632,7 @@ class FrostDayRecord:
 class FinalFrostState:
     """D49-D55 facts used for deterministic scoring and later reports."""
 
+    balance_profile_id: str = "patch022"
     entered: bool = False
     baseline_day: int | None = None
     baseline_alive_population: int = 0
