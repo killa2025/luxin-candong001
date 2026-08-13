@@ -402,6 +402,81 @@ class Patch013BalanceTests(unittest.TestCase):
             off.events.deaths_today_by_cause.get("cold_exposure", 0), 1
         )
 
+    def test_effective_furnace_off_guarantees_a_cold_death_each_ordinary_day(self) -> None:
+        state = self.state(day=14)
+        self.set_alive(state, 80, housed=80)
+        state.furnace.mode_id = "off"
+        state.furnace.is_active = False
+        system = self.system()
+
+        for day in (14, 15):
+            state.calendar.current_day = day
+            state.daily_survival.settled_day = day
+            state.daily_survival.base_temperature = (
+                self.survival.weather_for_day(day)
+            )
+            state.daily_survival.zone_temperatures = {
+                "inner_ring": state.daily_survival.base_temperature,
+                "middle_ring": state.daily_survival.base_temperature,
+                "outer_ring": state.daily_survival.base_temperature,
+            }
+            state.daily_survival.effective_furnace_level = 0
+            state.daily_survival.heating_shortfall = False
+            deaths_before = state.population.population_dead
+            system.resolve_frost_health(
+                self.context(
+                    state,
+                    day,
+                    EndDayStage.RESOLVE_HOUSING_COLD_AND_HUNGER,
+                )
+            )
+
+            self.assertEqual(state.population.population_dead, deaths_before + 1)
+            self.assertEqual(
+                state.events.deaths_today_by_cause.get("cold_exposure", 0),
+                day - 13,
+            )
+            self.assertEqual(
+                state.events.metrics[
+                    "patch009_furnace_off_minimum_death_applied"
+                ],
+                1,
+            )
+
+    def test_furnace_off_and_zero_affordable_heat_warn_exact_minimum_death(self) -> None:
+        state = self.state(day=14)
+        system = SurvivalSystem(
+            self.survival,
+            self.buildings,
+            self.technology,
+        )
+
+        state.furnace.mode_id = "off"
+        state.furnace.is_active = False
+        off = {
+            warning.warning_id: warning
+            for warning in system.evaluate_risks(state)
+        }["survival.furnace_off"]
+        self.assertEqual(off.details["minimum_deaths_if_settled"], 1)
+        self.assertEqual(off.details["death_cause"], "cold_exposure")
+
+        state.furnace.mode_id = "level_1"
+        state.furnace.is_active = True
+        state.resources.coal = 0
+        shortfall = {
+            warning.warning_id: warning
+            for warning in system.evaluate_risks(state)
+        }["survival.heating_fuel_shortfall"]
+        self.assertEqual(shortfall.details["affordable_level"], 0)
+        self.assertEqual(
+            shortfall.details["minimum_deaths_if_effective_level_zero"],
+            1,
+        )
+        self.assertEqual(
+            shortfall.details["death_cause_if_effective_level_zero"],
+            "cold_exposure",
+        )
+
     def test_small_cold_group_accumulates_exact_saved_remainders(self) -> None:
         state = self.state(day=2)
         self.set_alive(state, 8)
