@@ -138,6 +138,54 @@ class Patch013BalanceTests(unittest.TestCase):
             _emit=lambda _code, _payload: None,
         )
 
+    def settle_full_day_with_replay(self, state, command_id: str):
+        self.seed_fixed_arrival_rejections(
+            state, through_day=state.calendar.current_day
+        )
+        initial = deepcopy(state)
+        engine = self.full_engine()
+        preview_request = CommandRequest(
+            f"preview-{command_id}",
+            END_DAY_COMMAND,
+            {},
+            state.command_sequence,
+        )
+        preview = engine.execute(state, preview_request)
+        self.assertEqual(
+            preview.result.code,
+            ErrorCode.END_DAY_CONFIRMATION_REQUIRED,
+            preview.result.data,
+        )
+        confirm_request = CommandRequest(
+            f"confirm-{command_id}",
+            CONFIRM_END_DAY_COMMAND,
+            preview.result.data["confirmation"],
+            state.command_sequence,
+        )
+        execution = engine.execute(state, confirm_request)
+        replay = ReplayLog(initial)
+        for sequence, request, item in (
+            (1, preview_request, preview),
+            (2, confirm_request, execution),
+        ):
+            replay.append(
+                ReplayEntry(
+                    sequence=sequence,
+                    request=request,
+                    result=item.result,
+                    random_before=item.random_before,
+                    random_after=item.random_after,
+                    logs=item.logs,
+                )
+            )
+        document = replay.document()
+        self.assertEqual(
+            decode_replay_document(to_primitive(document)), document
+        )
+        self.assertEqual(document.entries[0].result, preview.result)
+        self.assertEqual(document.entries[1].logs, execution.logs)
+        return preview, execution, document
+
     @staticmethod
     def set_alive(state, alive: int, *, housed: int = 0) -> None:
         population = state.population
@@ -199,8 +247,12 @@ class Patch013BalanceTests(unittest.TestCase):
         del document["final_result"]["report"]["limiting_factor_ids"]
         return document
 
-    def seed_fixed_arrival_rejections(self, state) -> None:
+    def seed_fixed_arrival_rejections(
+        self, state, *, through_day: int | None = None
+    ) -> None:
         for event_id, rule in self.events.fixed_arrivals.items():
+            if through_day is not None and rule.day > through_day:
+                continue
             effect = rule.options["reject"]
             state.events.fixed_arrival_choices[event_id] = "reject"
             state.events.resolved_event_ids.append(event_id)
@@ -443,7 +495,7 @@ class Patch013BalanceTests(unittest.TestCase):
                 1,
             )
 
-    def test_furnace_off_and_zero_affordable_heat_warn_exact_minimum_death(self) -> None:
+    def test_furnace_off_and_zero_affordable_heat_warn_conditional_minimum_death(self) -> None:
         state = self.state(day=14)
         system = SurvivalSystem(
             self.survival,
@@ -457,8 +509,17 @@ class Patch013BalanceTests(unittest.TestCase):
             warning.warning_id: warning
             for warning in system.evaluate_risks(state)
         }["survival.furnace_off"]
-        self.assertEqual(off.details["minimum_deaths_if_settled"], 1)
-        self.assertEqual(off.details["death_cause"], "cold_exposure")
+        self.assertEqual(off.details["minimum_natural_deaths_if_settled"], 1)
+        self.assertEqual(
+            off.details[
+                "minimum_cold_exposure_deaths_if_no_disease_or_hunger_deaths"
+            ],
+            1,
+        )
+        self.assertEqual(
+            off.details["conditional_death_cause"], "cold_exposure"
+        )
+        self.assertNotIn("death_cause", off.details)
 
         state.furnace.mode_id = "level_1"
         state.furnace.is_active = True
@@ -469,13 +530,127 @@ class Patch013BalanceTests(unittest.TestCase):
         }["survival.heating_fuel_shortfall"]
         self.assertEqual(shortfall.details["affordable_level"], 0)
         self.assertEqual(
-            shortfall.details["minimum_deaths_if_effective_level_zero"],
+            shortfall.details[
+                "minimum_natural_deaths_if_effective_level_zero"
+            ],
             1,
         )
         self.assertEqual(
-            shortfall.details["death_cause_if_effective_level_zero"],
+            shortfall.details[
+                "minimum_cold_exposure_deaths_if_effective_level_zero_and_no_disease_or_hunger_deaths"
+            ],
+            1,
+        )
+        self.assertEqual(
+            shortfall.details[
+                "conditional_death_cause_if_effective_level_zero"
+            ],
             "cold_exposure",
         )
+        self.assertNotIn(
+            "death_cause_if_effective_level_zero", shortfall.details
+        )
+
+    def test_formal_furnace_off_disease_death_does_not_claim_or_add_cold_death(self) -> None:
+        state = self.state(day=14)
+        self.set_alive(state, 40, housed=40)
+        state.population.healthy_population = 20
+        state.population.critical_population = 20
+        state.medical.temporary_capacity = 0
+        state.medical.effective_capacity = 0
+        state.medical.medical_pressure = 20
+        state.furnace.mode_id = "off"
+        state.furnace.is_active = False
+        state.resources.cooked_food = 1000
+        state.resources.raw_food = 0
+
+        preview, execution, replay = self.settle_full_day_with_replay(
+            state, "off-disease"
+        )
+
+        self.assertTrue(execution.result.accepted)
+        warning = {
+            item.warning_id: item for item in preview.warnings
+        }["survival.furnace_off"]
+        self.assertNotIn("death_cause", warning.details)
+        self.assertEqual(
+            warning.details["minimum_natural_deaths_if_settled"], 1
+        )
+        health_log = next(
+            item
+            for item in execution.logs
+            if item.code == "final_frost.health.resolved"
+        )
+        self.assertGreater(health_log.payload["disease_deaths"], 0)
+        self.assertEqual(health_log.payload["cold_deaths"], 0)
+        self.assertFalse(
+            health_log.payload["furnace_off_minimum_death_applied"]
+        )
+        self.assertEqual(len(replay.entries), 2)
+
+    def test_formal_zero_affordable_heat_hunger_death_does_not_add_cold_death(self) -> None:
+        state = self.state(day=14)
+        self.set_alive(state, 40, housed=40)
+        state.hunger.none_population = 32
+        state.hunger.starving_population = 8
+        state.furnace.mode_id = "level_1"
+        state.furnace.is_active = True
+        state.resources.coal = 0
+        state.resources.cooked_food = 0
+        state.resources.raw_food = 0
+
+        preview, execution, replay = self.settle_full_day_with_replay(
+            state, "shortfall-hunger"
+        )
+
+        self.assertTrue(execution.result.accepted)
+        warning = {
+            item.warning_id: item for item in preview.warnings
+        }["survival.heating_fuel_shortfall"]
+        self.assertNotIn(
+            "death_cause_if_effective_level_zero", warning.details
+        )
+        self.assertEqual(
+            warning.details[
+                "minimum_natural_deaths_if_effective_level_zero"
+            ],
+            1,
+        )
+        health_log = next(
+            item
+            for item in execution.logs
+            if item.code == "final_frost.health.resolved"
+        )
+        self.assertGreater(health_log.payload["hunger_deaths"], 0)
+        self.assertEqual(health_log.payload["cold_deaths"], 0)
+        self.assertFalse(
+            health_log.payload["furnace_off_minimum_death_applied"]
+        )
+        self.assertEqual(len(replay.entries), 2)
+
+    def test_formal_furnace_off_without_other_deaths_adds_logged_cold_death(self) -> None:
+        state = self.state(day=14)
+        self.set_alive(state, 40, housed=40)
+        state.furnace.mode_id = "off"
+        state.furnace.is_active = False
+        state.resources.cooked_food = 1000
+        state.resources.raw_food = 0
+
+        _preview, execution, replay = self.settle_full_day_with_replay(
+            state, "off-cold"
+        )
+
+        self.assertTrue(execution.result.accepted)
+        health_log = next(
+            item
+            for item in execution.logs
+            if item.code == "final_frost.health.resolved"
+        )
+        self.assertGreaterEqual(health_log.payload["cold_deaths"], 1)
+        self.assertTrue(
+            health_log.payload["furnace_off_minimum_death_applied"]
+        )
+        self.assertEqual(len(replay.entries), 2)
 
     def test_small_cold_group_accumulates_exact_saved_remainders(self) -> None:
         state = self.state(day=2)

@@ -696,10 +696,13 @@ class SurvivalSystem:
                     {
                         "target_level": 0,
                         "effective_level": 0,
-                        "minimum_deaths_if_settled": (
+                        "minimum_natural_deaths_if_settled": (
                             1 if state.population.population_alive > 0 else 0
                         ),
-                        "death_cause": "cold_exposure",
+                        "minimum_cold_exposure_deaths_if_no_disease_or_hunger_deaths": (
+                            1 if state.population.population_alive > 0 else 0
+                        ),
+                        "conditional_death_cause": "cold_exposure",
                     },
                 )
             )
@@ -713,13 +716,19 @@ class SurvivalSystem:
                         "required_coal": required_coal,
                         "target_level": target_level,
                         "affordable_level": affordable_level,
-                        "minimum_deaths_if_effective_level_zero": (
+                        "minimum_natural_deaths_if_effective_level_zero": (
                             1
                             if affordable_level == 0
                             and state.population.population_alive > 0
                             else 0
                         ),
-                        "death_cause_if_effective_level_zero": (
+                        "minimum_cold_exposure_deaths_if_effective_level_zero_and_no_disease_or_hunger_deaths": (
+                            1
+                            if affordable_level == 0
+                            and state.population.population_alive > 0
+                            else 0
+                        ),
+                        "conditional_death_cause_if_effective_level_zero": (
                             "cold_exposure"
                             if affordable_level == 0
                             else None
