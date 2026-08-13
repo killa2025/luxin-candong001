@@ -41,6 +41,27 @@ _RESULT_ORDER = (
     "collapse_survival",
     "ember_survival",
 )
+_LEGACY_PATCH_021_RESULT_SCORE_MINIMUMS = {
+    "high_victory": 20,
+    "standard_victory": 15,
+    "bitter_victory": 10,
+    "collapse_survival": 5,
+    "ember_survival": 0,
+}
+_LEGACY_PATCH_021_HIGH_VICTORY_DEATH_RATIO_PERCENT = 20
+_LEGACY_PATCH_021_PREPARATION = {
+    "prepared_required_items": 5,
+    "prepared_coal_days": 5,
+    "prepared_food_days": 5,
+    "prepared_trust": 50,
+    "prepared_panic": 50,
+    "unprepared_required_items": 3,
+    "unprepared_coal_days": 3,
+    "unprepared_food_days": 3,
+    "unprepared_trust": 40,
+    "unprepared_panic": 65,
+    "unprepared_pressure": 80,
+}
 
 
 @dataclass(slots=True)
@@ -224,7 +245,7 @@ class FinalFrostSystem:
             ending_id = self._apply_result_caps(
                 state,
                 scores,
-                self._result_for_total(total),
+                self._result_for_total(state, total),
             )
             tags = self._ending_tags(state, scores)
             major = [
@@ -1187,7 +1208,7 @@ class FinalFrostSystem:
             return
         scores = self._score(state)
         total = sum(scores.values())
-        ending_id = self._result_for_total(total)
+        ending_id = self._result_for_total(state, total)
         ending_id = self._apply_result_caps(state, scores, ending_id)
         tags = self._ending_tags(state, scores)
         major = [
@@ -1227,6 +1248,8 @@ class FinalFrostSystem:
         self.validate_state(state)
         return {
             "active": self.rules.is_frost_day(state.calendar.current_day),
+            "balance_profile_id": state.final_frost.balance_profile_id,
+            "balance_status": self.rules.config_status.value,
             "start_day": self.rules.start_day,
             "end_day": self.rules.end_day,
             "baseline_day": state.final_frost.baseline_day,
@@ -1354,7 +1377,16 @@ class FinalFrostSystem:
         trust = state.trust_panic.trust or 0
         panic = state.trust_panic.panic or 0
         pressure = state.furnace.pressure
-        prep = self.rules.preparation
+        prep = (
+            {
+                **_LEGACY_PATCH_021_PREPARATION,
+                "key_technology_ids": self.rules.preparation[
+                    "key_technology_ids"
+                ],
+            }
+            if frost.balance_profile_id == "legacy_patch021"
+            else self.rules.preparation
+        )
         checks = (
             coal_days >= prep["prepared_coal_days"],
             food_days >= prep["prepared_food_days"],
@@ -2114,8 +2146,12 @@ class FinalFrostSystem:
             )
         )
 
-    def _result_for_total(self, total: int) -> str:
-        minimums = self.rules.scoring["result_score_minimums"]
+    def _result_for_total(self, state: GameState, total: int) -> str:
+        minimums = (
+            _LEGACY_PATCH_021_RESULT_SCORE_MINIMUMS
+            if state.final_frost.balance_profile_id == "legacy_patch021"
+            else self.rules.scoring["result_score_minimums"]
+        )
         return next(
             result for result in _RESULT_ORDER if total >= minimums[result]
         )
@@ -2125,10 +2161,22 @@ class FinalFrostSystem:
     ) -> str:
         cap = "high_victory"
         zeros = sum(score == 0 for score in scores.values())
-        if any(score == 0 for score in scores.values()) or (
-            state.population.population_dead * 100
-            > max(state.population.population_total_ever, 1)
-            * self.rules.scoring["high_victory_death_ratio_percent"]
+        high_victory_death_ratio_percent = (
+            _LEGACY_PATCH_021_HIGH_VICTORY_DEATH_RATIO_PERCENT
+            if state.final_frost.balance_profile_id == "legacy_patch021"
+            else self.rules.scoring["high_victory_death_ratio_percent"]
+        )
+        if (
+            any(score == 0 for score in scores.values())
+            or (
+                state.final_frost.balance_profile_id == "patch022"
+                and any(score < 3 for score in scores.values())
+            )
+            or (
+                state.population.population_dead * 100
+                > max(state.population.population_total_ever, 1)
+                * high_victory_death_ratio_percent
+            )
         ):
             cap = "standard_victory"
         if scores["coal_and_core"] <= 1 or scores["population_and_death"] <= 1:

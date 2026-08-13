@@ -90,11 +90,11 @@
     "panic_crisis": 80
   },
   "preparation": {
-    "prepared_required_items": 5,
-    "prepared_coal_days": 5,
-    "prepared_food_days": 5,
-    "prepared_trust": 50,
-    "prepared_panic": 50,
+    "prepared_required_items": 6,
+    "prepared_coal_days": 6,
+    "prepared_food_days": 6,
+    "prepared_trust": 55,
+    "prepared_panic": 45,
     "unprepared_required_items": 3,
     "unprepared_coal_days": 3,
     "unprepared_food_days": 3,
@@ -109,13 +109,13 @@
   },
   "scoring": {
     "result_score_minimums": {
-      "high_victory": 20,
-      "standard_victory": 15,
-      "bitter_victory": 10,
-      "collapse_survival": 5,
+      "high_victory": 22,
+      "standard_victory": 18,
+      "bitter_victory": 12,
+      "collapse_survival": 7,
       "ember_survival": 0
     },
-    "high_victory_death_ratio_percent": 20,
+    "high_victory_death_ratio_percent": 5,
     "grave_city_death_ratio_percent": 30,
     "mass_death_frost_ratio_percent": 20,
     "city_continuity_minimum": 40,

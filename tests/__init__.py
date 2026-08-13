@@ -12,6 +12,9 @@ if str(SRC) not in sys.path:
 def downgrade_to_pre_patch006_schema(document: dict) -> dict:
     """Remove v7-only fields so migration tests use a genuine legacy schema."""
 
+    final_frost = document.get("final_frost")
+    if isinstance(final_frost, dict):
+        final_frost.pop("balance_profile_id", None)
     furnace = document.get("furnace")
     if isinstance(furnace, dict):
         furnace.pop("overload_level", None)

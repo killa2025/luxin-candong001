@@ -215,6 +215,12 @@ class SaveMigrationRegistry:
             raise SaveDataError("save_data_version must be an integer")
         if version > self.current_version:
             raise SaveDataError(f"save version {version} is newer than supported version")
+        if version < 17 and isinstance(migrated.get("final_frost"), Mapping):
+            raw_final_frost = dict(migrated["final_frost"])
+            if "balance_profile_id" in raw_final_frost:
+                raise SaveDataError(
+                    "pre-v17 save cannot contain a balance profile"
+                )
         if version < 16 and isinstance(migrated.get("final_frost"), Mapping):
             raw_final_frost = dict(migrated["final_frost"])
             raw_daily_records = raw_final_frost.get("daily_records")
@@ -389,6 +395,7 @@ class SaveMigrationRegistry:
                 "frost_peak_unfed_count",
                 "frost_peak_population_start",
                 "frost_hunger_deaths",
+                "balance_profile_id",
             ):
                 legacy_final_frost_default.pop(name)
             if migrated["final_frost"] != legacy_final_frost_default:
@@ -545,10 +552,17 @@ _PATCH_013_FINAL_FROST_FIELDS = {
     "frost_peak_population_start",
     "frost_hunger_deaths",
 }
+_PATCH_022_FINAL_FROST_FIELDS = {"balance_profile_id"}
+_V16_FINAL_FROST_FIELDS = tuple(
+    name
+    for name in _field_names(FinalFrostState)
+    if name not in _PATCH_022_FINAL_FROST_FIELDS
+)
 _V13_FINAL_FROST_FIELDS = tuple(
     name
     for name in _field_names(FinalFrostState)
-    if name not in _PATCH_013_FINAL_FROST_FIELDS
+    if name
+    not in _PATCH_013_FINAL_FROST_FIELDS | _PATCH_022_FINAL_FROST_FIELDS
 )
 _PATCH_013_FROST_DAY_FIELDS = {
     "unfed_population",
@@ -2007,6 +2021,10 @@ def _decode_final_frost(value: Any) -> FinalFrostState:
             item, f"final_frost.daily_records.{key}"
         )
     return FinalFrostState(
+        balance_profile_id=_string(
+            data["balance_profile_id"],
+            "final_frost.balance_profile_id",
+        ),
         entered=_boolean(data["entered"], "final_frost.entered"),
         baseline_day=_optional_integer(
             data["baseline_day"], "final_frost.baseline_day", minimum=1
@@ -2174,6 +2192,7 @@ def _decode_game_state(
         migrations.register(13, _migrate_v13_to_v14)
         migrations.register(14, _migrate_v14_to_v15)
         migrations.register(15, _migrate_v15_to_v16)
+        migrations.register(16, _migrate_v16_to_v17)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -3493,7 +3512,7 @@ def _migrate_v15_to_v16(document: dict[str, Any]) -> dict[str, Any]:
         _object(
             migrated["final_frost"],
             "final_frost",
-            _field_names(FinalFrostState),
+            _V16_FINAL_FROST_FIELDS,
         )
     )
     raw_records = final_frost["daily_records"]
@@ -3557,6 +3576,24 @@ def _migrate_v15_to_v16(document: dict[str, Any]) -> dict[str, Any]:
         final_result["report"] = report
         migrated["final_result"] = final_result
     migrated["save_data_version"] = 16
+    return migrated
+
+
+def _migrate_v16_to_v17(document: dict[str, Any]) -> dict[str, Any]:
+    """Keep existing runs on their historical balance while new runs use 022."""
+
+    legacy = _object(document, "$", _field_names(GameState))
+    migrated = deepcopy(legacy)
+    final_frost = dict(
+        _object(
+            migrated["final_frost"],
+            "final_frost",
+            _V16_FINAL_FROST_FIELDS,
+        )
+    )
+    final_frost["balance_profile_id"] = "legacy_patch021"
+    migrated["final_frost"] = final_frost
+    migrated["save_data_version"] = 17
     return migrated
 
 
@@ -4723,6 +4760,8 @@ def _validate_state_invariants(
             raise SaveDataError("depleted surface resource points cannot retain staff")
 
     frost = state.final_frost
+    if frost.balance_profile_id not in {"legacy_patch021", "patch022"}:
+        raise SaveDataError("unsupported final-frost balance profile")
     all_record_days = sorted(int(key) for key in frost.daily_records)
     legacy_record_days = frost.legacy_hunger_record_days
     if (

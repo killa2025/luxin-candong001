@@ -1611,6 +1611,7 @@ class EventPatchTests(unittest.TestCase):
         pending = self.make_pending_medical_followup_state()
         pending_v8 = encode_game_state(pending)
         pending_v8["save_data_version"] = 8
+        del pending_v8["final_frost"]["balance_profile_id"]
         pending_v8["events"].pop("consumed_followups")
         for event in pending_v8["events"]["active_events"].values():
             event.pop("instance_id")
@@ -1640,6 +1641,7 @@ class EventPatchTests(unittest.TestCase):
         )
         consumed_v8 = encode_game_state(pending)
         consumed_v8["save_data_version"] = 8
+        del consumed_v8["final_frost"]["balance_profile_id"]
         consumed_v8["events"].pop("consumed_followups")
         for event in consumed_v8["events"]["active_events"].values():
             event.pop("instance_id")
@@ -1656,6 +1658,7 @@ class EventPatchTests(unittest.TestCase):
                 legacy = encode_game_state(self.make_state())
                 legacy["calendar"]["current_day"] = day
                 legacy["save_data_version"] = 7
+                del legacy["final_frost"]["balance_profile_id"]
                 legacy["events"] = {
                     "active_event_ids": [],
                     "resolved_event_ids": [],
@@ -1714,6 +1717,7 @@ class EventPatchTests(unittest.TestCase):
     def test_v7_migration_expands_empty_event_and_promise_state(self) -> None:
         legacy = encode_game_state(self.make_state())
         legacy["save_data_version"] = 7
+        del legacy["final_frost"]["balance_profile_id"]
         legacy["events"] = {
             "active_event_ids": [],
             "resolved_event_ids": ["legacy-resolved"],

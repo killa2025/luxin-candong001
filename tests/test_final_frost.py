@@ -504,6 +504,15 @@ class FinalFrostPatchTests(unittest.TestCase):
             "grave threshold": lambda item: item["scoring"].update(
                 {"grave_city_death_ratio_percent": 25}
             ),
+            "Patch 022 preparation threshold": lambda item: item[
+                "preparation"
+            ].update({"prepared_required_items": 5}),
+            "Patch 022 result band": lambda item: item["scoring"][
+                "result_score_minimums"
+            ].update({"high_victory": 20}),
+            "Patch 022 high-victory death threshold": lambda item: item[
+                "scoring"
+            ].update({"high_victory_death_ratio_percent": 20}),
             "natural death cap": lambda item: item["damage"].update(
                 {"natural_death_cap_base": 11}
             ),
@@ -531,7 +540,7 @@ class FinalFrostPatchTests(unittest.TestCase):
         minimums = self.rules.scoring["result_score_minimums"]
         with self.assertRaises(TypeError):
             minimums["high_victory"] = 0
-        self.assertEqual(minimums["high_victory"], 20)
+        self.assertEqual(minimums["high_victory"], 22)
 
     def test_day_49_baseline_and_preparation_are_stable(self) -> None:
         state = self.make_state()
@@ -545,6 +554,170 @@ class FinalFrostPatchTests(unittest.TestCase):
         self.assertEqual(
             state.final_frost.preparation_tags, ["prepared_for_frost"]
         )
+
+    def test_patch022_preparation_is_stricter_but_legacy_runs_keep_old_band(
+        self,
+    ) -> None:
+        current = self.make_state()
+        current.trust_panic.trust = 50
+        current.trust_panic.panic = 50
+        self.system().prepare_new_day(current)
+        self.assertEqual(current.final_frost.prepared_item_count, 4)
+        self.assertEqual(current.final_frost.preparation_tags, [])
+
+        legacy = self.make_state()
+        legacy.final_frost.balance_profile_id = "legacy_patch021"
+        legacy.trust_panic.trust = 50
+        legacy.trust_panic.panic = 50
+        self.system().prepare_new_day(legacy)
+        self.assertEqual(legacy.final_frost.prepared_item_count, 6)
+        self.assertEqual(
+            legacy.final_frost.preparation_tags,
+            ["prepared_for_frost"],
+        )
+
+    def test_patch022_result_bands_are_harder_without_removing_high_victory(
+        self,
+    ) -> None:
+        system = self.system()
+        current = self.make_state()
+        self.assertEqual(current.final_frost.balance_profile_id, "patch022")
+        expectations = {
+            24: "high_victory",
+            22: "high_victory",
+            21: "standard_victory",
+            18: "standard_victory",
+            17: "bitter_victory",
+            12: "bitter_victory",
+            11: "collapse_survival",
+            7: "collapse_survival",
+            6: "ember_survival",
+        }
+        for total, expected in expectations.items():
+            with self.subTest(total=total):
+                self.assertEqual(
+                    system._result_for_total(current, total), expected
+                )
+
+        viable_high_scores = dict(
+            zip(
+                (
+                    "coal_and_core",
+                    "food",
+                    "housing_and_temperature",
+                    "medical_and_disease",
+                    "trust_and_panic",
+                    "population_and_death",
+                ),
+                (4, 4, 4, 4, 3, 3),
+                strict=True,
+            )
+        )
+        self.assertEqual(sum(viable_high_scores.values()), 22)
+        self.assertEqual(
+            system._apply_result_caps(
+                current, viable_high_scores, "high_victory"
+            ),
+            "high_victory",
+        )
+
+        weak_system_scores = dict(viable_high_scores)
+        weak_system_scores["trust_and_panic"] = 2
+        weak_system_scores["coal_and_core"] = 4
+        self.assertEqual(
+            system._apply_result_caps(
+                current, weak_system_scores, "high_victory"
+            ),
+            "standard_victory",
+        )
+        current.population.population_total_ever = 100
+        current.population.population_dead = 5
+        self.assertEqual(
+            system._apply_result_caps(
+                current, viable_high_scores, "high_victory"
+            ),
+            "high_victory",
+        )
+        current.population.population_dead = 6
+        self.assertEqual(
+            system._apply_result_caps(
+                current, viable_high_scores, "high_victory"
+            ),
+            "standard_victory",
+        )
+
+    def test_v16_migration_preserves_legacy_balance_and_rejects_forgery(
+        self,
+    ) -> None:
+        source = encode_game_state(self.make_state(day=12))
+        source["save_data_version"] = 16
+        del source["final_frost"]["balance_profile_id"]
+
+        restored = decode_game_state(source)
+
+        self.assertEqual(restored.save_data_version, 17)
+        self.assertEqual(
+            restored.final_frost.balance_profile_id,
+            "legacy_patch021",
+        )
+        self.assertEqual(
+            self.system().observe(restored)["balance_profile_id"],
+            "legacy_patch021",
+        )
+        self.assertEqual(
+            self.system()._result_for_total(restored, 15),
+            "standard_victory",
+        )
+
+        forged = encode_game_state(self.make_state(day=12))
+        forged["save_data_version"] = 16
+        with self.assertRaisesRegex(
+            SaveDataError,
+            "pre-v17 save cannot contain a balance profile",
+        ):
+            decode_game_state(forged)
+
+        invalid = encode_game_state(self.make_state(day=12))
+        invalid["final_frost"]["balance_profile_id"] = "unknown"
+        with self.assertRaisesRegex(
+            SaveDataError, "unsupported final-frost balance profile"
+        ):
+            decode_game_state(invalid)
+
+    def test_v16_completed_result_keeps_legacy_ending_and_report(self) -> None:
+        state = self.make_state()
+        state.final_frost.balance_profile_id = "legacy_patch021"
+        system = self.system()
+        system.prepare_new_day(state)
+        for day in range(49, 56):
+            state.final_frost.daily_records[str(day)] = self.frost_record(day)
+        state.final_frost.frost_population_person_days = 80 * 7
+        state.calendar.current_day = 55
+        state.daily_survival.settled_day = 55
+        state.daily_survival.base_temperature = -76
+        state.daily_survival.zone_temperatures = {
+            "inner_ring": -40,
+            "middle_ring": -42,
+            "outer_ring": -44,
+        }
+        system.finalize_day_55(
+            self.context(
+                state, 55, EndDayStage.RECORD_DAILY_LOG_AND_ENDING_TAGS
+            )
+        )
+        expected_result = deepcopy(state.final_result)
+        legacy = encode_game_state(state)
+        legacy["save_data_version"] = 16
+        del legacy["final_frost"]["balance_profile_id"]
+
+        restored = decode_game_state(legacy)
+
+        self.assertEqual(restored.final_result, expected_result)
+        self.assertEqual(
+            restored.final_frost.balance_profile_id,
+            "legacy_patch021",
+        )
+        system.validate_state(restored)
 
     def test_day_49_food_preparation_only_converts_raw_food_for_running_canteen(
         self,
@@ -587,10 +760,10 @@ class FinalFrostPatchTests(unittest.TestCase):
         running = prepared_state(operational=False, temperature=-60)
         before_resources = deepcopy(running.resources)
         self.system().prepare_new_day(running)
-        self.assertEqual(running.final_frost.prepared_item_count, 5)
+        self.assertEqual(running.final_frost.prepared_item_count, 4)
         self.assertEqual(
             running.final_frost.preparation_tags,
-            ["prepared_for_frost"],
+            [],
         )
         self.assertEqual(running.resources, before_resources)
 

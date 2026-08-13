@@ -480,6 +480,26 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
         raise FinalFrostConfigError(
             "the final-frost key technology catalog changed"
         )
+    expected_preparation = {
+        "prepared_required_items": 6,
+        "prepared_coal_days": 6,
+        "prepared_food_days": 6,
+        "prepared_trust": 55,
+        "prepared_panic": 45,
+        "unprepared_required_items": 3,
+        "unprepared_coal_days": 3,
+        "unprepared_food_days": 3,
+        "unprepared_trust": 40,
+        "unprepared_panic": 65,
+        "unprepared_pressure": 80,
+    }
+    if any(
+        normalized_preparation[name] != expected
+        for name, expected in expected_preparation.items()
+    ):
+        raise FinalFrostConfigError(
+            "the Patch 022 preparation thresholds changed"
+        )
 
     scoring = _object(data["scoring"], "$.scoring")
     _exact(scoring, _SCORING_FIELDS, "$.scoring")
@@ -505,14 +525,18 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
         for key in _RESULT_IDS
     }
     if normalized_scoring["result_score_minimums"] != {
-        "high_victory": 20,
-        "standard_victory": 15,
-        "bitter_victory": 10,
-        "collapse_survival": 5,
+        "high_victory": 22,
+        "standard_victory": 18,
+        "bitter_victory": 12,
+        "collapse_survival": 7,
         "ember_survival": 0,
     }:
         raise FinalFrostConfigError(
-            "the sealed final result score bands changed"
+            "the Patch 022 result score bands changed"
+        )
+    if normalized_scoring["high_victory_death_ratio_percent"] != 5:
+        raise FinalFrostConfigError(
+            "the Patch 022 high-victory death threshold changed"
         )
     if normalized_scoring["grave_city_death_ratio_percent"] != 30:
         raise FinalFrostConfigError(
