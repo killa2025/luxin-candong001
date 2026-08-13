@@ -732,6 +732,35 @@ class BuildingPatchTests(unittest.TestCase):
         self.assertEqual(first_log.payload["production"]["wood"], 55)
         self.assertEqual(wood_after_first, 354)
         self.assertGreater(first_log.payload["storage_used_at_stage_start"] + 55, 800)
+        formed_warning = next(
+            warning
+            for warning in first.warnings
+            if warning.warning_id == "survival.storage_over_capacity_formed"
+        )
+        self.assertEqual(
+            formed_warning.details,
+            {
+                "capacity": 800,
+                "used_before_production": 799,
+                "used_after_production": 854,
+                "overage": 54,
+                "today_production_retained": True,
+                "ordinary_production_blocked_next_day_if_capacity_not_freed": True,
+            },
+        )
+        self.assertIn(
+            "survival.storage_over_capacity_formed",
+            {
+                warning["warning_id"]
+                for warning in first.result.data["warnings"]
+            },
+        )
+        formed_log = next(
+            item
+            for item in first.logs
+            if item.code == "survival.storage_over_capacity.formed"
+        )
+        self.assertEqual(formed_log.payload, formed_warning.details)
         self.assertTrue(second.result.accepted)
         self.assertTrue(second_log.payload["production_blocked_by_storage"])
         self.assertEqual(second_log.payload["production"]["wood"], 0)

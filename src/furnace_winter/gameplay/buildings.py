@@ -11,7 +11,13 @@ from furnace_winter.config import (
     SurvivalRules,
     TechnologyRules,
 )
-from furnace_winter.gameplay.end_day import EndDayContext, EndDayEngine, EndDayStage
+from furnace_winter.gameplay.end_day import (
+    EndDayContext,
+    EndDayEngine,
+    EndDayStage,
+    RiskWarning,
+    RiskWarningLevel,
+)
 from furnace_winter.gameplay.operation import (
     FINAL_FROST_COLLECTION_END_DAY,
     FINAL_FROST_COLLECTION_START_DAY,
@@ -830,6 +836,30 @@ class BuildingSystem:
                 production[resource] += output
         state.daily_survival.storage_used = storage_used(state.resources)
         state.daily_survival.is_over_capacity = is_over_capacity(state.resources)
+        if (
+            not storage_blocked
+            and storage_used_at_start < state.resources.storage_capacity
+            and state.daily_survival.is_over_capacity
+        ):
+            details = {
+                "capacity": state.resources.storage_capacity,
+                "used_before_production": storage_used_at_start,
+                "used_after_production": state.daily_survival.storage_used,
+                "overage": (
+                    state.daily_survival.storage_used
+                    - state.resources.storage_capacity
+                ),
+                "today_production_retained": True,
+                "ordinary_production_blocked_next_day_if_capacity_not_freed": True,
+            }
+            context.warn(
+                RiskWarning(
+                    "survival.storage_over_capacity_formed",
+                    RiskWarningLevel.A_INFO,
+                    details,
+                )
+            )
+            context.emit("survival.storage_over_capacity.formed", details)
         context.emit(
             "buildings.production.settled",
             {

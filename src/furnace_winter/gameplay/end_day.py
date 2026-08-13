@@ -177,11 +177,20 @@ class EndDayContext:
     settled_day: int
     stage: EndDayStage
     _emit: Callable[[str, Mapping[str, Any]], None] = field(repr=False)
+    _warn: Callable[[RiskWarning], None] | None = field(default=None, repr=False)
 
     def emit(self, code: str, payload: Mapping[str, Any] | None = None) -> None:
         if not _IDENTIFIER_PATTERN.fullmatch(code):
             raise ValueError(f"invalid settlement log code: {code!r}")
         self._emit(code, payload or {})
+
+    def warn(self, warning: RiskWarning) -> None:
+        """Attach a factual warning that only becomes known during settlement."""
+
+        if not isinstance(warning, RiskWarning):
+            raise TypeError("settlement warning must be a RiskWarning")
+        if self._warn is not None:
+            self._warn(warning)
 
     def abort(
         self,
@@ -599,6 +608,7 @@ class EndDayEngine:
         random = DeterministicRandom.from_state(working.random)
         settled_day = working.calendar.current_day
         logs: list[LogEntry] = []
+        settlement_warnings: list[RiskWarning] = []
         pending_autosave: AutosaveRecord | None = None
         current_stage = EndDayStage.LOCK_INPUT
 
@@ -611,6 +621,16 @@ class EndDayEngine:
                     payload=_snapshot_object(payload, "settlement log payload"),
                 )
             )
+
+        def append_warning(warning: RiskWarning) -> None:
+            if any(
+                item.warning_id == warning.warning_id
+                for item in (*warnings, *settlement_warnings)
+            ):
+                raise ValueError(
+                    f"duplicate settlement warning_id: {warning.warning_id}"
+                )
+            settlement_warnings.append(warning)
 
         try:
             for current_stage in END_DAY_STAGES:
@@ -695,6 +715,7 @@ class EndDayEngine:
                             settled_day=settled_day,
                             stage=current_stage,
                             _emit=append_log,
+                            _warn=append_warning,
                         )
                         boundary_state_changed = False
                         for handler in self._new_day_context_handlers:
@@ -707,6 +728,7 @@ class EndDayEngine:
                                 settled_day=settled_day,
                                 stage=EndDayStage.CHECK_HARD_FAILS,
                                 _emit=append_log,
+                                _warn=append_warning,
                             )
                             for handler in self._stage_handlers[
                                 EndDayStage.CHECK_HARD_FAILS
@@ -739,6 +761,7 @@ class EndDayEngine:
                         settled_day=settled_day,
                         stage=current_stage,
                         _emit=append_log,
+                        _warn=append_warning,
                     )
                     for handler in self._stage_handlers[current_stage]:
                         handler(context)
@@ -802,6 +825,7 @@ class EndDayEngine:
                 )
         _replace_state(state, working)
         self._last_autosave = deepcopy(pending_autosave)
+        committed_warnings = (*warnings, *settlement_warnings)
         transition = (
             "hard_fail"
             if state.final_result.hard_fail_type is not None
@@ -824,14 +848,14 @@ class EndDayEngine:
             data={
                 "settled_day": settled_day,
                 "transition": transition,
-                "warnings": _warning_data(warnings),
+                "warnings": _warning_data(committed_warnings),
                 "completed_stages": [stage.value for stage in END_DAY_STAGES],
                 "autosave_slot": AUTOSAVE_END_DAY_SLOT,
             },
         )
         return EndDayExecution(
             result=result,
-            warnings=warnings,
+            warnings=committed_warnings,
             logs=tuple(logs),
             random_before=random_before,
             random_after=state.random,

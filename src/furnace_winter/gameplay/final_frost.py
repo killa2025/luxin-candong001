@@ -569,6 +569,25 @@ class FinalFrostSystem:
         )
         actual_hunger_deaths = min(raw_hunger_deaths, remaining_cap)
         remaining_cap -= actual_hunger_deaths
+        guaranteed_furnace_off_death = (
+            state.daily_survival.effective_furnace_level == 0
+            and (
+                not state.furnace.is_active
+                or state.furnace.mode_id == "off"
+                or state.daily_survival.heating_shortfall
+            )
+            and state.population.population_alive
+            - actual_disease_deaths
+            - actual_hunger_deaths
+            > 0
+            and actual_disease_deaths + actual_hunger_deaths == 0
+        )
+        if guaranteed_furnace_off_death and raw_cold_deaths == 0:
+            if state.population.homeless_population > 0:
+                raw_homeless_cold_deaths = 1
+            else:
+                raw_housed_cold_deaths = 1
+            raw_cold_deaths = 1
         raw_cold_deaths = min(
             raw_cold_deaths,
             max(
@@ -744,6 +763,9 @@ class FinalFrostSystem:
         )
         metrics[f"{_FROST_METRIC_PREFIX}raw_cold_deaths"] = raw_cold_deaths
         metrics[f"{_FROST_METRIC_PREFIX}cold_death_overflow"] = cold_overflow
+        metrics[f"{_FROST_METRIC_PREFIX}furnace_off_minimum_death_applied"] = int(
+            guaranteed_furnace_off_death
+        )
         metrics[f"{_FROST_METRIC_PREFIX}base_natural_death_cap"] = base_cap
         metrics[f"{_FROST_METRIC_PREFIX}applied_natural_death_cap"] = (
             applied_cap
@@ -792,6 +814,9 @@ class FinalFrostSystem:
                 "new_disabled": new_disabled + exposure_disability,
                 "disease_deaths": actual_disease_deaths,
                 "cold_deaths": actual_cold_deaths,
+                "furnace_off_minimum_death_applied": (
+                    guaranteed_furnace_off_death
+                ),
                 "hunger_deaths": actual_hunger_deaths,
                 "natural_death_overflow_pressure": overflow_pressure,
             },

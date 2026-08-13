@@ -693,7 +693,17 @@ class SurvivalSystem:
                 RiskWarning(
                     "survival.furnace_off",
                     RiskWarningLevel.B_STRONG,
-                    {"target_level": 0},
+                    {
+                        "target_level": 0,
+                        "effective_level": 0,
+                        "minimum_natural_deaths_if_settled": (
+                            1 if state.population.population_alive > 0 else 0
+                        ),
+                        "minimum_cold_exposure_deaths_if_no_disease_or_hunger_deaths": (
+                            1 if state.population.population_alive > 0 else 0
+                        ),
+                        "conditional_death_cause": "cold_exposure",
+                    },
                 )
             )
         elif affordable_level < target_level:
@@ -706,6 +716,23 @@ class SurvivalSystem:
                         "required_coal": required_coal,
                         "target_level": target_level,
                         "affordable_level": affordable_level,
+                        "minimum_natural_deaths_if_effective_level_zero": (
+                            1
+                            if affordable_level == 0
+                            and state.population.population_alive > 0
+                            else 0
+                        ),
+                        "minimum_cold_exposure_deaths_if_effective_level_zero_and_no_disease_or_hunger_deaths": (
+                            1
+                            if affordable_level == 0
+                            and state.population.population_alive > 0
+                            else 0
+                        ),
+                        "conditional_death_cause_if_effective_level_zero": (
+                            "cold_exposure"
+                            if affordable_level == 0
+                            else None
+                        ),
                     },
                 )
             )
