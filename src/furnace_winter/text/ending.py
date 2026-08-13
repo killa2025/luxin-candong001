@@ -329,13 +329,19 @@ _PENDING_RUNTIME_TEXT_NOTES = {
         "现有正文同时暗示互斥的医疗与工程学徒路线；"
         "分支适配文案封存前暂停运行时导入。"
     ),
+}
+_PENDING_CONDITION_NOTES = {
     "ending.additional.medical.01": (
-        "当前没有逐日医疗建筑及运行状态历史，无法证明疾病死亡当天"
-        "存在医疗服务；补齐可验证历史前暂停运行时导入。"
+        "v15 及更早存档缺少逐日医疗服务历史；无法证明适用条件时"
+        "只登记缺失，不展示正文。"
     ),
     "ending.additional.medical.02": (
-        "当前没有逐日医疗建筑、运行状态或容量历史，无法证明疾病死亡"
-        "与床位溢出发生于实际医疗服务期间；补齐可验证历史前暂停运行时导入。"
+        "v15 及更早存档缺少逐日医疗服务历史；无法证明同日死亡、"
+        "床位溢出与实际医疗服务时只登记缺失，不展示正文。"
+    ),
+    "ending.additional.food.01": (
+        "v15 及更早存档缺少逐日食堂运行历史；无法证明第七霜落期间"
+        "食堂实际运行过时只登记缺失，不展示正文。"
     ),
 }
 
@@ -381,6 +387,15 @@ def build_ending_pending_registry() -> PendingRegistry:
             )
         )
     for entry_id, note in _PENDING_RUNTIME_TEXT_NOTES.items():
+        registry.register(
+            PendingEntry(
+                entry_id=entry_id,
+                status=ConfigStatus.PENDING,
+                source=_SOURCE,
+                note=note,
+            )
+        )
+    for entry_id, note in _PENDING_CONDITION_NOTES.items():
         registry.register(
             PendingEntry(
                 entry_id=entry_id,

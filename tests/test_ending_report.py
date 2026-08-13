@@ -24,6 +24,7 @@ from furnace_winter.gameplay import (
 from furnace_winter.gameplay.end_day import EndDayContext, EndDayStage
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
+    CURRENT_SAVE_DATA_VERSION,
     CURRENT_ENDING_REPORT_FORMAT_VERSION,
     LEGACY_ENDING_REPORT_FORMAT_VERSION,
     BuildingState,
@@ -444,9 +445,46 @@ class EndingReportPatchTests(unittest.TestCase):
             for entry in build_ending_pending_registry().entries()
         }
         for text_id in pending_ids:
-            self.assertIsNone(registry.get(text_id))
+            self.assertIsNotNone(registry.get(text_id))
             self.assertEqual(pending_entries[text_id].status.value, "PENDING")
             self.assertIn(text_id, canonical_report_pending_text_ids(state))
+
+    def test_known_daily_medical_history_enables_only_proven_text(self) -> None:
+        state = self.completed_state()
+        state.final_result.defining_tags = ["medical_collapse"]
+        state.final_result.major_tags = []
+        for record in state.final_frost.daily_records.values():
+            record.service_history_known = True
+        record = state.final_frost.daily_records["51"]
+        record.medical_operational_building_count = 1
+        record.medical_building_capacity = 10
+        record.actual_disease_deaths = 1
+        record.medical_collapse = False
+        record.medical_overflow = True
+
+        selected_across_seeds: set[str] = set()
+        for seed in range(64):
+            state.random = DeterministicRandom(seed).snapshot()
+            selected_across_seeds.update(canonical_report_body_text_ids(state))
+        self.assertIn("ending.additional.medical.01", selected_across_seeds)
+        self.assertIn("ending.additional.medical.02", selected_across_seeds)
+        self.assertNotIn(
+            "ending.additional.medical.01",
+            canonical_report_pending_text_ids(state),
+        )
+        self.assertNotIn(
+            "ending.additional.medical.02",
+            canonical_report_pending_text_ids(state),
+        )
+
+        record.actual_disease_deaths = 0
+        state.final_frost.daily_records["52"].actual_disease_deaths = 1
+        state.final_frost.daily_records["52"].medical_overflow = True
+        for seed in range(64):
+            state.random = DeterministicRandom(seed).snapshot()
+            selected = canonical_report_body_text_ids(state)
+            self.assertNotIn("ending.additional.medical.01", selected)
+            self.assertNotIn("ending.additional.medical.02", selected)
 
     def test_food_additional_does_not_invent_a_canteen_history(self) -> None:
         state = self.completed_state()
@@ -463,6 +501,23 @@ class EndingReportPatchTests(unittest.TestCase):
             selected = canonical_report_body_text_ids(state)
             self.assertNotIn("ending.additional.food.01", selected)
             self.assertIn("ending.additional.food.02", selected)
+        self.assertIn(
+            "ending.additional.food.01",
+            canonical_report_pending_text_ids(state),
+        )
+
+        for record in state.final_frost.daily_records.values():
+            record.service_history_known = True
+        self.assertNotIn(
+            "ending.additional.food.01",
+            canonical_report_pending_text_ids(state),
+        )
+        state.final_frost.daily_records["53"].canteen_operational = True
+        selected_across_seeds: set[str] = set()
+        for seed in range(64):
+            state.random = DeterministicRandom(seed).snapshot()
+            selected_across_seeds.update(canonical_report_body_text_ids(state))
+        self.assertIn("ending.additional.food.01", selected_across_seeds)
 
     def test_children_protected_trace_is_pending_and_not_runtime_text(
         self,
@@ -583,7 +638,9 @@ class EndingReportPatchTests(unittest.TestCase):
         ):
             del legacy["final_result"][field]
         migrated = decode_game_state(legacy)
-        self.assertEqual(migrated.save_data_version, 15)
+        self.assertEqual(
+            migrated.save_data_version, CURRENT_SAVE_DATA_VERSION
+        )
         self.assertIs(migrated.final_result.run_state, RunState.ACTIVE)
         self.assertFalse(migrated.final_result.report.is_generated)
         self.assertEqual(
@@ -651,7 +708,9 @@ class EndingReportPatchTests(unittest.TestCase):
         restored = decode_game_state(legacy_document)
         view = EndingReportSystem().observe(restored)
 
-        self.assertEqual(restored.save_data_version, 15)
+        self.assertEqual(
+            restored.save_data_version, CURRENT_SAVE_DATA_VERSION
+        )
         self.assertEqual(
             restored.final_result.report.format_version,
             LEGACY_ENDING_REPORT_FORMAT_VERSION,
@@ -661,6 +720,68 @@ class EndingReportPatchTests(unittest.TestCase):
             view["pending_text_ids"], legacy_report["pending_text_ids"]
         )
         self.assertEqual(view["content_status"], "partial_pending_text")
+
+    def test_v15_migration_marks_service_history_unknown(self) -> None:
+        state = self.completed_state()
+        document = encode_game_state(state)
+        document["save_data_version"] = 15
+        for record in document["final_frost"]["daily_records"].values():
+            for field in (
+                "service_history_known",
+                "canteen_operational",
+                "medical_operational_building_count",
+                "medical_building_capacity",
+            ):
+                del record[field]
+
+        restored = decode_game_state(document)
+
+        self.assertEqual(
+            restored.save_data_version, CURRENT_SAVE_DATA_VERSION
+        )
+        self.assertTrue(
+            all(
+                not record.service_history_known
+                and not record.canteen_operational
+                and record.medical_operational_building_count == 0
+                and record.medical_building_capacity == 0
+                for record in restored.final_frost.daily_records.values()
+            )
+        )
+
+    def test_service_history_strictly_rejects_forged_or_reversed_facts(
+        self,
+    ) -> None:
+        state = self.completed_state()
+        forged = encode_game_state(state)
+        forged_record = forged["final_frost"]["daily_records"]["49"]
+        forged_record["canteen_operational"] = True
+        with self.assertRaisesRegex(
+            SaveDataError,
+            "unknown final frost service history",
+        ):
+            decode_game_state(forged)
+
+        reversed_history = encode_game_state(state)
+        reversed_history["final_frost"]["daily_records"]["49"][
+            "service_history_known"
+        ] = True
+        with self.assertRaisesRegex(
+            SaveDataError,
+            "empty prefix",
+        ):
+            decode_game_state(reversed_history)
+
+        pre_v16 = encode_game_state(state)
+        pre_v16["save_data_version"] = 15
+        pre_v16["final_frost"]["daily_records"]["49"][
+            "service_history_known"
+        ] = True
+        with self.assertRaisesRegex(
+            SaveDataError,
+            "pre-v16 save cannot contain Patch 021",
+        ):
+            decode_game_state(pre_v16)
 
     def test_user_confirmed_death_lines_are_selected_and_rendered_verbatim(
         self,

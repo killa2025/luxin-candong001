@@ -767,7 +767,7 @@ class Patch013BalanceTests(unittest.TestCase):
         document = self.downgrade_v14_to_v13(encode_game_state(state))
 
         migrated = decode_game_state(document)
-        self.assertEqual(migrated.save_data_version, 15)
+        self.assertEqual(migrated.save_data_version, 16)
         self.assertEqual(migrated.hunger.none_population, 80)
 
         invalid = encode_game_state(migrated)

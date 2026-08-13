@@ -129,6 +129,125 @@ class FinalFrostPatchTests(unittest.TestCase):
             view["affected_surface_resource_point_ids"],
         )
 
+    def test_daily_service_history_records_actual_operations(self) -> None:
+        state = self.make_state(day=49)
+        state.daily_survival.settled_day = 49
+        state.daily_survival.base_temperature = -66
+        state.daily_survival.zone_temperatures = {
+            "inner_ring": -30,
+            "middle_ring": -30,
+            "outer_ring": -30,
+        }
+        state.final_frost.entered = True
+        state.final_frost.baseline_day = 49
+        state.final_frost.baseline_alive_population = (
+            state.population.population_alive
+        )
+        state.final_frost.baseline_healthy_population = (
+            state.population.healthy_population
+        )
+        state.final_frost.baseline_sick_population = (
+            state.population.sick_population
+        )
+        state.final_frost.baseline_critical_population = (
+            state.population.critical_population
+        )
+        state.final_frost.baseline_disabled_population = (
+            state.population.disabled_population
+        )
+        state.final_frost.baseline_workable_population = (
+            state.population.workers + state.population.engineers
+        )
+        state.final_frost.wood_supply_check_day = 49
+        state.final_frost.wood_supply_logging_cost = 35
+        state.buildings["canteen-history"] = BuildingState(
+            building_id="canteen-history",
+            building_type="canteen",
+            zone="inner_ring",
+            slot_size=2,
+            is_built=True,
+            is_operational=True,
+            assigned_workers=5,
+        )
+        state.buildings["medical-history"] = BuildingState(
+            building_id="medical-history",
+            building_type="medical_station",
+            zone="inner_ring",
+            slot_size=1,
+            is_built=True,
+            is_operational=True,
+            assigned_engineers=5,
+        )
+        state.building_management.zone_slots_used["inner_ring"] += 3
+        state.medical.building_capacity = 10
+        state.medical.effective_capacity = (
+            state.medical.temporary_capacity + 10
+        )
+        state.medical.medical_pressure = max(
+            state.population.sick_population
+            + state.population.critical_population
+            - state.medical.effective_capacity,
+            0,
+        )
+        system = self.system()
+
+        system.capture_daily_record(
+            self.context(state, 49, EndDayStage.CAPTURE_DAILY_RECORDS)
+        )
+
+        record = state.final_frost.daily_records["49"]
+        base_cap = min(
+            22,
+            12 + max(0, record.population_start - 80) // 35,
+        )
+        record.base_natural_death_cap = base_cap
+        record.applied_natural_death_cap = base_cap
+        state.final_frost.frost_population_person_days = (
+            record.population_start
+        )
+        self.assertTrue(record.service_history_known)
+        self.assertTrue(record.canteen_operational)
+        self.assertEqual(record.medical_operational_building_count, 1)
+        self.assertEqual(record.medical_building_capacity, 10)
+        del state.buildings["canteen-history"]
+        del state.buildings["medical-history"]
+        state.building_management.zone_slots_used["inner_ring"] -= 3
+        state.medical.building_capacity = 0
+        state.medical.effective_capacity = state.medical.temporary_capacity
+        state.medical.medical_pressure = max(
+            state.population.sick_population
+            + state.population.critical_population
+            - state.medical.effective_capacity,
+            0,
+        )
+        view = system.observe(state)["daily_service_history"]["49"]
+        self.assertEqual(
+            view,
+            {
+                "known": True,
+                "canteen_operational": True,
+                "medical_operational_building_count": 1,
+                "medical_building_capacity": 10,
+            },
+        )
+
+        state.calendar.current_day = 50
+        state.daily_survival.settled_day = 50
+        state.daily_survival.base_temperature = -68
+        system.capture_daily_record(
+            self.context(state, 50, EndDayStage.CAPTURE_DAILY_RECORDS)
+        )
+        record = state.final_frost.daily_records["50"]
+        record.base_natural_death_cap = base_cap
+        record.applied_natural_death_cap = base_cap
+        state.final_frost.frost_population_person_days += (
+            record.population_start
+        )
+        self.assertTrue(record.service_history_known)
+        self.assertFalse(record.canteen_operational)
+        self.assertEqual(record.medical_operational_building_count, 0)
+        self.assertEqual(record.medical_building_capacity, 0)
+
     def full_engine(
         self,
         *,

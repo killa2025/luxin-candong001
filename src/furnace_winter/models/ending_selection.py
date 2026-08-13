@@ -139,6 +139,7 @@ _PENDING_MEDICAL_TEXT_IDS = (
     "ending.additional.medical.01",
     "ending.additional.medical.02",
 )
+_PENDING_FOOD_TEXT_ID = "ending.additional.food.01"
 
 
 def _choose(state: GameState, key: str, candidates: tuple[str, ...]) -> str:
@@ -165,6 +166,34 @@ def _has_operational_building(state: GameState, building_type: str) -> bool:
         and building.is_built
         and building.is_operational
         for building in state.buildings.values()
+    )
+
+
+def _medical_history_proves_first_candidate(record: object) -> bool:
+    return bool(
+        getattr(record, "service_history_known", False)
+        and getattr(record, "medical_operational_building_count", 0) > 0
+        and getattr(record, "medical_building_capacity", 0) > 0
+        and getattr(record, "actual_disease_deaths", 0) > 0
+        and not getattr(record, "medical_collapse", False)
+        and not getattr(record, "hospital_shutdown", False)
+    )
+
+
+def _medical_history_proves_second_candidate(record: object) -> bool:
+    return bool(
+        getattr(record, "service_history_known", False)
+        and getattr(record, "medical_operational_building_count", 0) > 0
+        and getattr(record, "medical_building_capacity", 0) > 0
+        and getattr(record, "actual_disease_deaths", 0) > 0
+        and getattr(record, "medical_overflow", False)
+    )
+
+
+def _canteen_history_is_proven(state: GameState) -> bool:
+    return any(
+        record.service_history_known and record.canteen_operational
+        for record in state.final_frost.daily_records.values()
     )
 
 
@@ -297,12 +326,25 @@ def _additional_text_ids(state: GameState) -> list[str]:
                 candidates.append("ending.additional.death.03")
         if topic == "medical":
             candidates = []
+            if any(
+                _medical_history_proves_first_candidate(record)
+                for record in records
+            ):
+                candidates.append("ending.additional.medical.01")
+            if any(
+                _medical_history_proves_second_candidate(record)
+                for record in records
+            ):
+                candidates.append("ending.additional.medical.02")
             if has_active_doctor_and_medical_apprentice:
                 candidates.append("ending.additional.medical.03")
             if not candidates:
                 continue
         if topic == "food":
-            candidates = ["ending.additional.food.02"]
+            candidates = []
+            if _canteen_history_is_proven(state):
+                candidates.append("ending.additional.food.01")
+            candidates.append("ending.additional.food.02")
         if topic == "core":
             candidates = []
             if any(item.overload_redline for item in records):
@@ -463,7 +505,25 @@ def canonical_report_pending_text_ids(state: GameState) -> list[str]:
         *state.final_result.major_tags,
     }
     if ending_tags & _ADDITIONAL_TOPICS["medical"]:
-        pending.update(_PENDING_MEDICAL_TEXT_IDS)
+        records = tuple(state.final_frost.daily_records.values())
+        if any(not record.service_history_known for record in records):
+            if not any(
+                _medical_history_proves_first_candidate(record)
+                for record in records
+            ):
+                pending.add(_PENDING_MEDICAL_TEXT_IDS[0])
+            if not any(
+                _medical_history_proves_second_candidate(record)
+                for record in records
+            ):
+                pending.add(_PENDING_MEDICAL_TEXT_IDS[1])
+    if ending_tags & _ADDITIONAL_TOPICS["food"]:
+        records = tuple(state.final_frost.daily_records.values())
+        if (
+            any(not record.service_history_known for record in records)
+            and not _canteen_history_is_proven(state)
+        ):
+            pending.add(_PENDING_FOOD_TEXT_ID)
     if ordinary_laws & {
         "child_labor_low_risk_law",
         "child_labor_all_jobs_law",
