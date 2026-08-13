@@ -139,6 +139,7 @@ class FinalFrostSystem:
         )
         if record_days and record_days[-1] > legal_settled_day:
             raise ValueError("final-frost record cannot come from an unsettled day")
+        known_service_history_started = False
         for day in record_days:
             record = frost.daily_records[str(day)]
             expected = self.rules.temperatures[day]
@@ -147,6 +148,31 @@ class FinalFrostSystem:
                 or record.display_label != expected.display_label
             ):
                 raise ValueError("final-frost record temperature is not canonical")
+            if record.service_history_known:
+                known_service_history_started = True
+                if (
+                    record.medical_operational_building_count == 0
+                ) != (record.medical_building_capacity == 0):
+                    raise ValueError(
+                        "known final-frost medical service facts are inconsistent"
+                    )
+                if (
+                    record.medical_building_capacity
+                    < record.medical_operational_building_count
+                ):
+                    raise ValueError(
+                        "known final-frost medical capacity is below its "
+                        "operational building count"
+                    )
+            elif (
+                known_service_history_started
+                or record.canteen_operational
+                or record.medical_operational_building_count
+                or record.medical_building_capacity
+            ):
+                raise ValueError(
+                    "unknown final-frost service history must be an empty prefix"
+                )
             expected_cold_houses_day = (
                 record.population_start > 0
                 and record.cold_houses_population * 100
@@ -953,6 +979,13 @@ class FinalFrostSystem:
             building.building_type == "hospital" and building.is_operational
             for building in state.buildings.values()
         )
+        medical_operational_building_count = sum(
+            1
+            for building in state.buildings.values()
+            if building.is_built
+            and building.building_type in {"medical_station", "hospital"}
+            and building.is_operational
+        )
         cold_housed = metrics.get(f"{_FROST_METRIC_PREFIX}cold_housed", 0)
         mass_exposure = metrics.get(
             f"{_FROST_METRIC_PREFIX}mass_exposure", 0
@@ -1025,6 +1058,17 @@ class FinalFrostSystem:
                 )
             ),
             hospital_shutdown=hospital_exists and not hospital_running,
+            service_history_known=True,
+            canteen_operational=any(
+                building.is_built
+                and building.building_type == "canteen"
+                and building.is_operational
+                for building in state.buildings.values()
+            ),
+            medical_operational_building_count=(
+                medical_operational_building_count
+            ),
+            medical_building_capacity=state.medical.building_capacity,
             disease_spike=(
                 new_sick + new_critical
                 >= max(
@@ -1188,6 +1232,25 @@ class FinalFrostSystem:
             "baseline_day": state.final_frost.baseline_day,
             "preparation_tags": list(state.final_frost.preparation_tags),
             "settled_days": sorted(int(day) for day in state.final_frost.daily_records),
+            "daily_service_history": {
+                str(day): {
+                    "known": record.service_history_known,
+                    "canteen_operational": record.canteen_operational,
+                    "medical_operational_building_count": (
+                        record.medical_operational_building_count
+                    ),
+                    "medical_building_capacity": (
+                        record.medical_building_capacity
+                    ),
+                }
+                for day, record in sorted(
+                    (
+                        (int(day), record)
+                        for day, record in state.final_frost.daily_records.items()
+                    ),
+                    key=lambda item: item[0],
+                )
+            },
             "forced_shutdown": {
                 "starts_day": self.rules.start_day,
                 "building_types": sorted(

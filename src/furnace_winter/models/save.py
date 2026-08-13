@@ -215,6 +215,34 @@ class SaveMigrationRegistry:
             raise SaveDataError("save_data_version must be an integer")
         if version > self.current_version:
             raise SaveDataError(f"save version {version} is newer than supported version")
+        if version < 16 and isinstance(migrated.get("final_frost"), Mapping):
+            raw_final_frost = dict(migrated["final_frost"])
+            raw_daily_records = raw_final_frost.get("daily_records")
+            if isinstance(raw_daily_records, Mapping):
+                cleaned_records: dict[str, Any] = {}
+                defaults = {
+                    "service_history_known": False,
+                    "canteen_operational": False,
+                    "medical_operational_building_count": 0,
+                    "medical_building_capacity": 0,
+                }
+                for day_key, raw_record in raw_daily_records.items():
+                    if not isinstance(raw_record, Mapping):
+                        cleaned_records[str(day_key)] = raw_record
+                        continue
+                    record = dict(raw_record)
+                    for name, default in defaults.items():
+                        if name not in record:
+                            continue
+                        if record[name] != default:
+                            raise SaveDataError(
+                                "pre-v16 save cannot contain Patch 021 "
+                                "service-history values"
+                            )
+                        record.pop(name)
+                    cleaned_records[str(day_key)] = record
+                raw_final_frost["daily_records"] = cleaned_records
+            migrated["final_frost"] = raw_final_frost
         if version < 14 and isinstance(migrated.get("final_result"), Mapping):
             raw_final_result = dict(migrated["final_result"])
             raw_report = raw_final_result.get("report")
@@ -527,10 +555,17 @@ _PATCH_013_FROST_DAY_FIELDS = {
     "raw_hunger_deaths",
     "hunger_death_overflow",
 }
+_PATCH_021_FROST_DAY_FIELDS = {
+    "service_history_known",
+    "canteen_operational",
+    "medical_operational_building_count",
+    "medical_building_capacity",
+}
 _V13_FROST_DAY_FIELDS = tuple(
     name
     for name in _field_names(FrostDayRecord)
-    if name not in _PATCH_013_FROST_DAY_FIELDS
+    if name
+    not in _PATCH_013_FROST_DAY_FIELDS | _PATCH_021_FROST_DAY_FIELDS
 )
 _V10_MEDICAL_FIELDS = tuple(
     name
@@ -1932,6 +1967,8 @@ def _decode_frost_day_record(value: Any, path: str) -> FrostDayRecord:
         "medical_overflow",
         "medical_collapse",
         "hospital_shutdown",
+        "service_history_known",
+        "canteen_operational",
         "disease_spike",
         "mass_death",
         "trust_crisis",
@@ -2136,6 +2173,7 @@ def _decode_game_state(
         migrations.register(12, _migrate_v12_to_v13)
         migrations.register(13, _migrate_v13_to_v14)
         migrations.register(14, _migrate_v14_to_v15)
+        migrations.register(15, _migrate_v15_to_v16)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -3336,6 +3374,10 @@ def _migrate_v13_to_v14(document: dict[str, Any]) -> dict[str, Any]:
                     "unfed_population": 0,
                     "raw_hunger_deaths": 0,
                     "hunger_death_overflow": 0,
+                    "service_history_known": False,
+                    "canteen_operational": False,
+                    "medical_operational_building_count": 0,
+                    "medical_building_capacity": 0,
                 },
                 path,
             )
@@ -3344,6 +3386,8 @@ def _migrate_v13_to_v14(document: dict[str, Any]) -> dict[str, Any]:
         # them as exact history without pretending they used the v14 slot.
         record["raw_hunger_deaths"] = 0
         record["hunger_death_overflow"] = 0
+        for name in _PATCH_021_FROST_DAY_FIELDS:
+            record.pop(name)
         migrated_records[day] = record
     frost["daily_records"] = migrated_records
     frost_records = list(migrated_records.values())
@@ -3437,6 +3481,82 @@ def _migrate_v14_to_v15(document: dict[str, Any]) -> dict[str, Any]:
     final_result["report"] = report
     migrated["final_result"] = final_result
     migrated["save_data_version"] = 15
+    return migrated
+
+
+def _migrate_v15_to_v16(document: dict[str, Any]) -> dict[str, Any]:
+    """Add explicit unknown daily service history to legacy frost records."""
+
+    legacy = _object(document, "$", _field_names(GameState))
+    migrated = deepcopy(legacy)
+    final_frost = dict(
+        _object(
+            migrated["final_frost"],
+            "final_frost",
+            _field_names(FinalFrostState),
+        )
+    )
+    raw_records = final_frost["daily_records"]
+    if not isinstance(raw_records, Mapping):
+        raise SaveDataError("final_frost.daily_records must be an object")
+    records: dict[str, Any] = {}
+    legacy_fields = tuple(
+        name
+        for name in _field_names(FrostDayRecord)
+        if name not in _PATCH_021_FROST_DAY_FIELDS
+    )
+    for day, raw_record in raw_records.items():
+        path = f"final_frost.daily_records.{day}"
+        record = dict(_object(raw_record, path, legacy_fields))
+        record.update(
+            {
+                "service_history_known": False,
+                "canteen_operational": False,
+                "medical_operational_building_count": 0,
+                "medical_building_capacity": 0,
+            }
+        )
+        records[str(day)] = record
+    final_frost["daily_records"] = records
+    migrated["final_frost"] = final_frost
+    final_result = dict(migrated["final_result"])
+    report = dict(final_result["report"])
+    if (
+        report.get("is_generated") is True
+        and report.get("format_version")
+        == CURRENT_ENDING_REPORT_FORMAT_VERSION
+        and bool(records)
+        and set(
+            [
+                *final_result.get("major_tags", []),
+                *final_result.get("defining_tags", []),
+            ]
+        )
+        & {"famine_survivor", "famine_city"}
+    ):
+        pending = set(report.get("pending_text_ids", []))
+        pending.add("ending.additional.food.01")
+        report["pending_text_ids"] = sorted(pending)
+        final_result["report"] = report
+        migrated["final_result"] = final_result
+    elif (
+        report.get("is_generated") is True
+        and report.get("format_version")
+        == CURRENT_ENDING_REPORT_FORMAT_VERSION
+        and not records
+    ):
+        pending = set(report.get("pending_text_ids", []))
+        pending.difference_update(
+            {
+                "ending.additional.food.01",
+                "ending.additional.medical.01",
+                "ending.additional.medical.02",
+            }
+        )
+        report["pending_text_ids"] = sorted(pending)
+        final_result["report"] = report
+        migrated["final_result"] = final_result
+    migrated["save_data_version"] = 16
     return migrated
 
 
@@ -4671,6 +4791,7 @@ def _validate_state_invariants(
         )
     previous_population: int | None = None
     total_recorded_deaths = 0
+    known_service_history_started = False
     for key in sorted(frost.daily_records, key=int):
         record = frost.daily_records[key]
         if record.day != int(key) or not 49 <= record.day <= 55:
@@ -4684,6 +4805,31 @@ def _validate_state_invariants(
             raise SaveDataError("final frost daily population chain is discontinuous")
         if record.population_end > record.population_start:
             raise SaveDataError("final frost daily population cannot increase during settlement")
+        if record.service_history_known:
+            known_service_history_started = True
+            if (
+                record.medical_operational_building_count == 0
+            ) != (record.medical_building_capacity == 0):
+                raise SaveDataError(
+                    "known final frost medical service facts are inconsistent"
+                )
+            if (
+                record.medical_building_capacity
+                < record.medical_operational_building_count
+            ):
+                raise SaveDataError(
+                    "known final frost medical capacity is below its "
+                    "operational building count"
+                )
+        elif (
+            known_service_history_started
+            or record.canteen_operational
+            or record.medical_operational_building_count
+            or record.medical_building_capacity
+        ):
+            raise SaveDataError(
+                "unknown final frost service history must be an empty prefix"
+            )
         is_legacy_record = record.day in legacy_record_days
         if not is_legacy_record and record.starvation != (
             record.unfed_population > 0

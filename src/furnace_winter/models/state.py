@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 15
+CURRENT_SAVE_DATA_VERSION = 16
 LEGACY_ENDING_REPORT_FORMAT_VERSION = 1
 CURRENT_ENDING_REPORT_FORMAT_VERSION = 2
 FINAL_DAY = 55
@@ -597,6 +597,10 @@ class FrostDayRecord:
     medical_overflow: bool = False
     medical_collapse: bool = False
     hospital_shutdown: bool = False
+    service_history_known: bool = False
+    canteen_operational: bool = False
+    medical_operational_building_count: int = 0
+    medical_building_capacity: int = 0
     disease_spike: bool = False
     new_sick: int = 0
     new_critical: int = 0
