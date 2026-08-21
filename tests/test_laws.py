@@ -228,7 +228,9 @@ class LawPatchTests(unittest.TestCase):
         state.resources.raw_food = 0
         before = deepcopy(state)
         rejected = self.execute_law(state, SET_RATION_COMMAND, {"mode": "emergency", "confirm": False})
-        self.assertEqual(rejected.data["reason"], "confirmation_required")
+        self.assertEqual(
+            rejected.data["reason"], "confirm_false_is_not_preview"
+        )
         self.assertEqual(state, before)
         self.assertTrue(self.execute_law(state, SET_RATION_COMMAND, {"mode": "emergency", "confirm": True}).accepted)
         cooked_before = state.resources.cooked_food
@@ -343,7 +345,9 @@ class LawPatchTests(unittest.TestCase):
         self.execute_building(state, ASSIGN_COMMAND, {"building_id": canteen.data["building_id"], "population_type": "workers", "count": 5})
         self.assertTrue(self.sign(state, "overtime_law").accepted)
         rejected = self.execute_law(state, OVERTIME_COMMAND, {"building_id": canteen.data["building_id"], "confirm": False})
-        self.assertEqual(rejected.data["reason"], "confirmation_required")
+        self.assertEqual(
+            rejected.data["reason"], "confirm_false_is_not_preview"
+        )
         self.assertTrue(self.execute_law(state, OVERTIME_COMMAND, {"building_id": canteen.data["building_id"], "confirm": True}).accepted)
         state.resources.raw_food = 200
         self.assertTrue(self.settle(self.engine(), state).result.accepted)

@@ -1585,6 +1585,61 @@ class FinalFrostPatchTests(unittest.TestCase):
         self.assertIn("frost_survived_broken", overlap_tags)
         self.assertNotIn("frost_survived_clean", overlap_tags)
 
+    def test_clean_contract_exposes_broken_precedence_and_continuity_formula(self) -> None:
+        state = self.make_state()
+        state.final_frost.daily_records = {
+            str(day): self.frost_record(day) for day in range(49, 56)
+        }
+        state.final_frost.baseline_alive_population = 200
+        state.population.population_total = 50
+        state.population.population_alive = 50
+        state.population.healthy_population = 50
+        state.population.workers = 50
+        state.population.housed_population = 50
+        state.population.homeless_population = 0
+        scores = {
+            "coal_and_core": 3,
+            "food": 3,
+            "housing_and_temperature": 3,
+            "medical_and_disease": 3,
+            "trust_and_panic": 3,
+            "population_and_death": 3,
+        }
+        system = self.system()
+
+        tags = system._ending_tags(state, scores)
+        contracts = system._survival_tag_contracts(state)
+        continuity = contracts["frost_survived_clean"]["city_continuity"]
+
+        self.assertIn("frost_survived_broken", tags)
+        self.assertNotIn("frost_survived_clean", tags)
+        self.assertEqual(continuity["configured_minimum"], 40)
+        self.assertEqual(
+            continuity["configured_baseline_population_percent"], 30
+        )
+        self.assertEqual(continuity["baseline_alive_population"], 200)
+        self.assertEqual(continuity["minimum_alive_population"], 60)
+        self.assertFalse(
+            contracts["frost_survived_clean"][
+                "city_continuity_broken_allowed"
+            ]
+        )
+        self.assertEqual(
+            contracts["frost_survived_broken"]["takes_precedence_over"],
+            ["frost_survived_clean"],
+        )
+        continuity_condition = next(
+            condition
+            for condition in contracts["frost_survived_broken"][
+                "applies_when_any"
+            ]
+            if condition["condition_id"] == "city_continuity_broken"
+        )
+        self.assertEqual(
+            continuity_condition["contract"]["minimum_alive_population"],
+            60,
+        )
+
     def test_frozen_homeless_uses_only_homeless_group_harm(self) -> None:
         state = self.make_state()
         scores = {

@@ -281,6 +281,49 @@ class BuildingPatchTests(unittest.TestCase):
             "decrement_count_omitted_clears_all",
         )
 
+    def test_assignment_errors_separate_unknown_targets_and_population_types(self) -> None:
+        state = self.make_state()
+        missing_building = self.execute(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": "not-built",
+                "population_type": "workers",
+                "count": 1,
+            },
+        )
+        invalid_population = self.execute(
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": "residence-start-001",
+                "population_type": "adult",
+                "count": 1,
+            },
+        )
+
+        self.assertEqual(missing_building.data["reason"], "unknown_building")
+        self.assertEqual(
+            missing_building.data["submitted_building_id"], "not-built"
+        )
+        self.assertIn(
+            "residence-start-001",
+            missing_building.data["available_building_ids"],
+        )
+        self.assertEqual(
+            invalid_population.data["invalid_options"], ["population_type"]
+        )
+        self.assertEqual(
+            invalid_population.data["allowed_options"]["population_type"],
+            [
+                "workers",
+                "engineers",
+                "children",
+                "medical_apprentices",
+                "engineering_apprentices",
+            ],
+        )
+
     def test_law_and_tech_prerequisites_are_checked_without_auto_building(self) -> None:
         state = self.make_state()
         blocked = self.execute(

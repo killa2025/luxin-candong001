@@ -5,7 +5,7 @@ import os
 import tempfile
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,7 @@ from furnace_winter.interface.commands import (
     CommandValidation,
     CommandValidator,
     ErrorCode,
+    invalid_arguments_format_details,
     invalid_command_format_details,
 )
 from furnace_winter.interface.feedback import CommandResult
@@ -495,7 +496,10 @@ class GameSession:
             command_id = f"session-{self._attempt_sequence + 1:06d}"
         arguments = payload.get("arguments", {})
         if not isinstance(arguments, Mapping):
-            return self._invalid_arguments_result(str(command_id))
+            return self._malformed_result(
+                str(command_id),
+                invalid_arguments_format_details(arguments),
+            )
         expected = payload.get(
             "expected_state_sequence",
             self._state.command_sequence,
@@ -575,6 +579,8 @@ class GameSession:
                     },
                 ),
             )
+
+        result = self._with_protocol_guidance(request, result)
 
         save_written = False
         file_snapshots: tuple[_FileSnapshot, ...] = ()
@@ -683,7 +689,11 @@ class GameSession:
             save_written=save_written,
         )
 
-    def _malformed_result(self, command_id: str) -> SessionExecution:
+    def _malformed_result(
+        self,
+        command_id: str,
+        details: Mapping[str, Any] | None = None,
+    ) -> SessionExecution:
         return SessionExecution(
             protocol_version=PROTOCOL_VERSION,
             replay_sequence=None,
@@ -692,20 +702,11 @@ class GameSession:
                 accepted=False,
                 code=ErrorCode.INVALID_COMMAND_FORMAT,
                 state_sequence=self._state.command_sequence,
-                data=invalid_command_format_details(),
-            ),
-            status=self.status(),
-        )
-
-    def _invalid_arguments_result(self, command_id: str) -> SessionExecution:
-        return SessionExecution(
-            protocol_version=PROTOCOL_VERSION,
-            replay_sequence=None,
-            result=CommandResult(
-                command_id=command_id,
-                accepted=False,
-                code=ErrorCode.INVALID_ARGUMENTS,
-                state_sequence=self._state.command_sequence,
+                data=(
+                    invalid_command_format_details()
+                    if details is None
+                    else dict(details)
+                ),
             ),
             status=self.status(),
         )
@@ -715,17 +716,52 @@ class GameSession:
         request: CommandRequest,
         validation: CommandValidation,
     ) -> CommandResult:
-        return CommandResult(
-            command_id=(
-                request.command_id
-                if isinstance(request.command_id, str)
-                else ""
+        return self._with_protocol_guidance(
+            request,
+            CommandResult(
+                command_id=(
+                    request.command_id
+                    if isinstance(request.command_id, str)
+                    else ""
+                ),
+                accepted=False,
+                code=validation.code,
+                state_sequence=self._state.command_sequence,
+                data=validation.details,
             ),
-            accepted=False,
-            code=validation.code,
-            state_sequence=self._state.command_sequence,
-            data=validation.details,
         )
+
+    def _with_protocol_guidance(
+        self,
+        request: CommandRequest,
+        result: CommandResult,
+    ) -> CommandResult:
+        if result.accepted:
+            return result
+        data = dict(result.data)
+        if result.code is ErrorCode.STALE_STATE:
+            data.setdefault("reason", "state_sequence_mismatch")
+            data["current_state_sequence"] = self._state.command_sequence
+            data["requires_fresh_observation"] = True
+            data["retry_expected_state_sequence"] = (
+                self._state.command_sequence
+            )
+            if request.expected_state_sequence is not None:
+                data.setdefault(
+                    "submitted_expected_state_sequence",
+                    request.expected_state_sequence,
+                )
+        if data.get("reason") == "confirmation_required":
+            data.update(
+                {
+                    "required_confirmation_value": True,
+                    "confirm_false_is_preview": False,
+                    "state_will_change": False,
+                }
+            )
+        if data == dict(result.data):
+            return result
+        return replace(result, data=data)
 
     def replay_document(self) -> ReplayDocument:
         return self._replay.document()

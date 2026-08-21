@@ -94,6 +94,33 @@ class CommandInterfaceTests(unittest.TestCase):
                     argument_semantics={"count": "absolute_target_count"},
                 )
             )
+
+        confirm_catalog = CommandCatalog()
+        confirm_catalog.register(
+            CommandSpec(
+                name="test.confirmed",
+                required_arguments={"confirm": ArgumentKind.BOOLEAN},
+            )
+        )
+        self.assertEqual(
+            confirm_catalog.get("test.confirmed").argument_semantics[
+                "confirm"
+            ],
+            "explicit_true_only_never_preview",
+        )
+        false_confirmation = CommandValidator(confirm_catalog).validate(
+            CommandRequest(
+                "command-confirm-false",
+                "test.confirmed",
+                {"confirm": False},
+            )
+        )
+        self.assertEqual(false_confirmation.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(
+            false_confirmation.details["reason"],
+            "confirm_false_is_not_preview",
+        )
+        self.assertFalse(false_confirmation.details["state_will_change"])
         with self.assertRaises(ValueError):
             catalog.register(
                 CommandSpec(
@@ -102,6 +129,49 @@ class CommandInterfaceTests(unittest.TestCase):
                     argument_semantics={"count": "Not normalized"},
                 )
             )
+
+    def test_confirm_false_precedes_missing_fields_only_for_confirm_specs(self) -> None:
+        confirm_catalog = CommandCatalog()
+        confirm_catalog.register(
+            CommandSpec(
+                name="test.confirmed",
+                required_arguments={
+                    "target": ArgumentKind.STRING,
+                    "confirm": ArgumentKind.BOOLEAN,
+                },
+            )
+        )
+        confirm_result = CommandValidator(confirm_catalog).validate(
+            CommandRequest(
+                "command-confirm-false-missing-target",
+                "test.confirmed",
+                {"confirm": False},
+            )
+        )
+
+        plain_catalog = CommandCatalog()
+        plain_catalog.register(
+            CommandSpec(
+                name="test.plain",
+                required_arguments={"target": ArgumentKind.STRING},
+            )
+        )
+        plain_result = CommandValidator(plain_catalog).validate(
+            CommandRequest(
+                "command-plain-false",
+                "test.plain",
+                {"confirm": False},
+            )
+        )
+
+        self.assertEqual(confirm_result.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(
+            confirm_result.details["reason"],
+            "confirm_false_is_not_preview",
+        )
+        self.assertEqual(plain_result.code, ErrorCode.INVALID_ARGUMENTS)
+        self.assertEqual(plain_result.details["missing"], ["target"])
+        self.assertEqual(plain_result.details["unexpected"], ["confirm"])
 
     def test_unknown_commands_are_rejected(self) -> None:
         result = self.validator.validate(CommandRequest("command-1", "game.unknown"))
@@ -124,8 +194,16 @@ class CommandInterfaceTests(unittest.TestCase):
                 self.assertEqual(result.code, ErrorCode.INVALID_COMMAND_FORMAT)
 
     def test_malformed_arguments_return_stable_error(self) -> None:
+        wrong_shape = self.validator.validate(
+            CommandRequest("command-1", "test.action", [])  # type: ignore[arg-type]
+        )
+        self.assertEqual(wrong_shape.code, ErrorCode.INVALID_COMMAND_FORMAT)
+        self.assertEqual(
+            wrong_shape.details["field_errors"]["arguments"],
+            {"required_kind": "OBJECT", "actual_kind": "ARRAY"},
+        )
+
         requests = (
-            CommandRequest("command-1", "test.action", []),  # type: ignore[arg-type]
             CommandRequest("command-2", "test.action", {"amount": {1}}),
             CommandRequest("command-3", "test.action", {"amount": float("nan")}),
         )
@@ -134,6 +212,10 @@ class CommandInterfaceTests(unittest.TestCase):
                 result = self.validator.validate(request)
 
                 self.assertEqual(result.code, ErrorCode.INVALID_ARGUMENTS)
+                self.assertEqual(
+                    result.details["reason"],
+                    "arguments_contains_non_json_value",
+                )
 
     def test_stale_state_and_legality_hooks_are_separate(self) -> None:
         state = GameState.initial()
@@ -156,6 +238,9 @@ class CommandInterfaceTests(unittest.TestCase):
         )
 
         self.assertEqual(stale.code, ErrorCode.STALE_STATE)
+        self.assertEqual(stale.details["current_state_sequence"], 3)
+        self.assertTrue(stale.details["requires_fresh_observation"])
+        self.assertEqual(stale.details["retry_expected_state_sequence"], 3)
         self.assertEqual(illegal.code, ErrorCode.ILLEGAL_COMMAND)
 
 

@@ -98,6 +98,48 @@ class GameSessionTests(unittest.TestCase):
             assign_resource.argument_semantics["count"],
             "absolute_target_count",
         )
+        set_ration = next(
+            spec
+            for spec in session.command_specs()
+            if spec.name == "game.set_ration"
+        )
+        self.assertEqual(
+            set_ration.argument_semantics["confirm"],
+            "explicit_true_only_never_preview",
+        )
+        contracts = observation.final_frost_view["final_result"][
+            "tag_contracts"
+        ]
+        self.assertEqual(
+            contracts["frost_survived_clean"]["meaning_id"],
+            "stable_system_survival_not_zero_deaths",
+        )
+        self.assertFalse(
+            contracts["frost_survived_clean"]["zero_deaths_required"]
+        )
+        self.assertFalse(
+            contracts["frost_survived_clean"][
+                "city_continuity_broken_allowed"
+            ]
+        )
+        self.assertEqual(
+            contracts["frost_survived_clean"]["blocked_by_tag"],
+            "frost_survived_broken",
+        )
+        self.assertEqual(
+            contracts["frost_survived_clean"]["city_continuity"][
+                "minimum_alive_population"
+            ],
+            40,
+        )
+        self.assertEqual(
+            contracts["frost_survived_broken"]["takes_precedence_over"],
+            ["frost_survived_clean"],
+        )
+        self.assertEqual(
+            contracts["frost_survived_broken"]["applies_when_any"][0],
+            {"condition_id": "zero_score_systems", "minimum": 2},
+        )
 
     def test_mutating_command_is_saved_and_loadable(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -489,7 +531,18 @@ class GameSessionTests(unittest.TestCase):
         )
 
         self.assertEqual(session.status()["resources"]["coal"], 70)
-        self.assertEqual(malformed.result.code, ErrorCode.INVALID_ARGUMENTS)
+        self.assertEqual(
+            malformed.result.code,
+            ErrorCode.INVALID_COMMAND_FORMAT,
+        )
+        self.assertEqual(
+            malformed.result.data["field_errors"]["arguments"],
+            {"required_kind": "OBJECT", "actual_kind": "ARRAY"},
+        )
+        self.assertEqual(
+            malformed.result.data["request_shape"]["arguments"],
+            "OBJECT",
+        )
         self.assertIsNone(malformed.replay_sequence)
         self.assertEqual(
             malformed_identity.result.code,
@@ -498,6 +551,20 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(
             malformed_identity.result.data["reason"],
             "invalid_command_format",
+        )
+        self.assertEqual(
+            malformed_identity.result.data["unsupported_field_aliases"],
+            {"command": "name"},
+        )
+        self.assertEqual(
+            malformed_identity.result.data["accepted_envelope_shapes"][0][
+                "type"
+            ],
+            "command",
+        )
+        self.assertEqual(
+            malformed_identity.result.data["request_fields"]["required"],
+            ["name"],
         )
         self.assertNotIn(
             "json_lines_envelope_example",
@@ -513,6 +580,38 @@ class GameSessionTests(unittest.TestCase):
         self.assertNotIn("level", format_details)
         self.assertIsNone(malformed_identity.replay_sequence)
         self.assertEqual(stale.result.code, ErrorCode.STALE_STATE)
+        self.assertEqual(stale.result.data["current_state_sequence"], 0)
+        self.assertTrue(stale.result.data["requires_fresh_observation"])
+        self.assertEqual(stale.result.data["retry_expected_state_sequence"], 0)
+
+    def test_confirm_false_precedes_missing_fields_without_state_pollution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "confirm-false.json"
+            session = self.new_session(seed=1120, save_path=save_path)
+            before_state = encode_game_state(session.state)
+            before_save = save_path.read_bytes()
+            before_replay_count = len(session.replay_document().entries)
+
+            rejected = session.command(
+                "game.overtime",
+                {"confirm": False},
+            )
+
+            self.assertEqual(rejected.result.code, ErrorCode.ILLEGAL_COMMAND)
+            self.assertEqual(
+                rejected.result.data["reason"],
+                "confirm_false_is_not_preview",
+            )
+            self.assertFalse(rejected.result.data["state_will_change"])
+            self.assertFalse(rejected.save_written)
+            self.assertEqual(encode_game_state(session.state), before_state)
+            self.assertEqual(save_path.read_bytes(), before_save)
+            self.assertEqual(rejected.result.state_sequence, 0)
+            replay = session.replay_document()
+            self.assertEqual(len(replay.entries), before_replay_count + 1)
+            self.assertFalse(replay.entries[-1].result.accepted)
+            self.assertFalse(replay.entries[-1].result.state_changed)
+            self.assertEqual(replay.entries[-1].result.state_sequence, 0)
 
     def test_replay_can_be_exported_as_canonical_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -723,6 +822,49 @@ class PlayCliTests(unittest.TestCase):
             lines[1]["execution"]["status"]["furnace"]["mode_id"],
             "level_2",
         )
+
+    def test_json_lines_wrong_command_alias_returns_protocol_only_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "cli-format.json"
+            input_stream = StringIO(
+                json.dumps(
+                    {
+                        "command": "UNUSED_COMMAND_NAME",
+                        "arguments": {},
+                    }
+                )
+                + "\n"
+                + json.dumps({"type": "quit"})
+                + "\n"
+            )
+            output_stream = StringIO()
+            with patch("sys.stdin", input_stream), redirect_stdout(output_stream):
+                exit_code = main(
+                    [
+                        "play",
+                        str(save_path),
+                        "--data-dir",
+                        str(ROOT / "data"),
+                        "--new",
+                    ]
+                )
+            lines = [
+                json.loads(line)
+                for line in output_stream.getvalue().splitlines()
+            ]
+
+        self.assertEqual(exit_code, 0)
+        result = lines[1]["execution"]["result"]
+        self.assertEqual(result["code"], "INVALID_COMMAND_FORMAT")
+        self.assertEqual(
+            result["data"]["unsupported_field_aliases"],
+            {"command": "name"},
+        )
+        self.assertEqual(
+            result["data"]["request_fields"]["required"], ["name"]
+        )
+        serialized = json.dumps(result["data"], ensure_ascii=False)
+        self.assertNotIn("game.", serialized)
 
 
 if __name__ == "__main__":
