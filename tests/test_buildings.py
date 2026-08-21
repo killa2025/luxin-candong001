@@ -1467,6 +1467,11 @@ class BuildingPatchTests(unittest.TestCase):
         production_log = next(
             item for item in execution.logs if item.code == "buildings.production.settled"
         )
+        depletion_warning = next(
+            item
+            for item in execution.warnings
+            if item.warning_id == "buildings.resource_points_depleted"
+        )
 
         self.assertTrue(shelter.accepted)
         self.assertTrue(assigned.accepted)
@@ -1477,6 +1482,35 @@ class BuildingPatchTests(unittest.TestCase):
         self.assertEqual((point.assigned_workers, point.assigned_engineers), (0, 0))
         self.assertIn(point_id, production_log.payload["depleted_resource_point_ids"])
         self.assertIn(point_id, production_log.payload["shelter_removal_suggested_ids"])
+        self.assertEqual(
+            depletion_warning.assessment_stage.value,
+            "settlement_result",
+        )
+        self.assertEqual(
+            depletion_warning.details,
+            {
+                "resource_point_ids": [point_id],
+                "resource_points": [
+                    {
+                        "resource_point_id": point_id,
+                        "resource_type": "steel",
+                        "released_workers": 0,
+                        "released_engineers": 1,
+                    }
+                ],
+                "released_workers_total": 0,
+                "released_engineers_total": 1,
+                "assignments_released_automatically": True,
+                "unassign_required": False,
+            },
+        )
+        serialized_warning = next(
+            item
+            for item in execution.result.data["warnings"]
+            if item["warning_id"] == "buildings.resource_points_depleted"
+        )
+        self.assertEqual(serialized_warning["assessment_stage"], "settlement_result")
+        self.assertEqual(serialized_warning["details"], depletion_warning.details)
         rejected = self.execute(
             state,
             ASSIGN_RESOURCE_COMMAND,

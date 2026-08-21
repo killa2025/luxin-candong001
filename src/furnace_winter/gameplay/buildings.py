@@ -867,6 +867,7 @@ class BuildingSystem:
         state = context.state
         production: dict[str, int] = {"coal": 0, "wood": 0, "steel": 0, "raw_food": 0}
         depleted_points: list[str] = []
+        depleted_point_results: list[dict[str, object]] = []
         storage_used_at_start = storage_used(state.resources)
         storage_blocked = is_storage_production_blocked(state.resources)
         sheltered_points = {
@@ -900,11 +901,21 @@ class BuildingSystem:
                 )
                 production[point.resource_type] += output
                 if point.remaining_amount == 0:
+                    released_workers = point.assigned_workers
+                    released_engineers = point.assigned_engineers
                     point.is_depleted = True
                     point.assigned_workers = 0
                     point.assigned_engineers = 0
                     point.production_remainder_numerator = 0
                     depleted_points.append(resource_point_id)
+                    depleted_point_results.append(
+                        {
+                            "resource_point_id": resource_point_id,
+                            "resource_type": point.resource_type,
+                            "released_workers": released_workers,
+                            "released_engineers": released_engineers,
+                        }
+                    )
 
             building_production, raw_processed, cooked_produced = (
                 self._resolve_building_production(state)
@@ -937,6 +948,35 @@ class BuildingSystem:
                 )
             )
             context.emit("survival.storage_over_capacity.formed", details)
+        if depleted_point_results:
+            depleted_point_results.sort(
+                key=lambda item: str(item["resource_point_id"])
+            )
+            details = {
+                "resource_point_ids": [
+                    str(item["resource_point_id"])
+                    for item in depleted_point_results
+                ],
+                "resource_points": depleted_point_results,
+                "released_workers_total": sum(
+                    int(item["released_workers"])
+                    for item in depleted_point_results
+                ),
+                "released_engineers_total": sum(
+                    int(item["released_engineers"])
+                    for item in depleted_point_results
+                ),
+                "assignments_released_automatically": True,
+                "unassign_required": False,
+            }
+            context.warn(
+                RiskWarning(
+                    "buildings.resource_points_depleted",
+                    RiskWarningLevel.A_INFO,
+                    details,
+                )
+            )
+            context.emit("buildings.resource_points.depleted", details)
         context.emit(
             "buildings.production.settled",
             {

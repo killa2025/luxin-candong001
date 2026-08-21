@@ -109,6 +109,29 @@ class GameSessionTests(unittest.TestCase):
             ],
             "current_game_session",
         )
+        self.assertEqual(
+            observation.protocol_contract["sequence_semantics"],
+            {
+                "replay_sequence": {
+                    "scope": "current_game_session",
+                    "persistence": "not_saved",
+                    "assigned_to": "recorded_command_attempts",
+                    "includes_rejected_commands": True,
+                    "may_be_null_when_attempt_is_not_recorded": True,
+                    "resets_when_session_opens": True,
+                    "use_for_optimistic_concurrency": False,
+                },
+                "state_sequence": {
+                    "scope": "persistent_game_state",
+                    "persistence": "saved_in_game_state",
+                    "increments_on": "committed_state_changes_only",
+                    "includes_rejected_commands": False,
+                    "resets_when_session_opens": False,
+                    "request_field": "expected_state_sequence",
+                    "use_for_optimistic_concurrency": True,
+                },
+            },
+        )
         self.assertIsNotNone(observation.law_view)
         self.assertEqual(len(observation.technology_view), 37)
         self.assertIn("law_rules", observation.oath_order_view)
@@ -229,6 +252,79 @@ class GameSessionTests(unittest.TestCase):
             )
             self.assertEqual(encode_game_state(session.state), before_state)
             self.assertEqual(save_path.read_bytes(), before_save)
+
+    def test_sequence_contract_distinguishes_session_attempts_from_saved_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "sequences.json"
+            session = self.new_session(seed=1126, save_path=save_path)
+
+            rejected = session.command("game.not_registered")
+            committed = session.command("game.set_furnace", {"level": 2})
+            reopened = GameSession.load(save_path, config_dir=ROOT / "data")
+            reopened_rejected = reopened.command("game.not_registered")
+            contract = reopened.observe().protocol_contract["sequence_semantics"]
+
+        self.assertEqual(rejected.replay_sequence, 1)
+        self.assertEqual(rejected.result.state_sequence, 0)
+        self.assertEqual(committed.replay_sequence, 2)
+        self.assertEqual(committed.result.state_sequence, 1)
+        self.assertEqual(reopened_rejected.replay_sequence, 1)
+        self.assertEqual(reopened_rejected.result.state_sequence, 1)
+        self.assertTrue(
+            contract["replay_sequence"]["includes_rejected_commands"]
+        )
+        self.assertTrue(
+            contract["replay_sequence"]["resets_when_session_opens"]
+        )
+        self.assertEqual(
+            contract["state_sequence"]["request_field"],
+            "expected_state_sequence",
+        )
+        self.assertFalse(
+            contract["state_sequence"]["includes_rejected_commands"]
+        )
+
+    def test_depletion_result_is_returned_and_recorded_in_same_end_day(self) -> None:
+        session = self.new_session(seed=1127)
+        point_id = "surface-steel-1"
+        session._state.surface_resource_points[point_id].remaining_amount = 1
+        assigned = session.command(
+            "game.assign_resource",
+            {
+                "resource_point_id": point_id,
+                "population_type": "engineers",
+                "count": 1,
+            },
+        )
+
+        settled = session.command("game.end_day")
+        if settled.result.code is ErrorCode.END_DAY_CONFIRMATION_REQUIRED:
+            settled = session.command(
+                "game.confirm_end_day",
+                settled.result.data["confirmation"],
+            )
+        warning = next(
+            item
+            for item in settled.result.data["warnings"]
+            if item["warning_id"] == "buildings.resource_points_depleted"
+        )
+        replay_warning = next(
+            item
+            for item in session.replay_document().entries[-1].result.data["warnings"]
+            if item["warning_id"] == "buildings.resource_points_depleted"
+        )
+
+        self.assertEqual(assigned.result.code, ErrorCode.OK)
+        self.assertEqual(settled.result.code, ErrorCode.OK)
+        self.assertEqual(warning["assessment_stage"], "settlement_result")
+        self.assertEqual(warning["details"]["resource_point_ids"], [point_id])
+        self.assertEqual(warning["details"]["released_engineers_total"], 1)
+        self.assertTrue(
+            warning["details"]["assignments_released_automatically"]
+        )
+        self.assertEqual(replay_warning, warning)
 
     def test_rules_query_command_guess_returns_the_official_envelope(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
