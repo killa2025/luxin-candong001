@@ -390,6 +390,26 @@ class GameSession:
                 "contains_strategy_recommendations": False,
             },
             "end_day_confirmation": self.end_day.confirmation_lifecycle(),
+            "sequence_semantics": {
+                "replay_sequence": {
+                    "scope": "current_game_session",
+                    "persistence": "not_saved",
+                    "assigned_to": "recorded_command_attempts",
+                    "includes_rejected_commands": True,
+                    "may_be_null_when_attempt_is_not_recorded": True,
+                    "resets_when_session_opens": True,
+                    "use_for_optimistic_concurrency": False,
+                },
+                "state_sequence": {
+                    "scope": "persistent_game_state",
+                    "persistence": "saved_in_game_state",
+                    "increments_on": "committed_state_changes_only",
+                    "includes_rejected_commands": False,
+                    "resets_when_session_opens": False,
+                    "request_field": "expected_state_sequence",
+                    "use_for_optimistic_concurrency": True,
+                },
+            },
         }
 
     def status(self) -> dict[str, Any]:
