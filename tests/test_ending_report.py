@@ -226,7 +226,8 @@ class EndingReportPatchTests(unittest.TestCase):
         )
         self.assertEqual(false_confirm.code, ErrorCode.ILLEGAL_COMMAND)
         self.assertEqual(
-            false_confirm.data["reason"], "confirmation_required"
+            false_confirm.data["reason"],
+            "confirm_false_is_not_preview",
         )
 
         hard_fail = self.completed_state()

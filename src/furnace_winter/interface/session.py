@@ -5,7 +5,7 @@ import os
 import tempfile
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -576,6 +576,8 @@ class GameSession:
                 ),
             )
 
+        result = self._with_protocol_guidance(request, result)
+
         save_written = False
         file_snapshots: tuple[_FileSnapshot, ...] = ()
         if result.accepted and result.state_changed:
@@ -715,17 +717,52 @@ class GameSession:
         request: CommandRequest,
         validation: CommandValidation,
     ) -> CommandResult:
-        return CommandResult(
-            command_id=(
-                request.command_id
-                if isinstance(request.command_id, str)
-                else ""
+        return self._with_protocol_guidance(
+            request,
+            CommandResult(
+                command_id=(
+                    request.command_id
+                    if isinstance(request.command_id, str)
+                    else ""
+                ),
+                accepted=False,
+                code=validation.code,
+                state_sequence=self._state.command_sequence,
+                data=validation.details,
             ),
-            accepted=False,
-            code=validation.code,
-            state_sequence=self._state.command_sequence,
-            data=validation.details,
         )
+
+    def _with_protocol_guidance(
+        self,
+        request: CommandRequest,
+        result: CommandResult,
+    ) -> CommandResult:
+        if result.accepted:
+            return result
+        data = dict(result.data)
+        if result.code is ErrorCode.STALE_STATE:
+            data.setdefault("reason", "state_sequence_mismatch")
+            data["current_state_sequence"] = self._state.command_sequence
+            data["requires_fresh_observation"] = True
+            data["retry_expected_state_sequence"] = (
+                self._state.command_sequence
+            )
+            if request.expected_state_sequence is not None:
+                data.setdefault(
+                    "submitted_expected_state_sequence",
+                    request.expected_state_sequence,
+                )
+        if data.get("reason") == "confirmation_required":
+            data.update(
+                {
+                    "required_confirmation_value": True,
+                    "confirm_false_is_preview": False,
+                    "state_will_change": False,
+                }
+            )
+        if data == dict(result.data):
+            return result
+        return replace(result, data=data)
 
     def replay_document(self) -> ReplayDocument:
         return self._replay.document()

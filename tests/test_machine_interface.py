@@ -94,6 +94,33 @@ class CommandInterfaceTests(unittest.TestCase):
                     argument_semantics={"count": "absolute_target_count"},
                 )
             )
+
+        confirm_catalog = CommandCatalog()
+        confirm_catalog.register(
+            CommandSpec(
+                name="test.confirmed",
+                required_arguments={"confirm": ArgumentKind.BOOLEAN},
+            )
+        )
+        self.assertEqual(
+            confirm_catalog.get("test.confirmed").argument_semantics[
+                "confirm"
+            ],
+            "explicit_true_only_never_preview",
+        )
+        false_confirmation = CommandValidator(confirm_catalog).validate(
+            CommandRequest(
+                "command-confirm-false",
+                "test.confirmed",
+                {"confirm": False},
+            )
+        )
+        self.assertEqual(false_confirmation.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(
+            false_confirmation.details["reason"],
+            "confirm_false_is_not_preview",
+        )
+        self.assertFalse(false_confirmation.details["state_will_change"])
         with self.assertRaises(ValueError):
             catalog.register(
                 CommandSpec(
@@ -156,6 +183,9 @@ class CommandInterfaceTests(unittest.TestCase):
         )
 
         self.assertEqual(stale.code, ErrorCode.STALE_STATE)
+        self.assertEqual(stale.details["current_state_sequence"], 3)
+        self.assertTrue(stale.details["requires_fresh_observation"])
+        self.assertEqual(stale.details["retry_expected_state_sequence"], 3)
         self.assertEqual(illegal.code, ErrorCode.ILLEGAL_COMMAND)
 
 

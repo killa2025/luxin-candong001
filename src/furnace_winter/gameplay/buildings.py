@@ -378,8 +378,26 @@ class BuildingSystem:
         building_id = request.arguments.get("building_id")
         population_type = request.arguments.get("population_type")
         building = state.buildings.get(building_id) if isinstance(building_id, str) else None
-        if building is None or population_type not in _STAFF_FIELDS:
-            return CommandValidation(False, ErrorCode.INVALID_ARGUMENTS, {"reason": "unknown_building_or_population_type"})
+        if building is None:
+            return CommandValidation(
+                False,
+                ErrorCode.INVALID_ARGUMENTS,
+                {
+                    "reason": "unknown_building",
+                    "submitted_building_id": building_id,
+                    "available_building_ids": sorted(state.buildings),
+                },
+            )
+        if population_type not in _STAFF_FIELDS:
+            return CommandValidation(
+                False,
+                ErrorCode.INVALID_ARGUMENTS,
+                {
+                    "reason": "unknown_population_type",
+                    "submitted_population_type": population_type,
+                    "allowed_population_types": sorted(_STAFF_FIELDS),
+                },
+            )
         rule = self.rules.buildings.get(building.building_type)
         if rule is None:
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "building_type_not_in_catalog"})
@@ -418,7 +436,21 @@ class BuildingSystem:
         population_available = getattr(state.population, _POPULATION_FIELDS[population_type])
         assigned_elsewhere = self._assigned_population(state, population_type) - current
         if assigned_elsewhere + target > population_available:
-            return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "population_not_available", "available": population_available - assigned_elsewhere})
+            assignment_view = self._population_assignment_view(
+                state, population_type
+            )
+            return CommandValidation(
+                False,
+                ErrorCode.ILLEGAL_COMMAND,
+                {
+                    "reason": "population_not_available",
+                    "available": population_available - assigned_elsewhere,
+                    "requested_target_count": target,
+                    "current_target_count": current,
+                    "shortfall": assigned_elsewhere + target - population_available,
+                    "population_assignment": assignment_view,
+                },
+            )
         return CommandValidation.valid()
 
     def _assign_resource_legality(
@@ -431,11 +463,27 @@ class BuildingSystem:
             if isinstance(resource_point_id, str)
             else None
         )
-        if point is None or population_type not in {"workers", "engineers"}:
+        if point is None:
             return CommandValidation(
                 False,
                 ErrorCode.INVALID_ARGUMENTS,
-                {"reason": "unknown_resource_point_or_population_type"},
+                {
+                    "reason": "unknown_resource_point",
+                    "submitted_resource_point_id": resource_point_id,
+                    "available_resource_point_ids": sorted(
+                        state.surface_resource_points
+                    ),
+                },
+            )
+        if population_type not in {"workers", "engineers"}:
+            return CommandValidation(
+                False,
+                ErrorCode.INVALID_ARGUMENTS,
+                {
+                    "reason": "unknown_population_type",
+                    "submitted_population_type": population_type,
+                    "allowed_population_types": ["engineers", "workers"],
+                },
             )
         if point.is_depleted:
             return CommandValidation(
@@ -479,12 +527,19 @@ class BuildingSystem:
         population_available = getattr(state.population, population_type)
         assigned_elsewhere = self._assigned_population(state, population_type) - current
         if assigned_elsewhere + target > population_available:
+            assignment_view = self._population_assignment_view(
+                state, population_type
+            )
             return CommandValidation(
                 False,
                 ErrorCode.ILLEGAL_COMMAND,
                 {
                     "reason": "population_not_available",
                     "available": population_available - assigned_elsewhere,
+                    "requested_target_count": target,
+                    "current_target_count": current,
+                    "shortfall": assigned_elsewhere + target - population_available,
+                    "population_assignment": assignment_view,
                 },
             )
         return CommandValidation.valid()
@@ -1168,6 +1223,59 @@ class BuildingSystem:
                 )
             )
         return total
+
+    @staticmethod
+    def _population_assignment_view(
+        state: GameState, population_type: str
+    ) -> dict[str, Any]:
+        field_name = _STAFF_FIELDS[population_type]
+        buildings = {
+            building.building_id: getattr(building, field_name)
+            for building in sorted(
+                state.buildings.values(), key=lambda item: item.building_id
+            )
+            if getattr(building, field_name) > 0
+        }
+        if population_type in {"workers", "engineers"}:
+            point_field = f"assigned_{population_type}"
+            resource_points = {
+                point.resource_point_id: getattr(point, point_field)
+                for point in sorted(
+                    state.surface_resource_points.values(),
+                    key=lambda item: item.resource_point_id,
+                )
+                if getattr(point, point_field) > 0
+            }
+            route_facilities = {
+                facility_id: getattr(facility, point_field)
+                for facility_id, facility in (
+                    ("oath_hall", state.oath_order.oath_hall),
+                    ("patrol_office", state.oath_order.patrol_office),
+                )
+                if getattr(facility, point_field) > 0
+            }
+        else:
+            resource_points = {}
+            route_facilities = {}
+        population_total = getattr(
+            state.population, _POPULATION_FIELDS[population_type]
+        )
+        assigned_total = (
+            sum(buildings.values())
+            + sum(resource_points.values())
+            + sum(route_facilities.values())
+        )
+        return {
+            "population_type": population_type,
+            "population_total": population_total,
+            "assigned_total": assigned_total,
+            "unassigned_total": population_total - assigned_total,
+            "assignments": {
+                "buildings": buildings,
+                "resource_points": resource_points,
+                "route_facilities": route_facilities,
+            },
+        }
 
     @staticmethod
     def _sync_housing_population(state: GameState) -> None:

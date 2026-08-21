@@ -563,6 +563,17 @@ class OathOrderPatchTests(unittest.TestCase):
         )
         self.assertEqual(result.code, ErrorCode.ILLEGAL_COMMAND)
         self.assertEqual(result.data["reason"], "population_not_available")
+        self.assertEqual(result.data["available"], 0)
+        self.assertEqual(result.data["shortfall"], 1)
+        assignment = result.data["population_assignment"]
+        self.assertEqual(assignment["population_type"], "workers")
+        self.assertEqual(assignment["population_total"], 1)
+        self.assertEqual(assignment["assigned_total"], 1)
+        self.assertEqual(assignment["unassigned_total"], 0)
+        self.assertEqual(
+            assignment["assignments"]["route_facilities"],
+            {"oath_hall": 1},
+        )
 
     def test_routes_are_permanently_exclusive(self) -> None:
         system = self.system()

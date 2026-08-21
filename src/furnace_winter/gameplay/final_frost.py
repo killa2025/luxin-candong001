@@ -49,6 +49,10 @@ _LEGACY_PATCH_021_RESULT_SCORE_MINIMUMS = {
     "ember_survival": 0,
 }
 _LEGACY_PATCH_021_HIGH_VICTORY_DEATH_RATIO_PERCENT = 20
+_BROKEN_SURVIVAL_MIN_ZERO_SCORE_SYSTEMS = 2
+_BROKEN_SURVIVAL_MAX_TOTAL_SCORE = 9
+_BROKEN_SURVIVAL_MIN_LOW_SCORE_SYSTEMS_WITH_MASS_DEATH = 2
+_CLEAN_SURVIVAL_MAX_INSUFFICIENT_SCORE_SYSTEMS = 1
 _LEGACY_PATCH_021_PREPARATION = {
     "prepared_required_items": 5,
     "prepared_coal_days": 5,
@@ -1373,6 +1377,45 @@ class FinalFrostSystem:
                 "total_score": state.final_result.total_score,
                 "major_tags": list(state.final_result.major_tags),
                 "defining_tags": list(state.final_result.defining_tags),
+                "tag_contracts": {
+                    "frost_survived_clean": {
+                        "meaning_id": "stable_system_survival_not_zero_deaths",
+                        "zero_deaths_required": False,
+                        "survival_required": True,
+                        "hard_fail_allowed": False,
+                        "maximum_zero_score_systems": 0,
+                        "maximum_insufficient_score_systems": (
+                            _CLEAN_SURVIVAL_MAX_INSUFFICIENT_SCORE_SYSTEMS
+                        ),
+                        "mass_death_day_allowed": False,
+                    },
+                    "frost_survived_broken": {
+                        "meaning_id": "multiple_system_failures_but_city_survived",
+                        "survival_required": True,
+                        "hard_fail_allowed": False,
+                        "applies_when_any": [
+                            {
+                                "condition_id": "zero_score_systems",
+                                "minimum": (
+                                    _BROKEN_SURVIVAL_MIN_ZERO_SCORE_SYSTEMS
+                                ),
+                            },
+                            {
+                                "condition_id": "total_score",
+                                "maximum": _BROKEN_SURVIVAL_MAX_TOTAL_SCORE,
+                            },
+                            {"condition_id": "city_continuity_broken"},
+                            {
+                                "condition_id": (
+                                    "mass_death_day_with_low_score_systems"
+                                ),
+                                "minimum_low_score_systems": (
+                                    _BROKEN_SURVIVAL_MIN_LOW_SCORE_SYSTEMS_WITH_MASS_DEATH
+                                ),
+                            },
+                        ],
+                    },
+                },
             },
         }
 
@@ -2282,10 +2325,14 @@ class FinalFrostSystem:
             and state.final_result.hard_fail_type is None
         )
         broken_survival = survived and (
-            zero_scores >= 2
-            or sum(scores.values()) <= 9
+            zero_scores >= _BROKEN_SURVIVAL_MIN_ZERO_SCORE_SYSTEMS
+            or sum(scores.values()) <= _BROKEN_SURVIVAL_MAX_TOTAL_SCORE
             or city_continuity_broken
-            or (mass_death_day and low_scores >= 2)
+            or (
+                mass_death_day
+                and low_scores
+                >= _BROKEN_SURVIVAL_MIN_LOW_SCORE_SYSTEMS_WITH_MASS_DEATH
+            )
         )
         if broken_survival:
             add("frost_survived_broken", True)
@@ -2294,7 +2341,8 @@ class FinalFrostSystem:
                 "frost_survived_clean",
                 survived
                 and zero_scores == 0
-                and insufficient_scores <= 1
+                and insufficient_scores
+                <= _CLEAN_SURVIVAL_MAX_INSUFFICIENT_SCORE_SYSTEMS
                 and not mass_death_day,
             )
         add("old_city_stabilized", state.old_city.result_id == "scattered")

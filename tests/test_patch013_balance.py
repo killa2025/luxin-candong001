@@ -519,6 +519,17 @@ class Patch013BalanceTests(unittest.TestCase):
         self.assertEqual(
             off.details["conditional_death_cause"], "cold_exposure"
         )
+        self.assertTrue(off.details["minimum_death_rule_applies"])
+        self.assertEqual(
+            off.details["minimum_death_rule_scope"],
+            "effective_furnace_level_zero_only",
+        )
+        self.assertFalse(
+            off.details["minimum_death_values_are_total_death_prediction"]
+        )
+        self.assertFalse(
+            off.details["nonzero_effective_level_guarantees_safety"]
+        )
         self.assertNotIn("death_cause", off.details)
 
         state.furnace.mode_id = "level_1"
@@ -549,6 +560,25 @@ class Patch013BalanceTests(unittest.TestCase):
         )
         self.assertNotIn(
             "death_cause_if_effective_level_zero", shortfall.details
+        )
+
+        state.furnace.mode_id = "level_3"
+        state.resources.coal = 50
+        partial = {
+            warning.warning_id: warning
+            for warning in system.evaluate_risks(state)
+        }["survival.heating_fuel_shortfall"]
+        self.assertEqual(partial.details["projected_effective_level"], 1)
+        self.assertFalse(partial.details["minimum_death_rule_applies"])
+        self.assertEqual(
+            partial.details["minimum_death_rule_scope"],
+            "effective_furnace_level_zero_only",
+        )
+        self.assertFalse(
+            partial.details["minimum_death_values_are_total_death_prediction"]
+        )
+        self.assertFalse(
+            partial.details["nonzero_effective_level_guarantees_safety"]
         )
 
     def test_formal_furnace_off_disease_death_does_not_claim_or_add_cold_death(self) -> None:

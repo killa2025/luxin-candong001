@@ -696,6 +696,13 @@ class SurvivalSystem:
                     {
                         "target_level": 0,
                         "effective_level": 0,
+                        "projected_effective_level": 0,
+                        "minimum_death_rule_scope": (
+                            "effective_furnace_level_zero_only"
+                        ),
+                        "minimum_death_rule_applies": True,
+                        "minimum_death_values_are_total_death_prediction": False,
+                        "nonzero_effective_level_guarantees_safety": False,
                         "minimum_natural_deaths_if_settled": (
                             1 if state.population.population_alive > 0 else 0
                         ),
@@ -716,6 +723,13 @@ class SurvivalSystem:
                         "required_coal": required_coal,
                         "target_level": target_level,
                         "affordable_level": affordable_level,
+                        "projected_effective_level": affordable_level,
+                        "minimum_death_rule_scope": (
+                            "effective_furnace_level_zero_only"
+                        ),
+                        "minimum_death_rule_applies": affordable_level == 0,
+                        "minimum_death_values_are_total_death_prediction": False,
+                        "nonzero_effective_level_guarantees_safety": False,
                         "minimum_natural_deaths_if_effective_level_zero": (
                             1
                             if affordable_level == 0
