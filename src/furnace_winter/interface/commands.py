@@ -115,6 +115,7 @@ class CommandSpec:
     argument_options: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     allow_extra_arguments: bool = False
     argument_semantics: Mapping[str, str] = field(default_factory=dict)
+    related_rule_sections: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +172,14 @@ class CommandCatalog:
                 raise ValueError(
                     f"argument semantics must use stable normalized ids: {argument}"
                 )
+        if any(
+            not isinstance(section, str)
+            or not COMMAND_NAME_PATTERN.fullmatch(section)
+            for section in spec.related_rule_sections
+        ):
+            raise ValueError("related rule sections must use stable normalized ids")
+        if len(set(spec.related_rule_sections)) != len(spec.related_rule_sections):
+            raise ValueError("related rule sections must be unique")
         if "confirm" in known_arguments and "confirm" not in spec.argument_semantics:
             spec = replace(
                 spec,

@@ -746,6 +746,65 @@ class EventPatchTests(unittest.TestCase):
         self.assertEqual(accept_all["preview"]["resource_changes"]["coal"], 0)
         self.assertEqual(state.population.population_alive, 80)
 
+    def test_blackbox_events_use_sealed_text_without_filling_todo_bodies(self) -> None:
+        state = self.make_state(day=7)
+        state.population.population_alive = 79
+        state.population.population_dead = 1
+        state.population.healthy_population = 79
+        state.population.workers = 49
+        state.population.homeless_population = 39
+        state.hunger.none_population = 79
+        state.social_policy.unhandled_bodies = 1
+        state.resources.coal = 0
+        state.daily_survival.storage_used = storage_used(state.resources)
+        system = self.event_system()
+        system.initialize_day(state)
+        views = {
+            item["event_id"]: item
+            for item in system.active_event_views(state)
+        }
+
+        first_body = views["first_body"]
+        self.assertEqual(first_body["title_text"], "第一具遗体")
+        self.assertIn("雪还粘在他的袖口上", first_body["body_text"])
+        self.assertEqual(first_body["body_status"], "AVAILABLE")
+        self.assertEqual(
+            [item["text"] for item in first_body["options"]],
+            ["公开悼念", "低调处理", "暂时搁置"],
+        )
+
+        labor_state = self.make_state(day=7)
+        labor_state.population.children = 0
+        labor_state.population.workers += 15
+        labor_state.social_policy.consecutive_long_shift_days = 3
+        labor_state.resources.coal = 200
+        labor_state.daily_survival.storage_used = storage_used(
+            labor_state.resources
+        )
+        labor_system = self.event_system()
+        labor_system.initialize_day(labor_state)
+        long_shift = next(
+            item
+            for item in labor_system.active_event_views(labor_state)
+            if item["event_id"] == "long_shift_collapse"
+        )
+        self.assertEqual(long_shift["title_text"], "长班后的倒下")
+        self.assertIsNone(long_shift["body_text"])
+        self.assertEqual(long_shift["body_status"], "TODO_TEXT")
+        self.assertEqual(
+            [item["text"] for item in long_shift["options"]],
+            ["暂停长班一天", "提供熟食补偿", "继续长班"],
+        )
+
+        coal = views["coal_bottom"]
+        self.assertEqual(coal["title_text"], "煤仓见底")
+        self.assertIn("铲子碰到木板", coal["body_text"])
+        self.assertEqual(coal["body_status"], "AVAILABLE")
+        self.assertEqual(
+            [item["text"] for item in coal["options"]],
+            ["承诺补足煤炭储备", "调整炉心消耗", "维持现状"],
+        )
+
     def test_arrival_preview_recomputes_medical_capacity_after_staffing(self) -> None:
         state = self.make_state(day=6)
         state.medical.temporary_capacity = 0

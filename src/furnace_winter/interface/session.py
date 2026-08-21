@@ -364,6 +364,8 @@ class GameSession:
         return Observation.from_state(
             deepcopy(self._state),
             self.command_specs(),
+            available_rule_sections=tuple(sorted(self._rule_documents)),
+            protocol_contract=self._protocol_contract(),
             event_views=self.events.active_event_views(self._state),
             promise_views=self.events.active_promise_views(self._state),
             map_view=self.maps.view(self._state),
@@ -374,6 +376,21 @@ class GameSession:
             final_frost_view=self.final_frost.observe(self._state),
             ending_report_view=self.ending_report.observe(self._state),
         )
+
+    def _protocol_contract(self) -> dict[str, Any]:
+        rule_sections = tuple(sorted(self._rule_documents))
+        return {
+            "rules_query": {
+                "request_shape": {
+                    "type": "rules",
+                    "section": "RULE_SECTION_STRING",
+                },
+                "available_sections": list(rule_sections),
+                "returns_validated_configuration": True,
+                "contains_strategy_recommendations": False,
+            },
+            "end_day_confirmation": self.end_day.confirmation_lifecycle(),
+        }
 
     def status(self) -> dict[str, Any]:
         state = self._state

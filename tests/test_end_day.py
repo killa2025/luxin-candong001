@@ -13,6 +13,7 @@ from furnace_winter.gameplay import (
     EndDayStage,
     RiskWarning,
     RiskWarningLevel,
+    RiskWarningStage,
 )
 from furnace_winter.interface import (
     CommandRequest,
@@ -79,6 +80,14 @@ class EndDayWarningTests(unittest.TestCase):
         self.assertFalse(preview.result.state_changed)
         self.assertEqual(encode_game_state(state), before)
         self.assertIsNone(engine.last_autosave())
+        self.assertEqual(
+            preview.result.data["warnings"][0]["assessment_stage"],
+            RiskWarningStage.PRE_SETTLEMENT.value,
+        )
+        self.assertEqual(
+            preview.result.data["confirmation_lifecycle"]["token_scope"],
+            "current_game_session",
+        )
 
         confirmed = engine.execute(
             state,
@@ -119,7 +128,49 @@ class EndDayWarningTests(unittest.TestCase):
 
         self.assertEqual(execution.result.code, ErrorCode.ILLEGAL_COMMAND)
         self.assertEqual(execution.result.data["reason"], "end_day_preview_required")
+        self.assertTrue(
+            execution.result.data["confirmation_lifecycle"][
+                "requires_preview_in_same_session"
+            ]
+        )
         self.assertEqual(state.calendar.current_day, 1)
+
+    def test_settlement_warning_is_distinguished_from_preview_snapshot(self) -> None:
+        state = GameState.initial()
+        engine = EndDayEngine()
+
+        def emit_settlement_warning(context: EndDayContext) -> None:
+            context.warn(
+                RiskWarning(
+                    "risk.resolved_during_settlement",
+                    RiskWarningLevel.A_INFO,
+                    {"count": 0},
+                )
+            )
+
+        engine.register_stage_handler(
+            EndDayStage.CLOSE_DAILY_EFFECTS,
+            emit_settlement_warning,
+        )
+
+        execution = engine.execute(state, request(END_DAY_COMMAND))
+
+        self.assertEqual(execution.result.code, ErrorCode.OK)
+        self.assertEqual(
+            execution.result.data["warnings"],
+            [
+                {
+                    "warning_id": "risk.resolved_during_settlement",
+                    "level": "A_INFO",
+                    "assessment_stage": "settlement_result",
+                    "details": {"count": 0},
+                }
+            ],
+        )
+        self.assertEqual(
+            execution.warnings[0].assessment_stage,
+            RiskWarningStage.SETTLEMENT_RESULT,
+        )
 
     def test_confirmation_is_invalid_after_state_sequence_changes(self) -> None:
         state = GameState.initial()

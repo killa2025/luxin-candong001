@@ -132,6 +132,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
                 **({"building_type": buildable_types} if buildable_types else {}),
                 "zone": ("inner_ring", "middle_ring", "outer_ring", "storage_outer"),
             },
+            related_rule_sections=("buildings",),
         )
     )
     catalog.register(
@@ -142,6 +143,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
                 "upgrade_id": ArgumentKind.STRING,
             },
             argument_options={"upgrade_id": upgrade_ids} if upgrade_ids else {},
+            related_rule_sections=("buildings",),
         )
     )
     catalog.register(
@@ -154,6 +156,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
             },
             argument_options={"population_type": tuple(_STAFF_FIELDS)},
             argument_semantics={"count": "absolute_target_count"},
+            related_rule_sections=("buildings",),
         )
     )
     catalog.register(
@@ -166,6 +169,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
             optional_arguments={"count": ArgumentKind.INTEGER},
             argument_options={"population_type": tuple(_STAFF_FIELDS)},
             argument_semantics={"count": "decrement_count_omitted_clears_all"},
+            related_rule_sections=("buildings",),
         )
     )
     catalog.register(
@@ -178,6 +182,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
             },
             argument_options={"population_type": ("workers", "engineers")},
             argument_semantics={"count": "absolute_target_count"},
+            related_rule_sections=("buildings",),
         )
     )
     catalog.register(
@@ -190,18 +195,21 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
             optional_arguments={"count": ArgumentKind.INTEGER},
             argument_options={"population_type": ("workers", "engineers")},
             argument_semantics={"count": "decrement_count_omitted_clears_all"},
+            related_rule_sections=("buildings",),
         )
     )
     catalog.register(
         CommandSpec(
             name=HEAT_COMMAND,
             required_arguments={"building_id": ArgumentKind.STRING},
+            related_rule_sections=("buildings",),
         )
     )
     catalog.register(
         CommandSpec(
             name=WOODFUEL_COMMAND,
             required_arguments={"confirm": ArgumentKind.BOOLEAN},
+            related_rule_sections=("buildings",),
         )
     )
     return catalog

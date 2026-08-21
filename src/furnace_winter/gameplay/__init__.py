@@ -12,6 +12,7 @@ from furnace_winter.gameplay.end_day import (
     EndDayStage,
     RiskWarning,
     RiskWarningLevel,
+    RiskWarningStage,
     build_end_day_catalog,
 )
 from furnace_winter.gameplay.buildings import (
@@ -119,6 +120,7 @@ __all__ = [
     "RESOLVE_OLD_CITY_COMMAND",
     "RiskWarning",
     "RiskWarningLevel",
+    "RiskWarningStage",
     "UNASSIGN_COMMAND",
     "UNASSIGN_RESOURCE_COMMAND",
     "UPGRADE_COMMAND",
