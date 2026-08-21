@@ -130,6 +130,34 @@ class CommandInterfaceTests(unittest.TestCase):
                 )
             )
 
+    def test_command_schema_validates_protocol_contract_links(self) -> None:
+        catalog = CommandCatalog()
+        catalog.register(
+            CommandSpec(
+                name="test.preview",
+                related_protocol_contracts=("end_day_confirmation",),
+            )
+        )
+
+        self.assertEqual(
+            catalog.get("test.preview").related_protocol_contracts,
+            ("end_day_confirmation",),
+        )
+        for name, contracts in (
+            ("test.bad-contract-shape", ("Not normalized",)),
+            (
+                "test.bad-contract-duplicate",
+                ("end_day_confirmation", "end_day_confirmation"),
+            ),
+        ):
+            with self.subTest(contracts=contracts), self.assertRaises(ValueError):
+                catalog.register(
+                    CommandSpec(
+                        name=name,
+                        related_protocol_contracts=contracts,
+                    )
+                )
+
     def test_confirm_false_precedes_missing_fields_only_for_confirm_specs(self) -> None:
         confirm_catalog = CommandCatalog()
         confirm_catalog.register(

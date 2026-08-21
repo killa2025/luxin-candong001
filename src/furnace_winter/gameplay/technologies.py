@@ -48,13 +48,20 @@ def build_technology_catalog(rules: TechnologyRules) -> CommandCatalog:
             name=RESEARCH_COMMAND,
             required_arguments={"tech_id": ArgumentKind.STRING},
             argument_options={"tech_id": tuple(sorted(rules.technologies))},
+            related_rule_sections=("technologies",),
         )
     )
-    catalog.register(CommandSpec(name=CANCEL_RESEARCH_COMMAND))
+    catalog.register(
+        CommandSpec(
+            name=CANCEL_RESEARCH_COMMAND,
+            related_rule_sections=("technologies",),
+        )
+    )
     catalog.register(
         CommandSpec(
             name=SET_OVERLOAD_COMMAND,
             required_arguments={"level": ArgumentKind.INTEGER},
+            related_rule_sections=("technologies", "survival"),
         )
     )
     return catalog

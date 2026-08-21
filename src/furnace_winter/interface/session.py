@@ -768,6 +768,18 @@ class GameSession:
                     "submitted_expected_state_sequence",
                     request.expected_state_sequence,
                 )
+        if result.code is ErrorCode.COMMAND_NOT_REGISTERED:
+            data.setdefault("reason", "command_name_not_registered")
+            data.setdefault("submitted_name", request.name)
+            if request.name == "rules.query":
+                data.update(
+                    {
+                        "rules_query_is_game_command": False,
+                        "rules_query_contract": deepcopy(
+                            self._protocol_contract()["rules_query"]
+                        ),
+                    }
+                )
         if data.get("reason") == "confirmation_required":
             data.update(
                 {

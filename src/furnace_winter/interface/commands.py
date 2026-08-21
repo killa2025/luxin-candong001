@@ -116,6 +116,7 @@ class CommandSpec:
     allow_extra_arguments: bool = False
     argument_semantics: Mapping[str, str] = field(default_factory=dict)
     related_rule_sections: tuple[str, ...] = ()
+    related_protocol_contracts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +181,18 @@ class CommandCatalog:
             raise ValueError("related rule sections must use stable normalized ids")
         if len(set(spec.related_rule_sections)) != len(spec.related_rule_sections):
             raise ValueError("related rule sections must be unique")
+        if any(
+            not isinstance(contract, str)
+            or not COMMAND_NAME_PATTERN.fullmatch(contract)
+            for contract in spec.related_protocol_contracts
+        ):
+            raise ValueError(
+                "related protocol contracts must use stable normalized ids"
+            )
+        if len(set(spec.related_protocol_contracts)) != len(
+            spec.related_protocol_contracts
+        ):
+            raise ValueError("related protocol contracts must be unique")
         if "confirm" in known_arguments and "confirm" not in spec.argument_semantics:
             spec = replace(
                 spec,

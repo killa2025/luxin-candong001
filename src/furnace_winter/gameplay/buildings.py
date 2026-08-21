@@ -494,10 +494,24 @@ class BuildingSystem:
                 },
             )
         if point.is_depleted:
+            details: dict[str, Any] = {
+                "reason": "resource_point_depleted",
+                "resource_point_id": point.resource_point_id,
+                "accepts_assignments": False,
+                "assigned_workers": point.assigned_workers,
+                "assigned_engineers": point.assigned_engineers,
+            }
+            if request.name == UNASSIGN_RESOURCE_COMMAND:
+                details.update(
+                    {
+                        "assignments_released_automatically": True,
+                        "unassign_required": False,
+                    }
+                )
             return CommandValidation(
                 False,
                 ErrorCode.ILLEGAL_COMMAND,
-                {"reason": "resource_point_depleted"},
+                details,
             )
         field_name = f"assigned_{population_type}"
         current = getattr(point, field_name)
