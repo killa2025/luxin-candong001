@@ -51,6 +51,33 @@ def invalid_command_format_details() -> dict[str, Any]:
     }
 
 
+def invalid_arguments_format_details(arguments: Any) -> dict[str, Any]:
+    """Return protocol guidance when the arguments container is not an object."""
+
+    if isinstance(arguments, Mapping):
+        actual_kind = "OBJECT"
+    elif isinstance(arguments, list):
+        actual_kind = "ARRAY"
+    elif arguments is None:
+        actual_kind = "NULL"
+    elif isinstance(arguments, bool):
+        actual_kind = "BOOLEAN"
+    elif isinstance(arguments, str):
+        actual_kind = "STRING"
+    elif isinstance(arguments, (int, float)):
+        actual_kind = "NUMBER"
+    else:
+        actual_kind = "NON_JSON"
+    details = invalid_command_format_details()
+    details["field_errors"] = {
+        "arguments": {
+            "required_kind": "OBJECT",
+            "actual_kind": actual_kind,
+        }
+    }
+    return details
+
+
 class ErrorCode(StrEnum):
     OK = "OK"
     INVALID_COMMAND_FORMAT = "INVALID_COMMAND_FORMAT"
@@ -234,12 +261,39 @@ class CommandValidator:
                 ErrorCode.INVALID_COMMAND_FORMAT,
                 invalid_command_format_details(),
             )
-        if not isinstance(request.arguments, Mapping) or not _is_json_value(request.arguments):
-            return CommandValidation(False, ErrorCode.INVALID_ARGUMENTS)
+        if not isinstance(request.arguments, Mapping):
+            return CommandValidation(
+                False,
+                ErrorCode.INVALID_COMMAND_FORMAT,
+                invalid_arguments_format_details(request.arguments),
+            )
+        if not _is_json_value(request.arguments):
+            return CommandValidation(
+                False,
+                ErrorCode.INVALID_ARGUMENTS,
+                {"reason": "arguments_contains_non_json_value"},
+            )
 
         spec = self._catalog.get(request.name)
         if spec is None:
             return CommandValidation(False, ErrorCode.COMMAND_NOT_REGISTERED)
+
+        known_arguments = set(spec.required_arguments) | set(
+            spec.optional_arguments
+        )
+        if (
+            "confirm" in known_arguments
+            and request.arguments.get("confirm") is False
+        ):
+            return CommandValidation(
+                False,
+                ErrorCode.ILLEGAL_COMMAND,
+                {
+                    "reason": "confirm_false_is_not_preview",
+                    "required_confirmation_value": True,
+                    "state_will_change": False,
+                },
+            )
 
         if state is not None and request.expected_state_sequence is not None:
             if request.expected_state_sequence != state.command_sequence:
@@ -298,17 +352,6 @@ class CommandValidator:
                         name: list(spec.argument_options[name])
                         for name in invalid_options
                     },
-                },
-            )
-
-        if request.arguments.get("confirm") is False:
-            return CommandValidation(
-                False,
-                ErrorCode.ILLEGAL_COMMAND,
-                {
-                    "reason": "confirm_false_is_not_preview",
-                    "required_confirmation_value": True,
-                    "state_will_change": False,
                 },
             )
 

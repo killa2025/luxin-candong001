@@ -117,6 +117,25 @@ class GameSessionTests(unittest.TestCase):
         self.assertFalse(
             contracts["frost_survived_clean"]["zero_deaths_required"]
         )
+        self.assertFalse(
+            contracts["frost_survived_clean"][
+                "city_continuity_broken_allowed"
+            ]
+        )
+        self.assertEqual(
+            contracts["frost_survived_clean"]["blocked_by_tag"],
+            "frost_survived_broken",
+        )
+        self.assertEqual(
+            contracts["frost_survived_clean"]["city_continuity"][
+                "minimum_alive_population"
+            ],
+            40,
+        )
+        self.assertEqual(
+            contracts["frost_survived_broken"]["takes_precedence_over"],
+            ["frost_survived_clean"],
+        )
         self.assertEqual(
             contracts["frost_survived_broken"]["applies_when_any"][0],
             {"condition_id": "zero_score_systems", "minimum": 2},
@@ -512,7 +531,18 @@ class GameSessionTests(unittest.TestCase):
         )
 
         self.assertEqual(session.status()["resources"]["coal"], 70)
-        self.assertEqual(malformed.result.code, ErrorCode.INVALID_ARGUMENTS)
+        self.assertEqual(
+            malformed.result.code,
+            ErrorCode.INVALID_COMMAND_FORMAT,
+        )
+        self.assertEqual(
+            malformed.result.data["field_errors"]["arguments"],
+            {"required_kind": "OBJECT", "actual_kind": "ARRAY"},
+        )
+        self.assertEqual(
+            malformed.result.data["request_shape"]["arguments"],
+            "OBJECT",
+        )
         self.assertIsNone(malformed.replay_sequence)
         self.assertEqual(
             malformed_identity.result.code,
@@ -554,26 +584,34 @@ class GameSessionTests(unittest.TestCase):
         self.assertTrue(stale.result.data["requires_fresh_observation"])
         self.assertEqual(stale.result.data["retry_expected_state_sequence"], 0)
 
-    def test_confirm_false_never_previews_or_changes_a_non_risky_action(self) -> None:
-        session = self.new_session(seed=1120)
-        signed = session.command(
-            "game.sign_law", {"law_id": "coarse_soup_law"}
-        )
-        self.assertTrue(signed.result.accepted)
-        before = session.state
+    def test_confirm_false_precedes_missing_fields_without_state_pollution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "confirm-false.json"
+            session = self.new_session(seed=1120, save_path=save_path)
+            before_state = encode_game_state(session.state)
+            before_save = save_path.read_bytes()
+            before_replay_count = len(session.replay_document().entries)
 
-        rejected = session.command(
-            "game.set_ration",
-            {"mode": "coarse_soup", "confirm": False},
-        )
+            rejected = session.command(
+                "game.overtime",
+                {"confirm": False},
+            )
 
-        self.assertEqual(rejected.result.code, ErrorCode.ILLEGAL_COMMAND)
-        self.assertEqual(
-            rejected.result.data["reason"],
-            "confirm_false_is_not_preview",
-        )
-        self.assertFalse(rejected.result.data["state_will_change"])
-        self.assertEqual(session.state, before)
+            self.assertEqual(rejected.result.code, ErrorCode.ILLEGAL_COMMAND)
+            self.assertEqual(
+                rejected.result.data["reason"],
+                "confirm_false_is_not_preview",
+            )
+            self.assertFalse(rejected.result.data["state_will_change"])
+            self.assertFalse(rejected.save_written)
+            self.assertEqual(encode_game_state(session.state), before_state)
+            self.assertEqual(save_path.read_bytes(), before_save)
+            self.assertEqual(rejected.result.state_sequence, 0)
+            replay = session.replay_document()
+            self.assertEqual(len(replay.entries), before_replay_count + 1)
+            self.assertFalse(replay.entries[-1].result.accepted)
+            self.assertFalse(replay.entries[-1].result.state_changed)
+            self.assertEqual(replay.entries[-1].result.state_sequence, 0)
 
     def test_replay_can_be_exported_as_canonical_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -8,9 +8,9 @@
 
 ## 协议与确认语义
 
-- 非法 JSON 命令格式返回两种正式支持的封装形状、必填/可选字段、默认值及 `command` → `name` 的不支持别名说明；示例只使用协议占位符，不出现任何已注册游戏命令或具体行动参数。
+- 非法 JSON 命令格式返回两种正式支持的封装形状、必填/可选字段、默认值及 `command` → `name` 的不支持别名说明；`arguments` 不是对象时同样归入该格式错误，并返回要求的 `OBJECT` 与实际 JSON 类型。示例只使用协议占位符，不出现任何已注册游戏命令或具体行动参数。
 - 所有带 `confirm` 参数的命令规格统一声明 `explicit_true_only_never_preview`。
-- 显式提交 `confirm=false` 必须拒绝为 `confirm_false_is_not_preview`，不执行、不预览且不改变状态；缺少确认时仍返回 `confirmation_required`，并明确唯一有效确认值为 `true`。
+- 命令规格声明 `confirm` 且显式提交布尔 `false` 时，必须优先拒绝为 `confirm_false_is_not_preview`，即使其他必填参数缺失；不接受确认参数的命令仍按 unexpected 参数处理。拒绝不执行、不预览、不写存档、不推进游戏状态序列；回放按既有完整审计口径只记录该失败尝试。缺少确认时仍返回 `confirmation_required`，并明确唯一有效确认值为 `true`。
 - `STALE_STATE` 返回当前序列、是否需要重新观察及可用于重试的 `expected_state_sequence`；它只提供并发恢复事实，不自动重试或替玩家执行。
 
 ## 派员与目标发现
@@ -27,7 +27,7 @@
 
 ## 终局标签合同
 
-正式机器观察为 `frost_survived_clean` 与 `frost_survived_broken` 返回稳定的 `tag_contracts`。其中 clean 的机器含义是“系统稳定存活”，明确不要求零死亡；broken 的多个触发条件和阈值由与正式派生逻辑共用的常量暴露，避免说明与结算漂移。
+正式机器观察为 `frost_survived_clean` 与 `frost_survived_broken` 返回稳定的 `tag_contracts`。其中 clean 的机器含义是“系统稳定存活”，明确不要求零死亡，并禁止城市连续性崩坏；broken 与 clean 互斥且优先。城市连续性合同公开绝对下限、基线人口百分比、基线人口、本局最低存活人口及整数公式；它与评分和正式标签派生共用同一个计算。broken 的其他触发条件和阈值也继续由正式派生逻辑共用的常量暴露，避免说明与结算漂移。
 
 本轮只解释现有标签，不改变评分、标签派生或终局结果。
 
@@ -35,7 +35,7 @@
 
 - 新增或更新协议格式、确认参数、陈旧序列、派员占用、未知目标、供热警告和终局标签的单元及正式会话回归测试。
 - `confirm=false`、非法格式和陈旧状态拒绝后均保持状态不变；正式会话与 CLI 返回相同机器语义。
-- 全量 unittest：430 项通过。
+- 全量 unittest：432 项通过。
 - 9 份 JSON 配置校验、`compileall` 与 `git diff --check` 通过。
 - 当前存档仍为 v17；没有新增或迁移游戏状态字段。
 - 未处理的未知规则 section、钢材不可逆风险、解除派员幂等、事件缺正文及其他未复现反馈继续登记在 `docs/PENDING.md`。

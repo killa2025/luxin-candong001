@@ -1377,45 +1377,7 @@ class FinalFrostSystem:
                 "total_score": state.final_result.total_score,
                 "major_tags": list(state.final_result.major_tags),
                 "defining_tags": list(state.final_result.defining_tags),
-                "tag_contracts": {
-                    "frost_survived_clean": {
-                        "meaning_id": "stable_system_survival_not_zero_deaths",
-                        "zero_deaths_required": False,
-                        "survival_required": True,
-                        "hard_fail_allowed": False,
-                        "maximum_zero_score_systems": 0,
-                        "maximum_insufficient_score_systems": (
-                            _CLEAN_SURVIVAL_MAX_INSUFFICIENT_SCORE_SYSTEMS
-                        ),
-                        "mass_death_day_allowed": False,
-                    },
-                    "frost_survived_broken": {
-                        "meaning_id": "multiple_system_failures_but_city_survived",
-                        "survival_required": True,
-                        "hard_fail_allowed": False,
-                        "applies_when_any": [
-                            {
-                                "condition_id": "zero_score_systems",
-                                "minimum": (
-                                    _BROKEN_SURVIVAL_MIN_ZERO_SCORE_SYSTEMS
-                                ),
-                            },
-                            {
-                                "condition_id": "total_score",
-                                "maximum": _BROKEN_SURVIVAL_MAX_TOTAL_SCORE,
-                            },
-                            {"condition_id": "city_continuity_broken"},
-                            {
-                                "condition_id": (
-                                    "mass_death_day_with_low_score_systems"
-                                ),
-                                "minimum_low_score_systems": (
-                                    _BROKEN_SURVIVAL_MIN_LOW_SCORE_SYSTEMS_WITH_MASS_DEATH
-                                ),
-                            },
-                        ],
-                    },
-                },
+                "tag_contracts": self._survival_tag_contracts(state),
             },
         }
 
@@ -2191,10 +2153,7 @@ class FinalFrostSystem:
 
         baseline = max(state.final_frost.baseline_alive_population, 1)
         survival = state.population.population_alive * 100 // baseline
-        continuity = max(
-            self.rules.scoring["city_continuity_minimum"],
-            baseline * self.rules.scoring["city_continuity_population_percent"] // 100,
-        )
+        continuity = self._city_continuity_threshold(state)
         mass_death_days = count("mass_death")
         if survival >= 90 and mass_death_days == 0 and state.population.population_alive >= continuity * 2:
             population = 4
@@ -2306,12 +2265,7 @@ class FinalFrostSystem:
         add("broken_society", scores["trust_and_panic"] == 0)
         add("oath_carried_zero_trust", (state.trust_panic.trust or 0) == 0 and state.oath_order.final_oath_active)
         add("decree_carried_panic", (state.trust_panic.panic or 0) == 100 and state.oath_order.highest_order_active)
-        continuity = max(
-            self.rules.scoring["city_continuity_minimum"],
-            state.final_frost.baseline_alive_population
-            * self.rules.scoring["city_continuity_population_percent"]
-            // 100,
-        )
+        continuity = self._city_continuity_threshold(state)
         add("city_continuity_broken", 0 < state.population.population_alive < continuity)
         zero_scores = sum(score == 0 for score in scores.values())
         insufficient_scores = sum(score == 1 for score in scores.values())
@@ -2343,7 +2297,8 @@ class FinalFrostSystem:
                 and zero_scores == 0
                 and insufficient_scores
                 <= _CLEAN_SURVIVAL_MAX_INSUFFICIENT_SCORE_SYSTEMS
-                and not mass_death_day,
+                and not mass_death_day
+                and not city_continuity_broken,
             )
         add("old_city_stabilized", state.old_city.result_id == "scattered")
         add(
@@ -2459,3 +2414,87 @@ class FinalFrostSystem:
         for tag in state.social_policy.ending_tag_candidates:
             add(tag, tag in self.rules.tag_severity)
         return [tag for tag in self.rules.tag_severity if tag in tags]
+
+    def _city_continuity_threshold(self, state: GameState) -> int:
+        return max(
+            self.rules.scoring["city_continuity_minimum"],
+            state.final_frost.baseline_alive_population
+            * self.rules.scoring["city_continuity_population_percent"]
+            // 100,
+        )
+
+    def _city_continuity_contract(self, state: GameState) -> dict[str, object]:
+        return {
+            "formula_id": "max_absolute_or_floor_baseline_percent",
+            "formula": (
+                "max(city_continuity_minimum, "
+                "floor(baseline_alive_population * "
+                "city_continuity_population_percent / 100))"
+            ),
+            "configured_minimum": self.rules.scoring[
+                "city_continuity_minimum"
+            ],
+            "configured_baseline_population_percent": self.rules.scoring[
+                "city_continuity_population_percent"
+            ],
+            "baseline_alive_population": (
+                state.final_frost.baseline_alive_population
+            ),
+            "minimum_alive_population": self._city_continuity_threshold(
+                state
+            ),
+            "broken_when": (
+                "population_alive_greater_than_zero_and_less_than_minimum"
+            ),
+        }
+
+    def _survival_tag_contracts(
+        self, state: GameState
+    ) -> dict[str, object]:
+        continuity_contract = self._city_continuity_contract(state)
+        return {
+            "frost_survived_clean": {
+                "meaning_id": "stable_system_survival_not_zero_deaths",
+                "mutually_exclusive_with": ["frost_survived_broken"],
+                "blocked_by_tag": "frost_survived_broken",
+                "zero_deaths_required": False,
+                "survival_required": True,
+                "hard_fail_allowed": False,
+                "maximum_zero_score_systems": 0,
+                "maximum_insufficient_score_systems": (
+                    _CLEAN_SURVIVAL_MAX_INSUFFICIENT_SCORE_SYSTEMS
+                ),
+                "mass_death_day_allowed": False,
+                "city_continuity_broken_allowed": False,
+                "city_continuity": dict(continuity_contract),
+            },
+            "frost_survived_broken": {
+                "meaning_id": "multiple_system_failures_but_city_survived",
+                "mutually_exclusive_with": ["frost_survived_clean"],
+                "takes_precedence_over": ["frost_survived_clean"],
+                "survival_required": True,
+                "hard_fail_allowed": False,
+                "applies_when_any": [
+                    {
+                        "condition_id": "zero_score_systems",
+                        "minimum": _BROKEN_SURVIVAL_MIN_ZERO_SCORE_SYSTEMS,
+                    },
+                    {
+                        "condition_id": "total_score",
+                        "maximum": _BROKEN_SURVIVAL_MAX_TOTAL_SCORE,
+                    },
+                    {
+                        "condition_id": "city_continuity_broken",
+                        "contract": dict(continuity_contract),
+                    },
+                    {
+                        "condition_id": (
+                            "mass_death_day_with_low_score_systems"
+                        ),
+                        "minimum_low_score_systems": (
+                            _BROKEN_SURVIVAL_MIN_LOW_SCORE_SYSTEMS_WITH_MASS_DEATH
+                        ),
+                    },
+                ],
+            },
+        }

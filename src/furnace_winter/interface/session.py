@@ -44,6 +44,7 @@ from furnace_winter.interface.commands import (
     CommandValidation,
     CommandValidator,
     ErrorCode,
+    invalid_arguments_format_details,
     invalid_command_format_details,
 )
 from furnace_winter.interface.feedback import CommandResult
@@ -495,7 +496,10 @@ class GameSession:
             command_id = f"session-{self._attempt_sequence + 1:06d}"
         arguments = payload.get("arguments", {})
         if not isinstance(arguments, Mapping):
-            return self._invalid_arguments_result(str(command_id))
+            return self._malformed_result(
+                str(command_id),
+                invalid_arguments_format_details(arguments),
+            )
         expected = payload.get(
             "expected_state_sequence",
             self._state.command_sequence,
@@ -685,7 +689,11 @@ class GameSession:
             save_written=save_written,
         )
 
-    def _malformed_result(self, command_id: str) -> SessionExecution:
+    def _malformed_result(
+        self,
+        command_id: str,
+        details: Mapping[str, Any] | None = None,
+    ) -> SessionExecution:
         return SessionExecution(
             protocol_version=PROTOCOL_VERSION,
             replay_sequence=None,
@@ -694,20 +702,11 @@ class GameSession:
                 accepted=False,
                 code=ErrorCode.INVALID_COMMAND_FORMAT,
                 state_sequence=self._state.command_sequence,
-                data=invalid_command_format_details(),
-            ),
-            status=self.status(),
-        )
-
-    def _invalid_arguments_result(self, command_id: str) -> SessionExecution:
-        return SessionExecution(
-            protocol_version=PROTOCOL_VERSION,
-            replay_sequence=None,
-            result=CommandResult(
-                command_id=command_id,
-                accepted=False,
-                code=ErrorCode.INVALID_ARGUMENTS,
-                state_sequence=self._state.command_sequence,
+                data=(
+                    invalid_command_format_details()
+                    if details is None
+                    else dict(details)
+                ),
             ),
             status=self.status(),
         )
