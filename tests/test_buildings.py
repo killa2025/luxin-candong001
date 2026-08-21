@@ -1472,6 +1472,11 @@ class BuildingPatchTests(unittest.TestCase):
             for item in execution.warnings
             if item.warning_id == "buildings.resource_points_depleted"
         )
+        depletion_log = next(
+            item
+            for item in execution.logs
+            if item.code == "buildings.resource_points.depleted"
+        )
 
         self.assertTrue(shelter.accepted)
         self.assertTrue(assigned.accepted)
@@ -1511,6 +1516,7 @@ class BuildingPatchTests(unittest.TestCase):
         )
         self.assertEqual(serialized_warning["assessment_stage"], "settlement_result")
         self.assertEqual(serialized_warning["details"], depletion_warning.details)
+        self.assertEqual(depletion_log.payload, depletion_warning.details)
         rejected = self.execute(
             state,
             ASSIGN_RESOURCE_COMMAND,
@@ -1540,6 +1546,56 @@ class BuildingPatchTests(unittest.TestCase):
         self.assertEqual(unassign.data["assigned_workers"], 0)
         self.assertEqual(unassign.data["assigned_engineers"], 0)
         self.assertEqual(state, before_unassign)
+
+    def test_depletion_fact_log_is_not_published_when_later_stage_rolls_back(
+        self,
+    ) -> None:
+        state = self.make_state()
+        point_id = "surface-steel-1"
+        state.surface_resource_points[point_id].remaining_amount = 1
+        assigned = self.execute(
+            state,
+            ASSIGN_RESOURCE_COMMAND,
+            {
+                "resource_point_id": point_id,
+                "population_type": "engineers",
+                "count": 1,
+            },
+        )
+        before = deepcopy(state)
+        engine = self.make_engine()
+
+        def fail_after_production(_context) -> None:
+            raise RuntimeError("test-only later-stage failure")
+
+        engine.register_stage_handler(
+            EndDayStage.RESOLVE_TRUST_AND_PANIC,
+            fail_after_production,
+        )
+        execution = self.settle_day(state, engine, "depletion-rollback")
+
+        self.assertTrue(assigned.accepted)
+        self.assertEqual(execution.result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(state, before)
+        self.assertEqual(
+            state.surface_resource_points[point_id].remaining_amount,
+            1,
+        )
+        self.assertEqual(
+            state.surface_resource_points[point_id].assigned_engineers,
+            1,
+        )
+        self.assertNotIn(
+            "buildings.resource_points_depleted",
+            {
+                item["warning_id"]
+                for item in execution.result.data["warnings"]
+            },
+        )
+        self.assertNotIn(
+            "buildings.resource_points.depleted",
+            {item.code for item in execution.logs},
+        )
 
     def test_fractional_production_uses_saved_integer_remainder(self) -> None:
         state = self.make_state()

@@ -315,6 +315,11 @@ class GameSessionTests(unittest.TestCase):
             for item in session.replay_document().entries[-1].result.data["warnings"]
             if item["warning_id"] == "buildings.resource_points_depleted"
         )
+        replay_log = next(
+            item
+            for item in session.replay_document().entries[-1].logs
+            if item.code == "buildings.resource_points.depleted"
+        )
 
         self.assertEqual(assigned.result.code, ErrorCode.OK)
         self.assertEqual(settled.result.code, ErrorCode.OK)
@@ -325,6 +330,59 @@ class GameSessionTests(unittest.TestCase):
             warning["details"]["assignments_released_automatically"]
         )
         self.assertEqual(replay_warning, warning)
+        self.assertEqual(replay_log.payload, warning["details"])
+
+    def test_depletion_fact_is_absent_from_replay_when_autosave_sink_fails(
+        self,
+    ) -> None:
+        session = self.new_session(seed=1128)
+        point_id = "surface-steel-1"
+        session._state.surface_resource_points[point_id].remaining_amount = 1
+        assigned = session.command(
+            "game.assign_resource",
+            {
+                "resource_point_id": point_id,
+                "population_type": "engineers",
+                "count": 1,
+            },
+        )
+        before = encode_game_state(session.state)
+
+        def fail_autosave_sink(_record) -> None:
+            raise OSError("test-only autosave receiver failure")
+
+        session.end_day._autosave_sink = fail_autosave_sink
+        failed = session.command("game.end_day")
+        if failed.result.code is ErrorCode.END_DAY_CONFIRMATION_REQUIRED:
+            failed = session.command(
+                "game.confirm_end_day",
+                failed.result.data["confirmation"],
+            )
+        replay_entry = session.replay_document().entries[-1]
+
+        self.assertEqual(assigned.result.code, ErrorCode.OK)
+        self.assertEqual(failed.result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(failed.result.data["failed_stage"], "write_autosave")
+        self.assertEqual(encode_game_state(session.state), before)
+        self.assertNotIn(
+            "buildings.resource_points_depleted",
+            {
+                item["warning_id"]
+                for item in failed.result.data["warnings"]
+            },
+        )
+        self.assertNotIn(
+            "buildings.resource_points.depleted",
+            {item.code for item in replay_entry.logs},
+        )
+        self.assertEqual(
+            session.state.surface_resource_points[point_id].remaining_amount,
+            1,
+        )
+        self.assertEqual(
+            session.state.surface_resource_points[point_id].assigned_engineers,
+            1,
+        )
 
     def test_rules_query_command_guess_returns_the_official_envelope(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

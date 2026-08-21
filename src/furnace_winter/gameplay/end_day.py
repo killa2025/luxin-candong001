@@ -186,6 +186,10 @@ class EndDayContext:
     stage: EndDayStage
     _emit: Callable[[str, Mapping[str, Any]], None] = field(repr=False)
     _warn: Callable[[RiskWarning], None] | None = field(default=None, repr=False)
+    _emit_on_commit: Callable[[str, Mapping[str, Any]], None] | None = field(
+        default=None,
+        repr=False,
+    )
 
     def emit(self, code: str, payload: Mapping[str, Any] | None = None) -> None:
         if not _IDENTIFIER_PATTERN.fullmatch(code):
@@ -199,6 +203,18 @@ class EndDayContext:
             raise TypeError("settlement warning must be a RiskWarning")
         if self._warn is not None:
             self._warn(warning)
+
+    def emit_on_commit(
+        self,
+        code: str,
+        payload: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Queue a factual log that must not survive a rolled-back settlement."""
+
+        if not _IDENTIFIER_PATTERN.fullmatch(code):
+            raise ValueError(f"invalid settlement log code: {code!r}")
+        if self._emit_on_commit is not None:
+            self._emit_on_commit(code, payload or {})
 
     def abort(
         self,
@@ -747,6 +763,7 @@ class EndDayEngine:
         random = DeterministicRandom.from_state(working.random)
         settled_day = working.calendar.current_day
         logs: list[LogEntry] = []
+        commit_logs: list[tuple[str, dict[str, Any]]] = []
         settlement_warnings: list[RiskWarning] = []
         pending_autosave: AutosaveRecord | None = None
         current_stage = EndDayStage.LOCK_INPUT
@@ -773,6 +790,14 @@ class EndDayEngine:
                 replace(
                     warning,
                     assessment_stage=RiskWarningStage.SETTLEMENT_RESULT,
+                )
+            )
+
+        def queue_commit_log(code: str, payload: Mapping[str, Any]) -> None:
+            commit_logs.append(
+                (
+                    code,
+                    _snapshot_object(payload, "commit settlement log payload"),
                 )
             )
 
@@ -860,6 +885,7 @@ class EndDayEngine:
                             stage=current_stage,
                             _emit=append_log,
                             _warn=append_warning,
+                            _emit_on_commit=queue_commit_log,
                         )
                         boundary_state_changed = False
                         for handler in self._new_day_context_handlers:
@@ -873,6 +899,7 @@ class EndDayEngine:
                                 stage=EndDayStage.CHECK_HARD_FAILS,
                                 _emit=append_log,
                                 _warn=append_warning,
+                                _emit_on_commit=queue_commit_log,
                             )
                             for handler in self._stage_handlers[
                                 EndDayStage.CHECK_HARD_FAILS
@@ -906,6 +933,7 @@ class EndDayEngine:
                         stage=current_stage,
                         _emit=append_log,
                         _warn=append_warning,
+                        _emit_on_commit=queue_commit_log,
                     )
                     for handler in self._stage_handlers[current_stage]:
                         handler(context)
@@ -990,6 +1018,8 @@ class EndDayEngine:
                 )
         _replace_state(state, working)
         self._last_autosave = deepcopy(pending_autosave)
+        for code, payload in commit_logs:
+            append_log(code, payload)
         committed_warnings = (*warnings, *settlement_warnings)
         transition = (
             "hard_fail"

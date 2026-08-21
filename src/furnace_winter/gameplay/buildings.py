@@ -976,7 +976,7 @@ class BuildingSystem:
                     details,
                 )
             )
-            context.emit("buildings.resource_points.depleted", details)
+            context.emit_on_commit("buildings.resource_points.depleted", details)
         context.emit(
             "buildings.production.settled",
             {
