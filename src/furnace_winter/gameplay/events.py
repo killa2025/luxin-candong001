@@ -113,6 +113,7 @@ def build_event_catalog() -> CommandCatalog:
                 EVENT_ID_ARGUMENT: ArgumentKind.STRING,
                 OPTION_ID_ARGUMENT: ArgumentKind.STRING,
             },
+            related_rule_sections=("events",),
         )
     )
     return catalog

@@ -616,6 +616,32 @@ class Patch013BalanceTests(unittest.TestCase):
         self.assertFalse(
             health_log.payload["furnace_off_minimum_death_applied"]
         )
+        result_warning = {
+            item.warning_id: item for item in execution.warnings
+        }["survival.deaths_occurred"]
+        self.assertEqual(result_warning.assessment_stage.value, "settlement_result")
+        self.assertEqual(
+            result_warning.details["total_deaths"],
+            health_log.payload["disease_deaths"],
+        )
+        self.assertEqual(
+            result_warning.details["disease_deaths"],
+            health_log.payload["disease_deaths"],
+        )
+        self.assertEqual(result_warning.details["hunger_deaths"], 0)
+        self.assertEqual(result_warning.details["cold_exposure_deaths"], 0)
+        self.assertTrue(result_warning.details["cause_breakdown_matches_total"])
+        self.assertIn(
+            "laws.unhandled_bodies_after_settlement",
+            {item.warning_id for item in execution.warnings},
+        )
+        self.assertIn(
+            "survival.deaths_occurred",
+            {
+                item["warning_id"]
+                for item in replay.entries[-1].result.data["warnings"]
+            },
+        )
         self.assertEqual(len(replay.entries), 2)
 
     def test_formal_zero_affordable_heat_hunger_death_does_not_add_cold_death(self) -> None:
@@ -656,6 +682,15 @@ class Patch013BalanceTests(unittest.TestCase):
         self.assertFalse(
             health_log.payload["furnace_off_minimum_death_applied"]
         )
+        result_warning = {
+            item.warning_id: item for item in execution.warnings
+        }["survival.deaths_occurred"]
+        self.assertEqual(
+            result_warning.details["hunger_deaths"],
+            health_log.payload["hunger_deaths"],
+        )
+        self.assertEqual(result_warning.details["cold_exposure_deaths"], 0)
+        self.assertTrue(result_warning.details["cause_breakdown_matches_total"])
         self.assertEqual(len(replay.entries), 2)
 
     def test_formal_furnace_off_without_other_deaths_adds_logged_cold_death(self) -> None:
@@ -680,6 +715,16 @@ class Patch013BalanceTests(unittest.TestCase):
         self.assertTrue(
             health_log.payload["furnace_off_minimum_death_applied"]
         )
+        result_warning = {
+            item.warning_id: item for item in execution.warnings
+        }["survival.deaths_occurred"]
+        self.assertEqual(result_warning.details["disease_deaths"], 0)
+        self.assertEqual(result_warning.details["hunger_deaths"], 0)
+        self.assertEqual(
+            result_warning.details["cold_exposure_deaths"],
+            health_log.payload["cold_deaths"],
+        )
+        self.assertTrue(result_warning.details["cause_breakdown_matches_total"])
         self.assertEqual(len(replay.entries), 2)
 
     def test_small_cold_group_accumulates_exact_saved_remainders(self) -> None:

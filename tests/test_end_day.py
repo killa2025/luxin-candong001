@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from copy import deepcopy
+from unittest.mock import patch
 
 from furnace_winter.gameplay import (
     AUTOSAVE_END_DAY_SLOT,
@@ -297,6 +298,31 @@ class EndDayWarningTests(unittest.TestCase):
 
 
 class EndDaySettlementTests(unittest.TestCase):
+    def test_settlement_result_derivation_failure_rolls_back(self) -> None:
+        state = GameState.initial(random_seed=32)
+        before = encode_game_state(state)
+        sink_records: list[object] = []
+        engine = EndDayEngine(autosave_sink=sink_records.append)
+
+        with patch(
+            "furnace_winter.gameplay.end_day._derived_settlement_results",
+            side_effect=RuntimeError("test-only"),
+        ):
+            execution = engine.execute(
+                state,
+                request(END_DAY_COMMAND, "derive-results-failure"),
+            )
+
+        self.assertEqual(execution.result.code, ErrorCode.INTERNAL_ERROR)
+        self.assertEqual(
+            execution.result.data["failed_stage"],
+            "derive_settlement_results",
+        )
+        self.assertEqual(encode_game_state(state), before)
+        self.assertEqual(execution.random_before, execution.random_after)
+        self.assertEqual(sink_records, [])
+        self.assertIsNone(engine.last_autosave())
+
     def test_invalid_handler_state_rolls_back_before_autosave_sink(self) -> None:
         mutators = (
             lambda state: setattr(state.resources, "coal", -7),

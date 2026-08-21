@@ -55,31 +55,42 @@ def build_law_catalog(rules: LawRules | None = None) -> CommandCatalog:
         required_arguments={"law_id": ArgumentKind.STRING},
         optional_arguments={"confirm": ArgumentKind.BOOLEAN},
         argument_options={"law_id": law_ids} if law_ids else {},
+        related_rule_sections=("laws",),
     ))
     catalog.register(CommandSpec(
         name=SET_RATION_COMMAND,
         required_arguments={"mode": ArgumentKind.STRING},
         optional_arguments={"confirm": ArgumentKind.BOOLEAN},
         argument_options={"mode": ration_ids},
+        related_rule_sections=("laws",),
     ))
     catalog.register(CommandSpec(
         name=SET_WORKTIME_COMMAND,
         required_arguments={"mode": ArgumentKind.STRING},
         argument_options={"mode": ("normal", "long_shift")},
+        related_rule_sections=("laws",),
     ))
     catalog.register(CommandSpec(
         name=OVERTIME_COMMAND,
         required_arguments={"building_id": ArgumentKind.STRING, "confirm": ArgumentKind.BOOLEAN},
+        related_rule_sections=("laws", "buildings"),
     ))
     catalog.register(CommandSpec(
         name=MEDICAL_RATION_COMMAND,
         required_arguments={"confirm": ArgumentKind.BOOLEAN},
+        related_rule_sections=("laws",),
     ))
     catalog.register(CommandSpec(
         name=TRIAGE_COMMAND,
         required_arguments={"building_id": ArgumentKind.STRING, "confirm": ArgumentKind.BOOLEAN},
+        related_rule_sections=("laws", "buildings"),
     ))
-    catalog.register(CommandSpec(name=MEMORIAL_COMMAND))
+    catalog.register(
+        CommandSpec(
+            name=MEMORIAL_COMMAND,
+            related_rule_sections=("laws",),
+        )
+    )
     return catalog
 
 

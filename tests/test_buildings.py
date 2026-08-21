@@ -1487,6 +1487,25 @@ class BuildingPatchTests(unittest.TestCase):
             },
         )
         self.assertEqual(rejected.data["reason"], "resource_point_depleted")
+        self.assertFalse(rejected.data["accepts_assignments"])
+        self.assertEqual(rejected.data["assigned_workers"], 0)
+        self.assertEqual(rejected.data["assigned_engineers"], 0)
+
+        before_unassign = deepcopy(state)
+        unassign = self.execute(
+            state,
+            UNASSIGN_RESOURCE_COMMAND,
+            {
+                "resource_point_id": point_id,
+                "population_type": "workers",
+            },
+        )
+        self.assertEqual(unassign.data["reason"], "resource_point_depleted")
+        self.assertTrue(unassign.data["assignments_released_automatically"])
+        self.assertFalse(unassign.data["unassign_required"])
+        self.assertEqual(unassign.data["assigned_workers"], 0)
+        self.assertEqual(unassign.data["assigned_engineers"], 0)
+        self.assertEqual(state, before_unassign)
 
     def test_fractional_production_uses_saved_integer_remainder(self) -> None:
         state = self.make_state()

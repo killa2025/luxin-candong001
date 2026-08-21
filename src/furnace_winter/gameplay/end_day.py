@@ -245,6 +245,107 @@ def _warning_signature(warnings: tuple[RiskWarning, ...]) -> str:
     return sha256(dumps(normalized).encode("utf-8")).hexdigest()
 
 
+def _nonnegative_log_integer(value: Any) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return 0
+
+
+def _latest_log_payload(
+    logs: Iterable[LogEntry], code: str
+) -> Mapping[str, Any] | None:
+    latest: Mapping[str, Any] | None = None
+    for item in logs:
+        if item.code == code:
+            latest = item.payload
+    return latest
+
+
+def _derived_settlement_results(
+    before: GameState,
+    after: GameState,
+    logs: tuple[LogEntry, ...],
+) -> tuple[RiskWarning, ...]:
+    """Describe committed death and body facts without changing game state."""
+
+    results: list[RiskWarning] = []
+    deaths_total = max(
+        after.population.population_dead - before.population.population_dead,
+        0,
+    )
+    if deaths_total > 0:
+        health = _latest_log_payload(logs, "final_frost.health.resolved")
+        cause_breakdown_available = health is not None
+        health = health or {}
+        disease_deaths = _nonnegative_log_integer(
+            health.get("disease_deaths")
+        )
+        hunger_deaths = _nonnegative_log_integer(health.get("hunger_deaths"))
+        cold_deaths = _nonnegative_log_integer(health.get("cold_deaths"))
+        cause_total = disease_deaths + hunger_deaths + cold_deaths
+        results.append(
+            RiskWarning(
+                "survival.deaths_occurred",
+                RiskWarningLevel.A_INFO,
+                {
+                    "total_deaths": deaths_total,
+                    "disease_deaths": disease_deaths,
+                    "hunger_deaths": hunger_deaths,
+                    "cold_exposure_deaths": cold_deaths,
+                    "population_dead_after": after.population.population_dead,
+                    "cause_breakdown_available": cause_breakdown_available,
+                    "cause_breakdown_matches_total": (
+                        cause_breakdown_available and cause_total == deaths_total
+                    ),
+                },
+            )
+        )
+
+    buried = max(
+        after.social_policy.buried_bodies
+        - before.social_policy.buried_bodies,
+        0,
+    )
+    stored = max(
+        after.social_policy.stored_bodies
+        - before.social_policy.stored_bodies,
+        0,
+    )
+    processed = buried + stored
+    if processed > 0:
+        results.append(
+            RiskWarning(
+                "laws.bodies_processed",
+                RiskWarningLevel.A_INFO,
+                {
+                    "processed_total": processed,
+                    "buried_this_settlement": buried,
+                    "stored_this_settlement": stored,
+                    "unhandled_bodies_after": (
+                        after.social_policy.unhandled_bodies
+                    ),
+                },
+            )
+        )
+    if after.social_policy.unhandled_bodies > 0:
+        results.append(
+            RiskWarning(
+                "laws.unhandled_bodies_after_settlement",
+                RiskWarningLevel.B_STRONG,
+                {
+                    "count": after.social_policy.unhandled_bodies,
+                    "count_before": before.social_policy.unhandled_bodies,
+                    "new_unhandled_bodies": max(
+                        after.social_policy.unhandled_bodies
+                        - before.social_policy.unhandled_bodies,
+                        0,
+                    ),
+                },
+            )
+        )
+    return tuple(results)
+
+
 def _state_signature(state: GameState) -> str:
     return sha256(dumps(encode_game_state(state)).encode("utf-8")).hexdigest()
 
@@ -274,7 +375,12 @@ def _safe_random_state(state: Any) -> RandomState:
 
 def build_end_day_catalog() -> CommandCatalog:
     catalog = CommandCatalog()
-    catalog.register(CommandSpec(name=END_DAY_COMMAND))
+    catalog.register(
+        CommandSpec(
+            name=END_DAY_COMMAND,
+            related_protocol_contracts=("end_day_confirmation",),
+        )
+    )
     catalog.register(
         CommandSpec(
             name=CONFIRM_END_DAY_COMMAND,
@@ -288,6 +394,7 @@ def build_end_day_catalog() -> CommandCatalog:
                 CONFIRMATION_STATE_SEQUENCE_ARGUMENT: "preview_state_sequence",
                 CONFIRMATION_WARNING_SIGNATURE_ARGUMENT: "preview_warning_signature",
             },
+            related_protocol_contracts=("end_day_confirmation",),
         )
     )
     return catalog
@@ -526,6 +633,9 @@ class EndDayEngine:
                     warnings,
                     {
                         "reason": "end_day_preview_required",
+                        "active_preview_in_current_session": False,
+                        "tokens_from_closed_or_other_sessions_are_invalid": True,
+                        "required_preview_command": END_DAY_COMMAND,
                         "confirmation_lifecycle": self.confirmation_lifecycle(),
                     },
                     random_before,
@@ -817,6 +927,27 @@ class EndDayEngine:
                 warnings,
                 {
                     "failed_stage": current_stage.value,
+                    "exception_type": type(exc).__name__,
+                },
+                random_before,
+                tuple(logs),
+            )
+
+        try:
+            for warning in _derived_settlement_results(
+                state,
+                working,
+                tuple(logs),
+            ):
+                append_warning(warning)
+        except Exception as exc:
+            return self._rejected(
+                state,
+                request,
+                ErrorCode.INTERNAL_ERROR,
+                warnings,
+                {
+                    "failed_stage": "derive_settlement_results",
                     "exception_type": type(exc).__name__,
                 },
                 random_before,

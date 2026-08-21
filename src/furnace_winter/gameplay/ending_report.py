@@ -52,6 +52,7 @@ def build_ending_report_catalog() -> CommandCatalog:
         CommandSpec(
             name=END_RUN_COMMAND,
             required_arguments={"confirm": ArgumentKind.BOOLEAN},
+            related_rule_sections=("final_frost",),
         )
     )
     return catalog

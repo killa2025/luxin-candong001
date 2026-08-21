@@ -108,6 +108,7 @@ def build_oath_order_catalog(rules: OathOrderRules) -> CommandCatalog:
                     sorted({item for values in _OLD_CITY_OPTIONS.values() for item in values})
                 ),
             },
+            related_rule_sections=("oath_order",),
         )
     )
     catalog.register(
@@ -116,6 +117,7 @@ def build_oath_order_catalog(rules: OathOrderRules) -> CommandCatalog:
             required_arguments={"law_id": ArgumentKind.STRING},
             optional_arguments={"confirm": ArgumentKind.BOOLEAN},
             argument_options={"law_id": tuple(sorted(rules.laws))},
+            related_rule_sections=("oath_order",),
         )
     )
     catalog.register(
@@ -131,6 +133,7 @@ def build_oath_order_catalog(rules: OathOrderRules) -> CommandCatalog:
                 "workers": "absolute_target_count",
                 "engineers": "absolute_target_count",
             },
+            related_rule_sections=("oath_order",),
         )
     )
     catalog.register(
@@ -138,6 +141,7 @@ def build_oath_order_catalog(rules: OathOrderRules) -> CommandCatalog:
             name=USE_OATH_ORDER_ACTION_COMMAND,
             required_arguments={"action_id": ArgumentKind.STRING},
             argument_options={"action_id": tuple(sorted(rules.actions))},
+            related_rule_sections=("oath_order",),
         )
     )
     return catalog

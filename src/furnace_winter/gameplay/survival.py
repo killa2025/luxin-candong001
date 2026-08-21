@@ -489,6 +489,7 @@ def build_survival_catalog() -> CommandCatalog:
         CommandSpec(
             name=SET_FURNACE_COMMAND,
             required_arguments={FURNACE_LEVEL_ARGUMENT: ArgumentKind.INTEGER},
+            related_rule_sections=("survival",),
         )
     )
     return catalog

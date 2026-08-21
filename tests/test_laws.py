@@ -1174,10 +1174,28 @@ class LawPatchTests(unittest.TestCase):
         state.population.housed_population = 40
         state.population.homeless_population = 37
         state.hunger.none_population = 77
-        self.assertTrue(self.settle(self.engine(), state).result.accepted)
+        execution = self.settle(self.engine(), state)
+        self.assertTrue(execution.result.accepted)
         self.assertEqual(state.population.population_dead, 3)
         self.assertEqual(state.social_policy.unhandled_bodies, 0)
         self.assertEqual(state.social_policy.buried_bodies, 3)
+        body_result = {
+            item.warning_id: item for item in execution.warnings
+        }["laws.bodies_processed"]
+        self.assertEqual(body_result.assessment_stage.value, "settlement_result")
+        self.assertEqual(
+            body_result.details,
+            {
+                "processed_total": 3,
+                "buried_this_settlement": 3,
+                "stored_this_settlement": 0,
+                "unhandled_bodies_after": 0,
+            },
+        )
+        self.assertNotIn(
+            "laws.unhandled_bodies_after_settlement",
+            {item.warning_id for item in execution.warnings},
+        )
 
     def test_law_state_round_trip_and_v4_migration(self) -> None:
         state = self.make_state()
