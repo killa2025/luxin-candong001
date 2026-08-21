@@ -17,6 +17,8 @@ class Observation:
     protocol_version: int
     state: GameState
     available_commands: tuple[CommandSpec, ...] = ()
+    available_rule_sections: tuple[str, ...] = ()
+    protocol_contract: dict[str, Any] | None = None
     event_views: tuple[dict[str, Any], ...] = ()
     promise_views: tuple[dict[str, Any], ...] = ()
     map_view: dict[str, Any] | None = None
@@ -33,6 +35,8 @@ class Observation:
         state: GameState,
         available_commands: tuple[CommandSpec, ...] = (),
         *,
+        available_rule_sections: tuple[str, ...] = (),
+        protocol_contract: dict[str, Any] | None = None,
         event_views: tuple[dict[str, Any], ...] = (),
         promise_views: tuple[dict[str, Any], ...] = (),
         map_view: dict[str, Any] | None = None,
@@ -47,6 +51,8 @@ class Observation:
             protocol_version=PROTOCOL_VERSION,
             state=state,
             available_commands=available_commands,
+            available_rule_sections=available_rule_sections,
+            protocol_contract=protocol_contract,
             event_views=event_views,
             promise_views=promise_views,
             map_view=map_view,

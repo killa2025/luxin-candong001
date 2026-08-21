@@ -60,6 +60,44 @@ class TextRegistryTests(unittest.TestCase):
             "第七霜落",
         )
 
+    def test_all_sealed_runtime_event_panels_are_registered(self) -> None:
+        registry = build_event_text_registry()
+        complete_events = (
+            "empty_pot",
+            "raw_food_dispute",
+            "medical_beds_emergency",
+            "severe_case_backlog",
+            "first_body",
+            "bodies_under_snow",
+            "children_request",
+            "red_frozen_hands",
+            "coal_bottom",
+            "cold_house_night",
+            "trust_crack",
+            "city_unrest",
+        )
+        title_and_options_only = (
+            "long_shift_collapse",
+            "overtime_empty_post",
+        )
+
+        for event_id in complete_events:
+            with self.subTest(event_id=event_id):
+                for suffix in ("title", "body", "option_a", "option_b", "option_c"):
+                    self.assertIsNotNone(
+                        registry.get(f"event.{event_id}.{suffix}")
+                    )
+        for event_id in title_and_options_only:
+            with self.subTest(event_id=event_id):
+                for suffix in ("title", "option_a", "option_b", "option_c"):
+                    self.assertIsNotNone(
+                        registry.get(f"event.{event_id}.{suffix}")
+                    )
+                self.assertIsNone(registry.get(f"event.{event_id}.body"))
+
+        for suffix in ("title", "warning", "option_a", "option_b", "option_c"):
+            self.assertIsNotNone(registry.get(f"event.furnace_redline.{suffix}"))
+
     def test_confirmed_text_can_be_looked_up(self) -> None:
         registry = TextRegistry()
         entry = confirmed_entry()

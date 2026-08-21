@@ -2,7 +2,7 @@
 
 《炉心残冬》项目仓库。
 
-代码 Patch 022 及其合并后黑盒修复已完成复审并并入 `main`。Patch 023 在不调整平衡值的前提下加固机器接口：错误格式返回纯协议形状，`confirm=false` 明确拒绝且绝不充当预览，陈旧状态返回可安全重试的序列信息，派员不足返回结构化占用明细，供热警告区分“零档最低死亡规则”与总死亡预测，终局观察说明 `frost_survived_clean` 是系统稳定存活而非零死亡。
+代码 Patch 023 已完成复审并并入 `main`。Patch 024 延续纯黑盒可理解性修正：把第 5 轮资产中已经封存的事件标题、正文与选项接入运行时，公开可查询规则栏目及命令对应栏目，说明日结确认令牌的当前会话生命周期，并区分结算前风险快照与结算中新增结果；未封存正文继续保持 `TODO_TEXT`。本轮不调整平衡值。
 
 游戏的实际玩家是运行在沙盒中的 AI，人类用户负责旁观。这个产品定位不产生 AI 专属规则：游戏仍通过通用结构化命令和状态接口运行，不提供决策评分、推荐行动或自动策略。
 
@@ -31,7 +31,7 @@
 - `game.end_run` 只允许在 D55 完整结算、评分和报告已经生成后以 `confirm=true` 主动封存本局；它保留原 `ending_id`、评分和标签，只另记 `run_state=ended` 与 `termination_reason=player_ended`。
 - 终局报告保存实际选中的 `text_id` 和报告格式版本；Patch 020 使用本局种子对符合状态的封存候选文案作稳定选择，Patch 021 再用同日服务快照证明医疗与食堂经历。既有 v14 的 Patch 010 部分报告迁移为格式 1 并原样读取，不在加载时重抽；新报告固定使用格式 2，不能替换成旧报告形状绕过校验。
 - `GameSession` 是供沙盒 AI 使用的统一运行入口：新建或读取存档后，可通过同一对象调用全部 27 个现有游戏命令；成功修改状态的命令会原子保存，保存失败则回滚本次命令。
-- `GameSession.status()` 每次只返回当前生存与规划所需的紧凑事实；`observe()` 返回完整机器观察；`rules_view(section)` 按模块返回已验证的原始配置及其 `FINAL` / `TEST_NUMERIC` 状态，不提供策略建议。Patch 023 只补足协议、错误恢复、资源占用和结局标签的机器可读语义，不推荐行动或替玩家决策。
+- `GameSession.status()` 每次只返回当前生存与规划所需的紧凑事实；`observe()` 返回完整机器观察，并列出全部 `available_rule_sections`、规则查询协议和日结确认生命周期；`rules_view(section)` 按模块返回已验证的原始配置及其 `FINAL` / `TEST_NUMERIC` 状态，不提供策略建议。命令规格通过 `related_rule_sections` 指向其规则来源，例如所有建筑动作都可追溯到 `buildings` 配置，不必先提交失败命令才能发现成本或前置。
 - `GameSession.replay_document()` 与 `write_replay()` 导出本次进程从打开存档开始的确定性命令记录；它不伪装成此前整局历史。
 - `game.set_furnace` 在白天设置最终炉心档位 `0～3`；炉心关闭或燃料不足会在 `end_day` 前产生结构化强警告。若日结实际有效炉级为 0，当日至少发生 1 例自然死亡；疾病、饥饿优先结算，只有两者均未造成死亡时，既有寒冷系统才保证至少 1 人冻死。警告会分别返回无条件的自然死亡下限与有条件的寒冷死亡下限，不预先断言具体死因。
 - `data/survival.json` 保存已封存的开局值、炉心档位、食物基础规则、固定天气与区域修正。
@@ -86,4 +86,4 @@ print(game.command("game.set_furnace", {"level": 2}))
 print(game.command("game.end_day"))
 ```
 
-`play` 使用一行一个 JSON 对象的长连接协议。新局默认使用 `--map-mode random`；自选时使用 `--map-mode manual --map-key rustbone_tundra|black_ash_lowland|twin_source_rift`。直接发送结构化命令即可；另支持 `{"type":"observe"}`、`{"type":"rules","section":"maps"}`、`{"type":"replay"}` 与 `{"type":"quit"}`。成功日结会在主存档之外写入同目录的 `<存档名>.autosave_end_day.json`，其中保留当日日结清理完成、日期推进前的锁定状态、日志与 `resume_stage`；它不会覆盖主会话存档。建立新局时主存档与自动保存作为同一个持久化集合检查：默认拒绝任何旧文件，显式覆盖会事务式写入新主存档并清除上一局自动保存。回放导出默认拒绝覆盖已有文件；显式覆盖前会严格解析全部回放条目，并始终禁止指向主存档、自动保存或运行配置。具体边界见 `docs/handoff/PATCH-011：统一游戏会话与沙盒入口实现记录.md` 与 `docs/handoff/PATCH-012：三地图开局与确定性随机实现记录.md`。
+`play` 使用一行一个 JSON 对象的长连接协议。新局默认使用 `--map-mode random`；自选时使用 `--map-mode manual --map-key rustbone_tundra|black_ash_lowland|twin_source_rift`。直接发送结构化命令即可；另支持 `{"type":"observe"}`、`{"type":"rules","section":"maps"}`、`{"type":"replay"}` 与 `{"type":"quit"}`。完整规则栏目由观察结果的 `available_rule_sections` 提供。强警告日结返回的确认令牌只在产生预览的同一个存活 `GameSession` 中有效，重连后必须重新预览。成功日结会在主存档之外写入同目录的 `<存档名>.autosave_end_day.json`，其中保留当日日结清理完成、日期推进前的锁定状态、日志与 `resume_stage`；它不会覆盖主会话存档。建立新局时主存档与自动保存作为同一个持久化集合检查：默认拒绝任何旧文件，显式覆盖会事务式写入新主存档并清除上一局自动保存。回放导出默认拒绝覆盖已有文件；显式覆盖前会严格解析全部回放条目，并始终禁止指向主存档、自动保存或运行配置。具体边界见 `docs/handoff/PATCH-011：统一游戏会话与沙盒入口实现记录.md` 与 `docs/handoff/PATCH-012：三地图开局与确定性随机实现记录.md`。

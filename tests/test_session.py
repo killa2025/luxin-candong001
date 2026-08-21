@@ -86,6 +86,29 @@ class GameSessionTests(unittest.TestCase):
         )
 
         observation = session.observe()
+        self.assertEqual(
+            observation.available_rule_sections,
+            (
+                "buildings",
+                "events",
+                "final_frost",
+                "laws",
+                "maps",
+                "oath_order",
+                "survival",
+                "technologies",
+            ),
+        )
+        self.assertEqual(
+            observation.protocol_contract["rules_query"]["request_shape"],
+            {"type": "rules", "section": "RULE_SECTION_STRING"},
+        )
+        self.assertEqual(
+            observation.protocol_contract["end_day_confirmation"][
+                "token_scope"
+            ],
+            "current_game_session",
+        )
         self.assertIsNotNone(observation.law_view)
         self.assertEqual(len(observation.technology_view), 37)
         self.assertIn("law_rules", observation.oath_order_view)
@@ -106,6 +129,21 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(
             set_ration.argument_semantics["confirm"],
             "explicit_true_only_never_preview",
+        )
+        build = next(
+            spec
+            for spec in session.command_specs()
+            if spec.name == "game.build"
+        )
+        self.assertEqual(build.related_rule_sections, ("buildings",))
+        confirm_end_day = next(
+            spec
+            for spec in session.command_specs()
+            if spec.name == "game.confirm_end_day"
+        )
+        self.assertEqual(
+            confirm_end_day.argument_semantics["confirmation_token"],
+            "same_session_preview_token",
         )
         contracts = observation.final_frost_view["final_result"][
             "tag_contracts"
@@ -237,6 +275,36 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(settled.result.code, ErrorCode.OK)
         self.assertEqual(settled.status["day"], 2)
         self.assertEqual(settled.result.data["settled_day"], 1)
+
+    def test_end_day_confirmation_explains_cross_session_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "game.json"
+            first = self.new_session(seed=1124, save_path=save_path)
+            self.assertEqual(
+                first.command("game.set_furnace", {"level": 0}).result.code,
+                ErrorCode.OK,
+            )
+            preview = first.command("game.end_day")
+            confirmation = preview.result.data["confirmation"]
+            lifecycle = preview.result.data["confirmation_lifecycle"]
+
+            reopened = GameSession.load(save_path, config_dir=ROOT / "data")
+            rejected = reopened.command("game.confirm_end_day", confirmation)
+
+        self.assertEqual(
+            preview.result.code,
+            ErrorCode.END_DAY_CONFIRMATION_REQUIRED,
+        )
+        self.assertEqual(lifecycle["token_scope"], "current_game_session")
+        self.assertTrue(lifecycle["requires_preview_in_same_session"])
+        self.assertEqual(rejected.result.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(rejected.result.data["reason"], "end_day_preview_required")
+        self.assertEqual(
+            rejected.result.data["confirmation_lifecycle"],
+            lifecycle,
+        )
+        self.assertFalse(rejected.result.state_changed)
+        self.assertFalse(rejected.save_written)
 
     def test_firepit_floor_does_not_mask_moderate_same_day_hunger_panic(self) -> None:
         session = self.new_session(seed=1118)

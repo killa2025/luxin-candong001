@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
 from hashlib import sha256
 from typing import Any
@@ -48,17 +48,25 @@ class RiskWarningLevel(StrEnum):
     C_HARD_BLOCK = "C_HARD_BLOCK"
 
 
+class RiskWarningStage(StrEnum):
+    PRE_SETTLEMENT = "pre_settlement"
+    SETTLEMENT_RESULT = "settlement_result"
+
+
 @dataclass(frozen=True, slots=True)
 class RiskWarning:
     warning_id: str
     level: RiskWarningLevel
     details: Mapping[str, Any] = field(default_factory=dict)
+    assessment_stage: RiskWarningStage = RiskWarningStage.PRE_SETTLEMENT
 
     def __post_init__(self) -> None:
         if not _IDENTIFIER_PATTERN.fullmatch(self.warning_id):
             raise ValueError(f"invalid warning_id: {self.warning_id!r}")
         if not isinstance(self.level, RiskWarningLevel):
             raise TypeError("warning level must be RiskWarningLevel")
+        if not isinstance(self.assessment_stage, RiskWarningStage):
+            raise TypeError("warning assessment stage must be RiskWarningStage")
         object.__setattr__(self, "details", _snapshot_object(self.details, "details"))
 
 
@@ -222,6 +230,7 @@ def _warning_data(warnings: tuple[RiskWarning, ...]) -> list[dict[str, Any]]:
         {
             "warning_id": warning.warning_id,
             "level": warning.level.value,
+            "assessment_stage": warning.assessment_stage.value,
             "details": _snapshot_object(warning.details, "warning details"),
         }
         for warning in warnings
@@ -274,6 +283,11 @@ def build_end_day_catalog() -> CommandCatalog:
                 CONFIRMATION_STATE_SEQUENCE_ARGUMENT: ArgumentKind.INTEGER,
                 CONFIRMATION_WARNING_SIGNATURE_ARGUMENT: ArgumentKind.STRING,
             },
+            argument_semantics={
+                CONFIRMATION_TOKEN_ARGUMENT: "same_session_preview_token",
+                CONFIRMATION_STATE_SEQUENCE_ARGUMENT: "preview_state_sequence",
+                CONFIRMATION_WARNING_SIGNATURE_ARGUMENT: "preview_warning_signature",
+            },
         )
     )
     return catalog
@@ -299,6 +313,17 @@ class EndDayEngine:
 
     def command_specs(self) -> tuple[CommandSpec, ...]:
         return self._catalog.specs()
+
+    @staticmethod
+    def confirmation_lifecycle() -> dict[str, Any]:
+        return {
+            "preview_command": END_DAY_COMMAND,
+            "confirmation_command": CONFIRM_END_DAY_COMMAND,
+            "token_scope": "current_game_session",
+            "requires_preview_in_same_session": True,
+            "expires_when_session_closes": True,
+            "state_change_invalidates_confirmation": True,
+        }
 
     def register_risk_evaluator(self, evaluator: RiskEvaluator) -> None:
         if not callable(evaluator):
@@ -485,6 +510,7 @@ class EndDayEngine:
                 {
                     "strong_warning_ids": [item.warning_id for item in strong_warnings],
                     "confirmation": confirmation.as_data(),
+                    "confirmation_lifecycle": self.confirmation_lifecycle(),
                 },
                 random_before,
             )
@@ -498,7 +524,10 @@ class EndDayEngine:
                     request,
                     ErrorCode.ILLEGAL_COMMAND,
                     warnings,
-                    {"reason": "end_day_preview_required"},
+                    {
+                        "reason": "end_day_preview_required",
+                        "confirmation_lifecycle": self.confirmation_lifecycle(),
+                    },
                     random_before,
                 )
             supplied = request.arguments
@@ -630,7 +659,12 @@ class EndDayEngine:
                 raise ValueError(
                     f"duplicate settlement warning_id: {warning.warning_id}"
                 )
-            settlement_warnings.append(warning)
+            settlement_warnings.append(
+                replace(
+                    warning,
+                    assessment_stage=RiskWarningStage.SETTLEMENT_RESULT,
+                )
+            )
 
         try:
             for current_stage in END_DAY_STAGES:

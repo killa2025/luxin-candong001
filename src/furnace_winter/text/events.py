@@ -10,6 +10,67 @@ _SOURCE = (
 )
 
 _RUNTIME_TEXT = {
+    "event.empty_pot.title": "空锅请愿",
+    "event.empty_pot.body": (
+        "食堂外有人举起空碗。\n\n"
+        "他们没有闹事，只是站在那里。\n"
+        "碗底被刮得很干净，像一圈冻住的月亮。\n\n"
+        "有人说：我们不是要更多，只是想知道明天还有没有。"
+    ),
+    "event.empty_pot.option_a": "承诺补足口粮",
+    "event.empty_pot.option_b": "维持当前配给",
+    "event.empty_pot.option_c": "调整配给",
+    "event.raw_food_dispute.title": "生食争议",
+    "event.raw_food_dispute.body": (
+        "有人在炉边啃半冻的生肉。\n\n"
+        "孩子看着那块肉，没有说话。\n"
+        "大人也没有。\n\n"
+        "第二天，医疗站多了几张发冷的脸。"
+    ),
+    "event.raw_food_dispute.option_a": "承诺恢复熟食供应",
+    "event.raw_food_dispute.option_b": "暂时允许继续食用生食",
+    "event.raw_food_dispute.option_c": "优先供应儿童熟食",
+    "event.medical_beds_emergency.title": "病床告急",
+    "event.medical_beds_emergency.body": (
+        "医疗站门口排着人。\n\n"
+        "有人坐在雪里，有人靠着墙睡着。\n"
+        "医生没有抬头，只说了一句：\n\n"
+        "下一个床位空出来之前，别再有人倒下了。"
+    ),
+    "event.medical_beds_emergency.option_a": "承诺扩容医疗",
+    "event.medical_beds_emergency.option_b": "临时腾挪床位",
+    "event.medical_beds_emergency.option_c": "维持现状",
+    "event.severe_case_backlog.title": "重症积压",
+    "event.severe_case_backlog.body": (
+        "医疗站里安静得不正常。\n\n"
+        "重症病人不再呻吟。\n"
+        "他们只是看着炉光，好像那是某种很远的东西。\n\n"
+        "医生说：我们还能救一些人。\n"
+        "但不是所有人。"
+    ),
+    "event.severe_case_backlog.option_a": "投入额外医疗配给",
+    "event.severe_case_backlog.option_b": "承诺扩大重症收治能力",
+    "event.severe_case_backlog.option_c": "接受现状",
+    "event.first_body.title": "第一具遗体",
+    "event.first_body.body": (
+        "他们把那个人抬到炉边时，雪还粘在他的袖口上。\n\n"
+        "没人知道该把他放在哪里。\n"
+        "也没人愿意第一个说：\n\n"
+        "他已经不需要床位了。"
+    ),
+    "event.first_body.option_a": "公开悼念",
+    "event.first_body.option_b": "低调处理",
+    "event.first_body.option_c": "暂时搁置",
+    "event.bodies_under_snow.title": "雪下尸列",
+    "event.bodies_under_snow.body": (
+        "雪把遗体盖住了一半。\n\n"
+        "这本来让他们看起来安静些。\n"
+        "但风一吹，露出来的手指又提醒所有人：\n\n"
+        "他们还在这里。"
+    ),
+    "event.bodies_under_snow.option_a": "承诺处理遗体",
+    "event.bodies_under_snow.option_b": "举行临时悼念",
+    "event.bodies_under_snow.option_c": "继续搁置",
     "event.children_request.title": "孩子们的请求",
     "event.children_request.body": (
         "几个孩子站在炉边，没有靠得太近。\n\n"
@@ -21,6 +82,73 @@ _RUNTIME_TEXT = {
     "event.children_request.option_a": "承诺安置儿童",
     "event.children_request.option_b": "暂时维持现状",
     "event.children_request.option_c": "安排炉边杂务",
+    "event.red_frozen_hands.title": "冻红的手",
+    "event.red_frozen_hands.body": (
+        "一个孩子把手藏在袖子里。\n\n"
+        "医生让他伸出来。\n"
+        "他不肯。\n\n"
+        "后来人们才看见，那双手已经冻得发红，"
+        "指节肿得像小块木炭。"
+    ),
+    "event.red_frozen_hands.option_a": "暂停儿童高风险劳动",
+    "event.red_frozen_hands.option_b": "提供额外防寒照料",
+    "event.red_frozen_hands.option_c": "继续维持安排",
+    "event.long_shift_collapse.title": "长班后的倒下",
+    "event.long_shift_collapse.option_a": "暂停长班一天",
+    "event.long_shift_collapse.option_b": "提供熟食补偿",
+    "event.long_shift_collapse.option_c": "继续长班",
+    "event.overtime_empty_post.title": "加班后的空位",
+    "event.overtime_empty_post.option_a": "承诺补足人手或降低过劳压力",
+    "event.overtime_empty_post.option_b": "提供熟食补偿",
+    "event.overtime_empty_post.option_c": "继续维持安排",
+    "event.coal_bottom.title": "煤仓见底",
+    "event.coal_bottom.body": (
+        "煤仓底部露出来了。\n\n"
+        "铲子碰到木板时，声音比风还空。"
+    ),
+    "event.coal_bottom.option_a": "承诺补足煤炭储备",
+    "event.coal_bottom.option_b": "调整炉心消耗",
+    "event.coal_bottom.option_c": "维持现状",
+    "event.furnace_redline.title": "炉心红线",
+    "event.furnace_redline.warning": (
+        "炉心压力已达到极限。\n"
+        "这是最后一次手动关闭过载的机会。\n"
+        "若继续维持过载，下一次日结可能导致炉心崩毁。"
+    ),
+    "event.furnace_redline.option_a": "立即关闭过载",
+    "event.furnace_redline.option_b": "承诺完成炉心减压方案",
+    "event.furnace_redline.option_c": "维持过载 / 暂不处理",
+    "event.cold_house_night.title": "寒屋之夜",
+    "event.cold_house_night.body": (
+        "夜里，有人把炉灰抹在墙缝上。\n\n"
+        "没有用。\n\n"
+        "风还是从缝里钻进来，摸过孩子的脚踝，"
+        "摸过老人的膝盖，最后停在每个人的肺里。"
+    ),
+    "event.cold_house_night.option_a": "承诺补足住房 / 保温",
+    "event.cold_house_night.option_b": "提高炉心档位",
+    "event.cold_house_night.option_c": "维持现状",
+    "event.trust_crack.title": "信任裂缝",
+    "event.trust_crack.body": (
+        "人们还在工作。\n\n"
+        "他们仍然走向矿井、食堂、医疗站和炉边。\n"
+        "但他们不再看执政官的眼睛。\n\n"
+        "城市没有立刻崩塌。\n"
+        "只是有一根东西断了。"
+    ),
+    "event.trust_crack.option_a": "承诺恢复信任",
+    "event.trust_crack.option_b": "发布安抚公告 / 公开说明",
+    "event.trust_crack.option_c": "维持现状",
+    "event.city_unrest.title": "炉城骚动",
+    "event.city_unrest.body": (
+        "有人在夜里喊了一声。\n\n"
+        "很快，更多人醒了。\n"
+        "他们不知道自己要去哪里，也不知道自己要找谁。\n\n"
+        "恐惧在炉城里跑得比人更快。"
+    ),
+    "event.city_unrest.option_a": "承诺降低恐慌",
+    "event.city_unrest.option_b": "组织安抚 / 巡查",
+    "event.city_unrest.option_c": "维持现状",
     "arrival.day6.title": "早期求生者",
     "arrival.day19.title": "中期工程残队",
     "arrival.day37.title": "后期难民潮",
