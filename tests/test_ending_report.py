@@ -27,6 +27,7 @@ from furnace_winter.models import (
     CURRENT_SAVE_DATA_VERSION,
     CURRENT_ENDING_REPORT_FORMAT_VERSION,
     LEGACY_ENDING_REPORT_FORMAT_VERSION,
+    PATCH_020_ENDING_REPORT_FORMAT_VERSION,
     BuildingState,
     DeterministicRandom,
     EndingReportState,
@@ -42,6 +43,8 @@ from furnace_winter.models.ending_selection import (
     canonical_report_body_text_ids,
     canonical_report_pending_text_ids,
     legacy_report_pending_text_ids,
+    patch020_report_body_text_ids,
+    patch020_report_pending_text_ids,
     report_template_values,
 )
 from furnace_winter.text import (
@@ -411,6 +414,101 @@ class EndingReportPatchTests(unittest.TestCase):
         station.assigned_engineers = 1
         selected = canonical_report_body_text_ids(medical_state)
         self.assertIn("ending.additional.medical.03", selected)
+
+    def test_primary_illness_sentence_requires_d55_operational_service(self) -> None:
+        state = self.completed_state()
+        state.population.sick_population = 6
+        state.final_result.system_scores["medical_and_disease"] = 1
+        state.buildings["medical-station-test"] = BuildingState(
+            building_id="medical-station-test",
+            building_type="medical_station",
+            zone="inner_ring",
+            slot_size=1,
+            is_built=True,
+            is_operational=True,
+        )
+        record = state.final_frost.daily_records["55"]
+        record.service_history_known = True
+        record.medical_operational_building_count = 0
+        record.medical_building_capacity = 0
+
+        selected = canonical_report_body_text_ids(state)
+        self.assertNotIn("ending.report.illness.04", selected)
+        self.assertIn(
+            "ending.report.illness.no_operational_service",
+            canonical_report_pending_text_ids(state),
+        )
+        self.assertIn(
+            "ending.report.illness.04",
+            patch020_report_body_text_ids(state),
+        )
+
+        record.medical_operational_building_count = 1
+        record.medical_building_capacity = 10
+        self.assertIn(
+            "ending.report.illness.04",
+            canonical_report_body_text_ids(state),
+        )
+        self.assertNotIn(
+            "ending.report.illness.no_operational_service",
+            canonical_report_pending_text_ids(state),
+        )
+
+    def test_primary_coal_food_sentence_omits_zero_stock_claim(self) -> None:
+        state = self.completed_state()
+        state.resources.coal = 7
+        state.resources.raw_food = 0
+        state.resources.cooked_food = 0
+        state.final_result.system_scores["coal_and_core"] = 2
+        state.final_result.system_scores["food"] = 0
+
+        selected = canonical_report_body_text_ids(state)
+        self.assertFalse(
+            any(
+                text_id.startswith("ending.report.coal_food.")
+                for text_id in selected
+            )
+        )
+        self.assertIn(
+            "ending.report.coal_food.zero_stock",
+            canonical_report_pending_text_ids(state),
+        )
+        self.assertIn(
+            "ending.report.coal_food.01",
+            patch020_report_body_text_ids(state),
+        )
+
+        state.resources.cooked_food = 1
+        self.assertIn(
+            "ending.report.coal_food.01",
+            canonical_report_body_text_ids(state),
+        )
+        self.assertNotIn(
+            "ending.report.coal_food.zero_stock",
+            canonical_report_pending_text_ids(state),
+        )
+
+    def test_format_two_report_remains_strictly_loadable(self) -> None:
+        state = self.completed_state()
+        state.final_result.report.format_version = (
+            PATCH_020_ENDING_REPORT_FORMAT_VERSION
+        )
+        state.final_result.report.body_text_ids = patch020_report_body_text_ids(
+            state
+        )
+        state.final_result.report.pending_text_ids = (
+            patch020_report_pending_text_ids(state)
+        )
+
+        restored = decode_game_state(encode_game_state(state))
+        self.assertEqual(
+            restored.final_result.report.format_version,
+            PATCH_020_ENDING_REPORT_FORMAT_VERSION,
+        )
+        self.assertEqual(
+            restored.final_result.report.body_text_ids,
+            state.final_result.report.body_text_ids,
+        )
 
     def test_unprovable_medical_history_text_is_pending(self) -> None:
         state = self.completed_state()

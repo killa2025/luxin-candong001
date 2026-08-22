@@ -614,7 +614,12 @@ class LawSystem:
         if medical_pressure > 0:
             warnings.append(RiskWarning("laws.medical_overload", RiskWarningLevel.B_STRONG, {"medical_pressure": medical_pressure, "effective_capacity": effective_capacity}))
         if state.calendar.current_day >= 4 and self._current_medical_capacity(state) == 0 and state.population.sick_population + state.population.critical_population > 0:
-            warnings.append(RiskWarning("laws.day4_medical_gap", RiskWarningLevel.B_STRONG, {"current_day": state.calendar.current_day}))
+            warning_id = (
+                "laws.day4_medical_gap"
+                if state.calendar.current_day == 4
+                else "laws.medical_capacity_gap"
+            )
+            warnings.append(RiskWarning(warning_id, RiskWarningLevel.B_STRONG, {"current_day": state.calendar.current_day}))
         if state.social_policy.unhandled_bodies > 0:
             warnings.append(RiskWarning("laws.unhandled_bodies", RiskWarningLevel.B_STRONG, {"count": state.social_policy.unhandled_bodies}))
         return tuple(warnings)

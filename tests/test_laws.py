@@ -1082,11 +1082,19 @@ class LawPatchTests(unittest.TestCase):
                 risks = self.law_system().evaluate_risks(state)
                 self.assertEqual(
                     any(
-                        warning.warning_id == "laws.day4_medical_gap"
+                        warning.warning_id == "laws.medical_capacity_gap"
                         for warning in risks
                     ),
                     not expected_to_run,
                 )
+
+                if not expected_to_run:
+                    self.assertFalse(
+                        any(
+                            warning.warning_id == "laws.day4_medical_gap"
+                            for warning in risks
+                        )
+                    )
 
                 triage = self.execute_law(
                     state,
@@ -1119,6 +1127,26 @@ class LawPatchTests(unittest.TestCase):
                 self.assertEqual(
                     state.medical.building_capacity, expected_capacity
                 )
+
+    def test_medical_gap_warning_id_only_names_day_four_on_day_four(self) -> None:
+        state = self.make_state()
+        state.population.healthy_population -= 1
+        state.population.sick_population += 1
+        system = self.law_system()
+
+        state.calendar.current_day = 4
+        day_four_ids = {
+            warning.warning_id for warning in system.evaluate_risks(state)
+        }
+        self.assertIn("laws.day4_medical_gap", day_four_ids)
+        self.assertNotIn("laws.medical_capacity_gap", day_four_ids)
+
+        state.calendar.current_day = 49
+        later_ids = {
+            warning.warning_id for warning in system.evaluate_risks(state)
+        }
+        self.assertNotIn("laws.day4_medical_gap", later_ids)
+        self.assertIn("laws.medical_capacity_gap", later_ids)
 
     def test_triage_interface_rejects_unsealed_balance_without_mutation(self) -> None:
         state = self.make_state()

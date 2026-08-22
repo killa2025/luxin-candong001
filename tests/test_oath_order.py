@@ -385,6 +385,26 @@ class OathOrderPatchTests(unittest.TestCase):
             ),
             (6, -2),
         )
+        self.assertTrue(actions["mourning_bell"]["requires_recorded_death"])
+        self.assertFalse(
+            actions["mourning_bell"][
+                "recorded_death_requirement_satisfied"
+            ]
+        )
+        self.assertFalse(actions["guard_oath"]["requires_recorded_death"])
+        self.assertIsNone(
+            actions["guard_oath"]["recorded_death_requirement_satisfied"]
+        )
+        state.events.deaths_today_by_cause = {"cold_exposure": 1}
+        updated_actions = {
+            item["action_id"]: item
+            for item in system.route_view(state)["action_rules"]
+        }
+        self.assertTrue(
+            updated_actions["mourning_bell"][
+                "recorded_death_requirement_satisfied"
+            ]
+        )
         self.assertEqual(
             (
                 actions["shared_meal"]["cooldown_days"],

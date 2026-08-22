@@ -331,6 +331,14 @@ _PENDING_RUNTIME_TEXT_NOTES = {
     ),
 }
 _PENDING_CONDITION_NOTES = {
+    "ending.report.illness.no_operational_service": (
+        "终局仍有病患但 D55 逐日事实不能证明医疗建筑仍在运行；"
+        "缺少适用的封存病患句时只登记缺失，不展示矛盾正文。"
+    ),
+    "ending.report.coal_food.zero_stock": (
+        "终局煤炭或食物库存为零；现有煤炭/食物合并句均暗示两者仍有"
+        "余量，缺少适用正文时只登记缺失。"
+    ),
     "ending.additional.medical.01": (
         "v15 及更早存档缺少逐日医疗服务历史；无法证明适用条件时"
         "只登记缺失，不展示正文。"

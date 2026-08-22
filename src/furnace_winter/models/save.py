@@ -11,6 +11,8 @@ from furnace_winter.models.ending_selection import (
     canonical_report_body_text_ids,
     canonical_report_pending_text_ids,
     canonical_report_title_text_id,
+    patch020_report_body_text_ids,
+    patch020_report_pending_text_ids,
 )
 from furnace_winter.models.serialization import to_primitive
 from furnace_winter.models.state import (
@@ -39,6 +41,7 @@ from furnace_winter.models.state import (
     HungerState,
     LawState,
     LEGACY_ENDING_REPORT_FORMAT_VERSION,
+    PATCH_020_ENDING_REPORT_FORMAT_VERSION,
     MapState,
     MedicalState,
     OathOrderState,
@@ -5202,6 +5205,8 @@ def _validate_state_invariants(
         legacy_pending_text_ids = _expected_report_pending_text_ids(state)
         canonical_body_text_ids = canonical_report_body_text_ids(state)
         canonical_pending_text_ids = canonical_report_pending_text_ids(state)
+        patch020_body_text_ids = patch020_report_body_text_ids(state)
+        patch020_pending_text_ids = patch020_report_pending_text_ids(state)
         is_legacy_report = (
             report.format_version == LEGACY_ENDING_REPORT_FORMAT_VERSION
             and report.title_text_id
@@ -5210,12 +5215,18 @@ def _validate_state_invariants(
             and report.pending_text_ids == legacy_pending_text_ids
         )
         is_patch020_report = (
+            report.format_version == PATCH_020_ENDING_REPORT_FORMAT_VERSION
+            and report.title_text_id == canonical_report_title_text_id(state)
+            and report.body_text_ids == patch020_body_text_ids
+            and report.pending_text_ids == patch020_pending_text_ids
+        )
+        is_current_report = (
             report.format_version == CURRENT_ENDING_REPORT_FORMAT_VERSION
             and report.title_text_id == canonical_report_title_text_id(state)
             and report.body_text_ids == canonical_body_text_ids
             and report.pending_text_ids == canonical_pending_text_ids
         )
-        if not (is_legacy_report or is_patch020_report):
+        if not (is_legacy_report or is_patch020_report or is_current_report):
             raise SaveDataError(
                 "ending report text selection is not canonical"
             )

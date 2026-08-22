@@ -351,6 +351,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "observation": session.observe(),
                         "status": session.status(),
                     }
+                elif envelope_type == "status":
+                    response = {
+                        "type": "status",
+                        "status": session.status(),
+                    }
+                elif envelope_type == "command_specs":
+                    response = {
+                        "type": "command_specs",
+                        "command_specs": session.command_specs(),
+                    }
                 elif envelope_type == "rules":
                     response = {
                         "type": "rules",
@@ -390,6 +400,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     response = {
                         "type": "error",
                         "code": "UNKNOWN_ENVELOPE_TYPE",
+                        "supported_envelope_types": [
+                            "command",
+                            "command_specs",
+                            "observe",
+                            "quit",
+                            "replay",
+                            "rules",
+                            "status",
+                        ],
                     }
             except Exception as exc:
                 response = {
