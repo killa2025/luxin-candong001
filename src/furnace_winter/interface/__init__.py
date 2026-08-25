@@ -24,14 +24,20 @@ from furnace_winter.interface.replay import (
     ReplayEntry,
     ReplayLog,
     ReplayVerification,
+    decode_log_entry,
     decode_replay_document,
 )
-from furnace_winter.interface.session import GameSession, SessionExecution
+from furnace_winter.interface.session import (
+    AutosaveSnapshotPathError,
+    GameSession,
+    SessionExecution,
+)
 
 __all__ = [
     "PROTOCOL_VERSION",
     "REPLAY_FORMAT_VERSION",
     "ArgumentKind",
+    "AutosaveSnapshotPathError",
     "CommandCatalog",
     "CommandRequest",
     "CommandResult",
@@ -53,5 +59,6 @@ __all__ = [
     "ReplayLog",
     "ReplayVerification",
     "SessionExecution",
+    "decode_log_entry",
     "decode_replay_document",
 ]

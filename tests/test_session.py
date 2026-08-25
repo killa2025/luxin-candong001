@@ -86,6 +86,11 @@ class GameSessionTests(unittest.TestCase):
         )
 
         observation = session.observe()
+        self.assertFalse(status["persistence"]["autosave_end_day_present"])
+        self.assertEqual(
+            status["persistence"]["autosave_end_day_view_request"],
+            {"type": "autosave"},
+        )
         self.assertEqual(
             observation.available_rule_sections,
             (
@@ -131,6 +136,18 @@ class GameSessionTests(unittest.TestCase):
                     "use_for_optimistic_concurrency": True,
                 },
             },
+        )
+        persistence = observation.protocol_contract["persistence_files"]
+        self.assertEqual(
+            persistence["primary_save"]["accepted_by"],
+            ["play", "report"],
+        )
+        self.assertFalse(
+            persistence["autosave_end_day"]["accepted_as_primary_save"]
+        )
+        self.assertEqual(
+            persistence["autosave_end_day"]["view_request_shape"],
+            {"type": "autosave"},
         )
         self.assertIsNotNone(observation.law_view)
         self.assertEqual(len(observation.technology_view), 37)
@@ -647,6 +664,71 @@ class GameSessionTests(unittest.TestCase):
                 config_dir=ROOT / "data",
             )
             self.assertEqual(restored.status()["day"], 2)
+            view = restored.autosave_view()
+
+            self.assertTrue(view["available"])
+            self.assertEqual(view["document_type"], "end_day_autosave_snapshot")
+            self.assertEqual(view["source"], "disk")
+            self.assertEqual(view["settled_day"], 1)
+            self.assertEqual(view["resume_stage"], "advance_day")
+            self.assertEqual(view["state"]["calendar"]["current_day"], 1)
+            self.assertTrue(view["state"]["calendar"]["is_day_locked"])
+            self.assertFalse(view["contract"]["accepted_as_primary_save"])
+            self.assertTrue(
+                restored.status()["persistence"]["autosave_end_day_present"]
+            )
+
+            autosave_bytes = autosave_path.read_bytes()
+            with self.assertRaisesRegex(
+                ValueError,
+                "end_day_autosave_snapshot_is_not_primary_save",
+            ):
+                self.new_session(
+                    seed=9999,
+                    save_path=autosave_path,
+                    overwrite=True,
+                )
+            self.assertEqual(autosave_path.read_bytes(), autosave_bytes)
+
+    def test_autosave_view_is_unavailable_before_first_end_day(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session = self.new_session(
+                seed=1129,
+                save_path=Path(temp_dir) / "game.json",
+            )
+
+            view = session.autosave_view()
+
+        self.assertFalse(view["available"])
+        self.assertEqual(view["source"], "none")
+        self.assertEqual(view["slot"], "autosave_end_day")
+        self.assertFalse(view["contract"]["accepted_as_primary_save"])
+
+    def test_malformed_autosave_does_not_block_primary_save_loading(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "game.json"
+            session = self.new_session(seed=1130, save_path=save_path)
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            document = json.loads(autosave_path.read_text(encoding="utf-8"))
+            document["unexpected"] = True
+            autosave_path.write_text(
+                json.dumps(document, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            restored = GameSession.load(save_path, config_dir=ROOT / "data")
+
+            self.assertEqual(restored.status()["day"], 2)
+            with self.assertRaisesRegex(
+                ValueError,
+                "end-day autosave fields are invalid",
+            ):
+                restored.autosave_view()
 
     def test_overwrite_new_session_clears_previous_autosave(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1109,6 +1191,7 @@ class PlayCliTests(unittest.TestCase):
         self.assertEqual(
             lines[3]["supported_envelope_types"],
             [
+                "autosave",
                 "command",
                 "command_specs",
                 "observe",
@@ -1120,6 +1203,88 @@ class PlayCliTests(unittest.TestCase):
         )
         self.assertEqual(lines[1]["status"]["state_sequence"], 0)
         self.assertEqual(lines[4]["status"]["state_sequence"], 0)
+
+    def test_json_lines_autosave_view_and_direct_path_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "cli-autosave.json"
+            session = GameSession.new(
+                config_dir=ROOT / "data",
+                save_path=save_path,
+                seed=1131,
+            )
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+
+            input_stream = StringIO(
+                json.dumps({"type": "autosave"})
+                + "\n"
+                + json.dumps({"type": "quit"})
+                + "\n"
+            )
+            play_output = StringIO()
+            with patch("sys.stdin", input_stream), redirect_stdout(play_output):
+                play_exit = main(
+                    [
+                        "play",
+                        str(save_path),
+                        "--data-dir",
+                        str(ROOT / "data"),
+                    ]
+                )
+            play_lines = [
+                json.loads(line)
+                for line in play_output.getvalue().splitlines()
+            ]
+
+            direct_play_output = StringIO()
+            with patch("sys.stdin", StringIO()), redirect_stdout(
+                direct_play_output
+            ):
+                direct_play_exit = main(
+                    [
+                        "play",
+                        str(autosave_path),
+                        "--data-dir",
+                        str(ROOT / "data"),
+                    ]
+                )
+            direct_play_error = json.loads(direct_play_output.getvalue())
+
+            report_output = StringIO()
+            with redirect_stdout(report_output):
+                report_exit = main(["report", str(autosave_path)])
+            report_error = json.loads(report_output.getvalue())
+
+        self.assertEqual(play_exit, 0)
+        self.assertEqual(
+            [item["type"] for item in play_lines],
+            ["observation", "autosave", "closed"],
+        )
+        autosave = play_lines[1]["autosave"]
+        self.assertTrue(autosave["available"])
+        self.assertEqual(autosave["settled_day"], 1)
+        self.assertEqual(autosave["state"]["calendar"]["current_day"], 1)
+        self.assertEqual(direct_play_exit, 1)
+        self.assertEqual(report_exit, 1)
+        for error in (direct_play_error, report_error):
+            self.assertEqual(
+                error["code"],
+                "AUTOSAVE_SNAPSHOT_NOT_PRIMARY_SAVE",
+            )
+            self.assertFalse(error["accepted_as_primary_save"])
+            self.assertEqual(
+                error["inspect_request_after_opening_primary_save"],
+                {"type": "autosave"},
+            )
+            self.assertEqual(
+                Path(error["recovery"]["open_primary_save_path"]),
+                save_path,
+            )
+            self.assertTrue(error["recovery"]["do_not_extract_nested_state"])
 
     def test_json_lines_session_creates_save_and_returns_compact_status(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
