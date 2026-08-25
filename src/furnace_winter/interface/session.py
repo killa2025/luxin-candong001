@@ -81,6 +81,12 @@ _CONFIG_FILENAMES = {
     "final_frost": "final_frost.json",
 }
 
+_AUTOSAVE_RESUME_STAGES = (
+    "advance_day",
+    "terminal_state",
+    "final_settlement",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SessionExecution:
@@ -168,6 +174,38 @@ class AutosaveSnapshotPathError(ValueError):
         except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
             return False
         return True
+
+
+class AutosaveSnapshotValidationError(ValueError):
+    """Stable machine-readable diagnosis for a damaged end-day snapshot."""
+
+    code = "AUTOSAVE_SNAPSHOT_INVALID"
+
+    def __init__(
+        self,
+        path: Path | None,
+        *,
+        field: str,
+        reason: str,
+        constraint: str,
+        actual_value: Any = None,
+        expected_value: Any = None,
+        allowed_values: tuple[str, ...] = (),
+        context: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.details = {
+            "reason": reason,
+            "document_type": "end_day_autosave_snapshot",
+            "path_role": "autosave_end_day",
+            "path": str(path) if path is not None else None,
+            "field": field,
+            "constraint": constraint,
+            "actual_value": deepcopy(actual_value),
+            "expected_value": deepcopy(expected_value),
+            "allowed_values": list(allowed_values),
+            "context": deepcopy(dict(context or {})),
+        }
+        super().__init__(reason)
 
 
 class GameSession:
@@ -574,9 +612,18 @@ class GameSession:
                 "source": source,
                 "contract": contract,
             }
-        snapshot_state = decode_game_state(record.state)
-        self._validate_state_value(snapshot_state)
-        self._validate_end_day_autosave(record, snapshot_state)
+        try:
+            snapshot_state = decode_game_state(record.state)
+            self._validate_state_value(snapshot_state)
+        except (TypeError, ValueError) as exc:
+            raise AutosaveSnapshotValidationError(
+                target,
+                field="state",
+                reason="nested_game_state_invalid",
+                constraint="must be a complete valid game state",
+                context={"validation_exception_type": type(exc).__name__},
+            ) from exc
+        self._validate_end_day_autosave(record, snapshot_state, target)
         return {
             "available": True,
             "document_type": "end_day_autosave_snapshot",
@@ -591,45 +638,170 @@ class GameSession:
 
     @staticmethod
     def _read_end_day_autosave(path: Path) -> AutosaveRecord:
-        document = json.loads(path.read_text(encoding="utf-8-sig"))
+        try:
+            document = json.loads(path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as exc:
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="$",
+                reason="invalid_json",
+                constraint="must contain one valid JSON document",
+                context={"line": exc.lineno, "column": exc.colno},
+            ) from exc
         if not isinstance(document, Mapping):
-            raise TypeError("end-day autosave must be an object")
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="$",
+                reason="document_not_object",
+                constraint="top-level value must be an OBJECT",
+                actual_value=type(document).__name__,
+                expected_value="OBJECT",
+            )
         expected = frozenset(
             {"slot", "settled_day", "state", "logs", "resume_stage"}
         )
         if frozenset(document) != expected:
-            raise ValueError("end-day autosave fields are invalid")
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="$",
+                reason="top_level_fields_invalid",
+                constraint="top-level fields must match the autosave envelope exactly",
+                actual_value={
+                    "missing": sorted(expected - frozenset(document)),
+                    "unexpected": sorted(frozenset(document) - expected),
+                },
+                expected_value=sorted(expected),
+            )
+        if document["slot"] != AUTOSAVE_END_DAY_SLOT:
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="slot",
+                reason="slot_invalid",
+                constraint="must identify the formal end-day autosave slot",
+                actual_value=document["slot"],
+                expected_value=AUTOSAVE_END_DAY_SLOT,
+            )
+        settled_day = document["settled_day"]
+        if (
+            not isinstance(settled_day, int)
+            or isinstance(settled_day, bool)
+            or settled_day < 1
+        ):
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="settled_day",
+                reason="settled_day_invalid",
+                constraint="must be a positive INTEGER",
+                actual_value=settled_day,
+            )
+        if not isinstance(document["state"], Mapping):
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="state",
+                reason="nested_game_state_not_object",
+                constraint="must be a complete game-state OBJECT",
+                actual_value=type(document["state"]).__name__,
+                expected_value="OBJECT",
+            )
+        resume_stage = document["resume_stage"]
+        if not isinstance(resume_stage, str) or not resume_stage.strip():
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="resume_stage",
+                reason="resume_stage_invalid_type",
+                constraint="must be a non-empty STRING",
+                actual_value=resume_stage,
+                allowed_values=_AUTOSAVE_RESUME_STAGES,
+            )
         logs = document["logs"]
         if not isinstance(logs, list):
-            raise TypeError("end-day autosave logs must be an array")
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="logs",
+                reason="logs_not_array",
+                constraint="must be an ARRAY of structured log entries",
+                actual_value=type(logs).__name__,
+                expected_value="ARRAY",
+            )
         event_log = EventLog()
-        for item in logs:
-            event_log.append(decode_log_entry(item))
+        previous_sequence: int | None = None
+        for index, item in enumerate(logs):
+            try:
+                entry = decode_log_entry(item)
+            except (TypeError, ValueError) as exc:
+                raise AutosaveSnapshotValidationError(
+                    path,
+                    field=f"logs[{index}]",
+                    reason="log_entry_invalid",
+                    constraint="must be a valid structured log entry",
+                    context={"validation_exception_type": type(exc).__name__},
+                ) from exc
+            if previous_sequence is not None and entry.sequence <= previous_sequence:
+                raise AutosaveSnapshotValidationError(
+                    path,
+                    field=f"logs[{index}].sequence",
+                    reason="log_sequence_not_strictly_increasing",
+                    constraint="must be greater than the previous log sequence",
+                    actual_value=entry.sequence,
+                    context={"previous_sequence": previous_sequence},
+                )
+            event_log.append(entry)
+            previous_sequence = entry.sequence
         return AutosaveRecord(
             slot=document["slot"],
-            settled_day=document["settled_day"],
+            settled_day=settled_day,
             state=document["state"],
             logs=event_log.entries(),
-            resume_stage=document["resume_stage"],
+            resume_stage=resume_stage,
         )
 
     @staticmethod
     def _validate_end_day_autosave(
         record: AutosaveRecord,
         state: GameState,
+        path: Path | None,
     ) -> None:
         if (
             record.settled_day != state.calendar.current_day
             or record.settled_day != state.daily_survival.settled_day
         ):
-            raise ValueError("end-day autosave settled_day disagrees with state")
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="settled_day",
+                reason="settled_day_state_mismatch",
+                constraint="must equal both settled-day fields in the nested state",
+                actual_value=record.settled_day,
+                expected_value={
+                    "state.calendar.current_day": state.calendar.current_day,
+                    "state.daily_survival.settled_day": (
+                        state.daily_survival.settled_day
+                    ),
+                },
+            )
         if not state.calendar.is_day_locked or not state.calendar.is_end_day_confirmed:
-            raise ValueError("end-day autosave state is not locked at settlement boundary")
-        allowed_stages = frozenset(
-            {"advance_day", "terminal_state", "final_settlement"}
-        )
-        if record.resume_stage not in allowed_stages:
-            raise ValueError("end-day autosave resume_stage is invalid")
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="state.calendar",
+                reason="settlement_boundary_not_locked",
+                constraint="snapshot state must be locked and end-day-confirmed",
+                actual_value={
+                    "is_day_locked": state.calendar.is_day_locked,
+                    "is_end_day_confirmed": state.calendar.is_end_day_confirmed,
+                },
+                expected_value={
+                    "is_day_locked": True,
+                    "is_end_day_confirmed": True,
+                },
+            )
+        if record.resume_stage not in _AUTOSAVE_RESUME_STAGES:
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="resume_stage",
+                reason="resume_stage_unknown",
+                constraint="must be one of the formal resume-stage values",
+                actual_value=record.resume_stage,
+                allowed_values=_AUTOSAVE_RESUME_STAGES,
+            )
         expected_stage = (
             "terminal_state"
             if state.final_result.hard_fail_type is not None
@@ -638,7 +810,15 @@ class GameSession:
             else "advance_day"
         )
         if record.resume_stage != expected_stage:
-            raise ValueError("end-day autosave resume_stage disagrees with state")
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="resume_stage",
+                reason="resume_stage_state_mismatch",
+                constraint="must match the nested state's settlement outcome",
+                actual_value=record.resume_stage,
+                expected_value=expected_stage,
+                allowed_values=_AUTOSAVE_RESUME_STAGES,
+            )
 
     def status(self) -> dict[str, Any]:
         state = self._state

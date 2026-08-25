@@ -32,6 +32,7 @@ from furnace_winter.gameplay import (
 )
 from furnace_winter.interface import (
     AutosaveSnapshotPathError,
+    AutosaveSnapshotValidationError,
     GameSession,
     Observation,
 )
@@ -441,11 +442,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                         ],
                     }
             except Exception as exc:
-                response = {
-                    "type": "error",
-                    "code": "SESSION_REQUEST_FAILED",
-                    "exception_type": type(exc).__name__,
-                }
+                if isinstance(exc, AutosaveSnapshotValidationError):
+                    response = {
+                        "type": "error",
+                        "code": exc.code,
+                        "exception_type": type(exc).__name__,
+                        **exc.details,
+                    }
+                else:
+                    response = {
+                        "type": "error",
+                        "code": "SESSION_REQUEST_FAILED",
+                        "exception_type": type(exc).__name__,
+                    }
             print(dumps(response), flush=True)
         return 0
 

@@ -29,6 +29,7 @@ from furnace_winter.interface.replay import (
 )
 from furnace_winter.interface.session import (
     AutosaveSnapshotPathError,
+    AutosaveSnapshotValidationError,
     GameSession,
     SessionExecution,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "REPLAY_FORMAT_VERSION",
     "ArgumentKind",
     "AutosaveSnapshotPathError",
+    "AutosaveSnapshotValidationError",
     "CommandCatalog",
     "CommandRequest",
     "CommandResult",
