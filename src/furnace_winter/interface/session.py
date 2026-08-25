@@ -50,7 +50,9 @@ from furnace_winter.interface.commands import (
 from furnace_winter.interface.feedback import CommandResult
 from furnace_winter.interface.observation import Observation, PROTOCOL_VERSION
 from furnace_winter.interface.replay import (
+    decode_log_entry,
     decode_replay_document,
+    EventLog,
     LogCategory,
     LogEntry,
     ReplayDocument,
@@ -58,6 +60,7 @@ from furnace_winter.interface.replay import (
     ReplayLog,
 )
 from furnace_winter.models import (
+    FINAL_DAY,
     GameState,
     RandomState,
     decode_game_state,
@@ -96,6 +99,75 @@ class _FileSnapshot:
     path: Path
     existed: bool
     content: bytes | None
+
+
+class AutosaveSnapshotPathError(ValueError):
+    """Raised when an end-day snapshot is used as a primary save path."""
+
+    code = "AUTOSAVE_SNAPSHOT_NOT_PRIMARY_SAVE"
+
+    def __init__(self, path: Path) -> None:
+        candidates = self._primary_save_candidates(path)
+        recognized = tuple(
+            candidate
+            for candidate in candidates
+            if self._is_recognized_primary_save(candidate)
+        )
+        candidate = recognized[0] if len(recognized) == 1 else None
+        resolution = (
+            "resolved"
+            if candidate is not None
+            else "ambiguous"
+            if len(recognized) > 1
+            else "not_found"
+        )
+        self.details = {
+            "reason": "end_day_autosave_snapshot_is_not_primary_save",
+            "provided_document_type": "end_day_autosave_snapshot",
+            "provided_path_role": "autosave_end_day",
+            "accepted_as_primary_save": False,
+            "inspect_request_after_opening_primary_save": {"type": "autosave"},
+            "recovery": {
+                "open_primary_save_path": (
+                    str(candidate) if candidate is not None else None
+                ),
+                "primary_save_path_resolution": resolution,
+                "primary_save_path_ambiguous": len(recognized) > 1,
+                "primary_save_path_candidates": [
+                    str(candidate) for candidate in candidates
+                ],
+                "recognized_primary_save_paths": [
+                    str(candidate) for candidate in recognized
+                ],
+                "open_primary_save_instead": True,
+                "do_not_extract_nested_state": True,
+            },
+        }
+        super().__init__(self.details["reason"])
+
+    @staticmethod
+    def _primary_save_candidates(path: Path) -> tuple[Path, ...]:
+        marker = f".{AUTOSAVE_END_DAY_SLOT}"
+        if not path.stem.endswith(marker):
+            return ()
+        primary_stem = path.stem[: -len(marker)]
+        if not primary_stem:
+            return ()
+        candidates = [path.with_name(f"{primary_stem}{path.suffix}")]
+        if path.suffix.casefold() == ".json":
+            candidates.insert(0, path.with_name(primary_stem))
+        return tuple(dict.fromkeys(candidates))
+
+    @staticmethod
+    def _is_recognized_primary_save(path: Path) -> bool:
+        if not path.is_file():
+            return False
+        try:
+            document = json.loads(path.read_text(encoding="utf-8-sig"))
+            decode_game_state(document)
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+            return False
+        return True
 
 
 class GameSession:
@@ -240,6 +312,15 @@ class GameSession:
         config_path = Path(config_dir)
         target = Path(save_path) if save_path is not None else None
         cls._ensure_save_target_is_not_config(config_path, target)
+        if target is not None and target.exists():
+            try:
+                existing_document = json.loads(
+                    target.read_text(encoding="utf-8-sig")
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                existing_document = None
+            if cls._is_end_day_autosave_document(existing_document):
+                raise AutosaveSnapshotPathError(target)
         if target is not None and not overwrite:
             existing_paths = tuple(
                 path
@@ -290,7 +371,7 @@ class GameSession:
         config_dir: str | Path = "data",
     ) -> GameSession:
         target = Path(save_path)
-        document = json.loads(target.read_text(encoding="utf-8-sig"))
+        document = cls.read_primary_save_document(target)
         state = decode_game_state(document)
         config_path = Path(config_dir)
         return cls(
@@ -298,6 +379,27 @@ class GameSession:
             state=state,
             save_path=target,
             rule_documents=cls._load_rule_documents(config_path),
+        )
+
+    @classmethod
+    def read_primary_save_document(cls, path: str | Path) -> Any:
+        """Read a primary save while rejecting the separate autosave envelope."""
+
+        target = Path(path)
+        document = json.loads(target.read_text(encoding="utf-8-sig"))
+        if cls._is_end_day_autosave_document(document):
+            raise AutosaveSnapshotPathError(target)
+        return document
+
+    @staticmethod
+    def _is_end_day_autosave_document(document: Any) -> bool:
+        return (
+            isinstance(document, Mapping)
+            and document.get("slot") == AUTOSAVE_END_DAY_SLOT
+            and isinstance(document.get("state"), Mapping)
+            and "resume_stage" in document
+            and "settled_day" in document
+            and "logs" in document
         )
 
     @classmethod
@@ -382,6 +484,7 @@ class GameSession:
         return {
             "play_envelopes": {
                 "supported_types": [
+                    "autosave",
                     "command",
                     "command_specs",
                     "observe",
@@ -392,6 +495,7 @@ class GameSession:
                 ],
                 "status_request_shape": {"type": "status"},
                 "command_specs_request_shape": {"type": "command_specs"},
+                "autosave_request_shape": {"type": "autosave"},
                 "contains_strategy_recommendations": False,
             },
             "rules_query": {
@@ -424,7 +528,117 @@ class GameSession:
                     "use_for_optimistic_concurrency": True,
                 },
             },
+            "persistence_files": self._persistence_contract(),
         }
+
+    def _persistence_contract(self) -> dict[str, Any]:
+        return {
+            "primary_save": {
+                "document_type": "game_state",
+                "role": "resumable_primary_save",
+                "accepted_by": ["play", "report"],
+                "contains_current_committed_state": True,
+            },
+            "autosave_end_day": {
+                "document_type": "end_day_autosave_snapshot",
+                "role": "pre_advance_transaction_snapshot",
+                "slot": AUTOSAVE_END_DAY_SLOT,
+                "boundary": "after_daily_cleanup_before_date_advance",
+                "contains_state_logs_and_resume_stage": True,
+                "replaces_primary_save": False,
+                "accepted_as_primary_save": False,
+                "view_request_shape": {"type": "autosave"},
+                "inspect_after_opening_primary_save": True,
+                "extract_nested_state_for_play": False,
+            },
+        }
+
+    def autosave_view(self) -> dict[str, Any]:
+        """Return the latest end-day snapshot through its read-only envelope."""
+
+        contract = self._persistence_contract()["autosave_end_day"]
+        record: AutosaveRecord | None = None
+        source = "none"
+        target = self.autosave_path
+        if target is not None and target.exists():
+            record = self._read_end_day_autosave(target)
+            source = "disk"
+        elif self._last_end_day_autosave is not None:
+            record = deepcopy(self._last_end_day_autosave)
+            source = "memory"
+        if record is None:
+            return {
+                "available": False,
+                "document_type": "end_day_autosave_snapshot",
+                "slot": AUTOSAVE_END_DAY_SLOT,
+                "source": source,
+                "contract": contract,
+            }
+        snapshot_state = decode_game_state(record.state)
+        self._validate_state_value(snapshot_state)
+        self._validate_end_day_autosave(record, snapshot_state)
+        return {
+            "available": True,
+            "document_type": "end_day_autosave_snapshot",
+            "slot": record.slot,
+            "source": source,
+            "settled_day": record.settled_day,
+            "resume_stage": record.resume_stage,
+            "state": deepcopy(record.state),
+            "logs": deepcopy(record.logs),
+            "contract": contract,
+        }
+
+    @staticmethod
+    def _read_end_day_autosave(path: Path) -> AutosaveRecord:
+        document = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(document, Mapping):
+            raise TypeError("end-day autosave must be an object")
+        expected = frozenset(
+            {"slot", "settled_day", "state", "logs", "resume_stage"}
+        )
+        if frozenset(document) != expected:
+            raise ValueError("end-day autosave fields are invalid")
+        logs = document["logs"]
+        if not isinstance(logs, list):
+            raise TypeError("end-day autosave logs must be an array")
+        event_log = EventLog()
+        for item in logs:
+            event_log.append(decode_log_entry(item))
+        return AutosaveRecord(
+            slot=document["slot"],
+            settled_day=document["settled_day"],
+            state=document["state"],
+            logs=event_log.entries(),
+            resume_stage=document["resume_stage"],
+        )
+
+    @staticmethod
+    def _validate_end_day_autosave(
+        record: AutosaveRecord,
+        state: GameState,
+    ) -> None:
+        if (
+            record.settled_day != state.calendar.current_day
+            or record.settled_day != state.daily_survival.settled_day
+        ):
+            raise ValueError("end-day autosave settled_day disagrees with state")
+        if not state.calendar.is_day_locked or not state.calendar.is_end_day_confirmed:
+            raise ValueError("end-day autosave state is not locked at settlement boundary")
+        allowed_stages = frozenset(
+            {"advance_day", "terminal_state", "final_settlement"}
+        )
+        if record.resume_stage not in allowed_stages:
+            raise ValueError("end-day autosave resume_stage is invalid")
+        expected_stage = (
+            "terminal_state"
+            if state.final_result.hard_fail_type is not None
+            else "final_settlement"
+            if record.settled_day == FINAL_DAY
+            else "advance_day"
+        )
+        if record.resume_stage != expected_stage:
+            raise ValueError("end-day autosave resume_stage disagrees with state")
 
     def status(self) -> dict[str, Any]:
         state = self._state
@@ -511,6 +725,18 @@ class GameSession:
                 state.calendar.current_day
             ),
             "ending_report_available": final.report.is_generated,
+            "persistence": {
+                "primary_save_configured": self.save_path is not None,
+                "autosave_end_day_present": (
+                    self._last_end_day_autosave is not None
+                    or (
+                        self.autosave_path is not None
+                        and self.autosave_path.exists()
+                    )
+                ),
+                "autosave_end_day_is_primary_save": False,
+                "autosave_end_day_view_request": {"type": "autosave"},
+            },
         }
 
     def rules_view(self, section: str) -> dict[str, Any]:
@@ -1022,15 +1248,18 @@ class GameSession:
                 Path(temporary_name).unlink(missing_ok=True)
 
     def _validate_state(self) -> None:
+        self._validate_state_value(self._state)
+
+    def _validate_state_value(self, state: GameState) -> None:
         validate_game_state(
-            self._state,
+            state,
             self.building_rules,
             self.survival_rules,
             self.technology_rules,
         )
-        self.laws.validate_state(self._state)
-        self.maps.validate_state(self._state)
-        self.events.validate_state(self._state)
-        self.oath_order.validate_state(self._state)
-        self.final_frost.validate_state(self._state)
-        self.ending_report.validate_state(self._state)
+        self.laws.validate_state(state)
+        self.maps.validate_state(state)
+        self.events.validate_state(state)
+        self.oath_order.validate_state(state)
+        self.final_frost.validate_state(state)
+        self.ending_report.validate_state(state)

@@ -30,7 +30,11 @@ from furnace_winter.gameplay import (
     TechnologySystem,
     create_initial_survival_state,
 )
-from furnace_winter.interface import GameSession, Observation
+from furnace_winter.interface import (
+    AutosaveSnapshotPathError,
+    GameSession,
+    Observation,
+)
 from furnace_winter.models import decode_game_state, dumps
 
 
@@ -266,9 +270,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "report":
-        document = json.loads(
-            args.save_path.read_text(encoding="utf-8-sig")
-        )
+        try:
+            document = GameSession.read_primary_save_document(args.save_path)
+        except AutosaveSnapshotPathError as exc:
+            print(
+                dumps(
+                    {
+                        "type": "error",
+                        "code": exc.code,
+                        **exc.details,
+                    }
+                )
+            )
+            return 1
         state = decode_game_state(document)
         print(dumps(EndingReportSystem().observe(state)))
         return 0
@@ -293,12 +307,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                     map_key=args.map_key,
                 )
         except Exception as exc:
+            details = (
+                exc.details
+                if isinstance(exc, AutosaveSnapshotPathError)
+                else {}
+            )
             print(
                 dumps(
                     {
                         "type": "error",
-                        "code": "SESSION_START_FAILED",
+                        "code": (
+                            exc.code
+                            if isinstance(exc, AutosaveSnapshotPathError)
+                            else "SESSION_START_FAILED"
+                        ),
                         "exception_type": type(exc).__name__,
+                        **details,
                     }
                 ),
                 flush=True,
@@ -345,7 +369,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 continue
             envelope_type = payload.get("type", "command")
             try:
-                if envelope_type == "observe":
+                if envelope_type == "autosave":
+                    response = {
+                        "type": "autosave",
+                        "autosave": session.autosave_view(),
+                    }
+                elif envelope_type == "observe":
                     response = {
                         "type": "observation",
                         "observation": session.observe(),
@@ -401,6 +430,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "type": "error",
                         "code": "UNKNOWN_ENVELOPE_TYPE",
                         "supported_envelope_types": [
+                            "autosave",
                             "command",
                             "command_specs",
                             "observe",

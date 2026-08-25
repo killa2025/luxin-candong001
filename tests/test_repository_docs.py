@@ -19,7 +19,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("`docs/PENDING.md`", index)
         self.assertNotIn("handoff/PENDING 登记.md", index)
 
-    def test_repository_status_text_matches_patch_027_boundary(self) -> None:
+    def test_repository_status_text_matches_patch_028_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
@@ -39,11 +39,14 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("Patch 022", readme)
         self.assertIn("Patch 026", readme)
         self.assertIn("Patch 027", readme)
+        self.assertIn("Patch 028", readme)
+        self.assertIn('{"type":"autosave"}', readme)
         self.assertIn("command_specs", readme)
         self.assertIn("GameSession", readme)
         self.assertIn("Patch 022", agents)
         self.assertIn("Patch 026", agents)
         self.assertIn("Patch 027", agents)
+        self.assertIn("Patch 028", agents)
         self.assertIn("TEST_NUMERIC", agents)
         self.assertIn("legacy_patch021", agents)
         self.assertIn("patch022", agents)

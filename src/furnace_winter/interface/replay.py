@@ -342,6 +342,12 @@ def _decode_log_entry(value: Any) -> LogEntry:
     )
 
 
+def decode_log_entry(value: Any) -> LogEntry:
+    """Strictly decode one persisted structured log entry."""
+
+    return _decode_log_entry(value)
+
+
 def _decode_replay_entry(value: Any) -> ReplayEntry:
     document = _require_fields(
         value,
