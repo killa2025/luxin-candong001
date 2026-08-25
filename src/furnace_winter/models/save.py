@@ -3546,7 +3546,7 @@ def _migrate_v15_to_v16(document: dict[str, Any]) -> dict[str, Any]:
     if (
         report.get("is_generated") is True
         and report.get("format_version")
-        == CURRENT_ENDING_REPORT_FORMAT_VERSION
+        == PATCH_020_ENDING_REPORT_FORMAT_VERSION
         and bool(records)
         and set(
             [
@@ -3564,7 +3564,7 @@ def _migrate_v15_to_v16(document: dict[str, Any]) -> dict[str, Any]:
     elif (
         report.get("is_generated") is True
         and report.get("format_version")
-        == CURRENT_ENDING_REPORT_FORMAT_VERSION
+        == PATCH_020_ENDING_REPORT_FORMAT_VERSION
         and not records
     ):
         pending = set(report.get("pending_text_ids", []))
@@ -5166,7 +5166,13 @@ def _validate_state_invariants(
             "ending report limiting factor ids must be sorted"
         )
     if not report.is_generated:
-        if report != EndingReportState():
+        allowed_ungenerated_reports = (
+            EndingReportState(),
+            EndingReportState(
+                format_version=PATCH_020_ENDING_REPORT_FORMAT_VERSION
+            ),
+        )
+        if report not in allowed_ungenerated_reports:
             raise SaveDataError(
                 "ungenerated ending report cannot retain report fields"
             )

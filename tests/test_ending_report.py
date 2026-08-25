@@ -823,8 +823,64 @@ class EndingReportPatchTests(unittest.TestCase):
         )
         self.assertEqual(view["content_status"], "partial_pending_text")
 
-    def test_v15_migration_marks_service_history_unknown(self) -> None:
+    def test_patch026_v17_ungenerated_report_loads_and_generates_v3(
+        self,
+    ) -> None:
+        legacy = self.state_before_finalization()
+        document = encode_game_state(legacy)
+        document["final_result"]["report"]["format_version"] = (
+            PATCH_020_ENDING_REPORT_FORMAT_VERSION
+        )
+        tampered = deepcopy(document)
+        tampered["final_result"]["report"]["pending_text_ids"] = [
+            "ending.report.fake"
+        ]
+        with self.assertRaisesRegex(
+            SaveDataError,
+            "ungenerated ending report cannot retain report fields",
+        ):
+            decode_game_state(tampered)
+
+        restored = decode_game_state(document)
+
+        self.assertFalse(restored.final_result.report.is_generated)
+        self.assertEqual(
+            restored.final_result.report.format_version,
+            PATCH_020_ENDING_REPORT_FORMAT_VERSION,
+        )
+        context = EndDayContext(
+            state=restored,
+            random=DeterministicRandom.from_state(restored.random),
+            settled_day=55,
+            stage=EndDayStage.RECORD_DAILY_LOG_AND_ENDING_TAGS,
+            _emit=lambda _code, _payload: None,
+        )
+        self.frost_system().finalize_day_55(context)
+        self.assertTrue(restored.final_result.report.is_generated)
+        self.assertEqual(
+            restored.final_result.report.format_version,
+            CURRENT_ENDING_REPORT_FORMAT_VERSION,
+        )
+        self.assertEqual(
+            decode_game_state(encode_game_state(restored)), restored
+        )
+
+    def test_v15_format2_migration_marks_service_history_unknown(self) -> None:
         state = self.completed_state()
+        state.final_result.defining_tags = ["famine_city"]
+        state.final_result.major_tags = []
+        state.final_result.ending_tags = [
+            state.final_result.ending_id,
+            "famine_city",
+        ]
+        report = state.final_result.report
+        report.format_version = PATCH_020_ENDING_REPORT_FORMAT_VERSION
+        report.body_text_ids = patch020_report_body_text_ids(state)
+        report.pending_text_ids = [
+            text_id
+            for text_id in patch020_report_pending_text_ids(state)
+            if text_id != "ending.additional.food.01"
+        ]
         document = encode_game_state(state)
         document["save_data_version"] = 15
         del document["final_frost"]["balance_profile_id"]
@@ -842,6 +898,14 @@ class EndingReportPatchTests(unittest.TestCase):
         self.assertEqual(
             restored.save_data_version, CURRENT_SAVE_DATA_VERSION
         )
+        self.assertEqual(
+            restored.final_result.report.format_version,
+            PATCH_020_ENDING_REPORT_FORMAT_VERSION,
+        )
+        self.assertIn(
+            "ending.additional.food.01",
+            restored.final_result.report.pending_text_ids,
+        )
         self.assertTrue(
             all(
                 not record.service_history_known
@@ -851,6 +915,48 @@ class EndingReportPatchTests(unittest.TestCase):
                 for record in restored.final_frost.daily_records.values()
             )
         )
+
+    def test_v15_format2_migration_clears_unprovable_pending_without_records(
+        self,
+    ) -> None:
+        state = create_initial_survival_state(
+            self.survival, self.buildings, random_seed=15
+        )
+        final = state.final_result
+        final.is_finalized = True
+        final.hard_fail_type = HardFailType.TRUST_EXILE
+        final.ending_id = "hard_fail"
+        final.ending_tags = ["hard_fail", "trust_exile"]
+        EndingReportSystem().generate(state)
+        final.report.format_version = PATCH_020_ENDING_REPORT_FORMAT_VERSION
+        final.report.body_text_ids = patch020_report_body_text_ids(state)
+        final.report.pending_text_ids = sorted(
+            {
+                *patch020_report_pending_text_ids(state),
+                "ending.additional.food.01",
+                "ending.additional.medical.01",
+                "ending.additional.medical.02",
+            }
+        )
+        document = encode_game_state(state)
+        document["save_data_version"] = 15
+        del document["final_frost"]["balance_profile_id"]
+
+        restored = decode_game_state(document)
+
+        self.assertEqual(restored.final_frost.daily_records, {})
+        self.assertEqual(
+            restored.final_result.report.format_version,
+            PATCH_020_ENDING_REPORT_FORMAT_VERSION,
+        )
+        for text_id in (
+            "ending.additional.food.01",
+            "ending.additional.medical.01",
+            "ending.additional.medical.02",
+        ):
+            self.assertNotIn(
+                text_id, restored.final_result.report.pending_text_ids
+            )
 
     def test_service_history_strictly_rejects_forged_or_reversed_facts(
         self,
