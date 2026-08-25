@@ -12,7 +12,11 @@ from unittest.mock import patch
 
 from furnace_winter import GameSession
 from furnace_winter.cli import main
-from furnace_winter.interface import AutosaveSnapshotPathError, ErrorCode
+from furnace_winter.interface import (
+    AutosaveSnapshotPathError,
+    AutosaveSnapshotValidationError,
+    ErrorCode,
+)
 from furnace_winter.models import dumps, encode_game_state
 
 
@@ -724,11 +728,14 @@ class GameSessionTests(unittest.TestCase):
             restored = GameSession.load(save_path, config_dir=ROOT / "data")
 
             self.assertEqual(restored.status()["day"], 2)
-            with self.assertRaisesRegex(
-                ValueError,
-                "end-day autosave fields are invalid",
-            ):
+            with self.assertRaises(AutosaveSnapshotValidationError) as caught:
                 restored.autosave_view()
+            self.assertEqual(caught.exception.code, "AUTOSAVE_SNAPSHOT_INVALID")
+            self.assertEqual(
+                caught.exception.details["reason"],
+                "top_level_fields_invalid",
+            )
+            self.assertEqual(caught.exception.details["field"], "$")
 
     def test_autosave_view_rejects_inconsistent_day_and_resume_stage(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -744,12 +751,12 @@ class GameSessionTests(unittest.TestCase):
             restored = GameSession.load(save_path, config_dir=ROOT / "data")
 
             cases = (
-                ("settled_day", 999, "settled_day disagrees with state"),
-                ("resume_stage", "invented_stage", "resume_stage is invalid"),
+                ("settled_day", 999, "settled_day_state_mismatch"),
+                ("resume_stage", "invented_stage", "resume_stage_unknown"),
                 (
                     "resume_stage",
                     "terminal_state",
-                    "resume_stage disagrees with state",
+                    "resume_stage_state_mismatch",
                 ),
             )
             for field, value, message in cases:
@@ -760,7 +767,10 @@ class GameSessionTests(unittest.TestCase):
                         json.dumps(document, ensure_ascii=False),
                         encoding="utf-8",
                     )
-                    with self.assertRaisesRegex(ValueError, message):
+                    with self.assertRaisesRegex(
+                        AutosaveSnapshotValidationError,
+                        message,
+                    ):
                         restored.autosave_view()
 
     def test_autosave_view_rejects_duplicate_and_descending_log_sequences(
@@ -788,11 +798,18 @@ class GameSessionTests(unittest.TestCase):
                         json.dumps(document, ensure_ascii=False),
                         encoding="utf-8",
                     )
-                    with self.assertRaisesRegex(
-                        ValueError,
-                        "log sequence must be strictly increasing",
-                    ):
+                    with self.assertRaises(
+                        AutosaveSnapshotValidationError
+                    ) as caught:
                         restored.autosave_view()
+                    self.assertEqual(
+                        caught.exception.details["reason"],
+                        "log_sequence_not_strictly_increasing",
+                    )
+                    self.assertEqual(
+                        caught.exception.details["field"],
+                        "logs[1].sequence",
+                    )
 
     def test_overwrite_new_session_clears_previous_autosave(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1414,6 +1431,316 @@ class PlayCliTests(unittest.TestCase):
                 {Path(path) for path in recovery["recognized_primary_save_paths"]},
                 {extensionless_path, json_path},
             )
+
+    def test_json_lines_diagnoses_each_damaged_autosave_constraint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "diagnostic.json"
+            session = GameSession.new(
+                config_dir=ROOT / "data",
+                seed=1136,
+                save_path=save_path,
+            )
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            original = json.loads(autosave_path.read_text(encoding="utf-8"))
+            original_primary_bytes = save_path.read_bytes()
+
+            cases = (
+                (
+                    "settled_day_mismatch",
+                    lambda document: document.__setitem__("settled_day", 2),
+                    "settled_day",
+                    "settled_day_state_mismatch",
+                ),
+                (
+                    "unknown_resume_stage",
+                    lambda document: document.__setitem__(
+                        "resume_stage", "hard_fail"
+                    ),
+                    "resume_stage",
+                    "resume_stage_unknown",
+                ),
+                (
+                    "mismatched_resume_stage",
+                    lambda document: document.__setitem__(
+                        "resume_stage", "terminal_state"
+                    ),
+                    "resume_stage",
+                    "resume_stage_state_mismatch",
+                ),
+                (
+                    "duplicate_log_sequence",
+                    lambda document: document["logs"][1].__setitem__(
+                        "sequence", 1
+                    ),
+                    "logs[1].sequence",
+                    "log_sequence_not_strictly_increasing",
+                ),
+                (
+                    "descending_log_sequence",
+                    lambda document: document["logs"][1].__setitem__(
+                        "sequence", 0
+                    ),
+                    "logs[1].sequence",
+                    "log_sequence_not_strictly_increasing",
+                ),
+            )
+            for case_id, mutate, field, reason in cases:
+                with self.subTest(case_id=case_id):
+                    document = deepcopy(original)
+                    mutate(document)
+                    autosave_path.write_text(
+                        json.dumps(document, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    damaged_bytes = autosave_path.read_bytes()
+                    output = StringIO()
+                    with patch(
+                        "sys.stdin",
+                        StringIO(
+                            json.dumps({"type": "autosave"})
+                            + "\n"
+                            + json.dumps({"type": "quit"})
+                            + "\n"
+                        ),
+                    ), redirect_stdout(output):
+                        exit_code = main(
+                            [
+                                "play",
+                                str(save_path),
+                                "--data-dir",
+                                str(ROOT / "data"),
+                            ]
+                        )
+                    lines = [
+                        json.loads(line)
+                        for line in output.getvalue().splitlines()
+                    ]
+                    error = lines[1]
+
+                    self.assertEqual(exit_code, 0)
+                    self.assertEqual(error["type"], "error")
+                    self.assertEqual(error["code"], "AUTOSAVE_SNAPSHOT_INVALID")
+                    self.assertEqual(error["field"], field)
+                    self.assertEqual(error["reason"], reason)
+                    self.assertTrue(error["constraint"])
+                    self.assertEqual(error["path"], str(autosave_path))
+                    self.assertEqual(
+                        error["allowed_values"],
+                        ["advance_day", "terminal_state", "final_settlement"]
+                        if field == "resume_stage"
+                        else [],
+                    )
+                    self.assertEqual(lines[2]["type"], "closed")
+                    self.assertEqual(save_path.read_bytes(), original_primary_bytes)
+                    self.assertEqual(autosave_path.read_bytes(), damaged_bytes)
+
+    def test_json_lines_rejects_non_finite_autosave_numbers_and_continues(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "non-finite.json"
+            session = GameSession.new(
+                config_dir=ROOT / "data",
+                seed=1137,
+                save_path=save_path,
+            )
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            original = autosave_path.read_text(encoding="utf-8")
+            original_primary_bytes = save_path.read_bytes()
+
+            for token in ("NaN", "Infinity", "-Infinity", "1e9999"):
+                with self.subTest(token=token):
+                    damaged = original.replace(
+                        '"resume_stage":"advance_day","settled_day":1,"slot"',
+                        (
+                            '"resume_stage":"advance_day",'
+                            f'"settled_day":{token},"slot"'
+                        ),
+                        1,
+                    ).encode("utf-8")
+                    self.assertNotEqual(damaged, original.encode("utf-8"))
+                    autosave_path.write_bytes(damaged)
+                    output = StringIO()
+                    requests = (
+                        {"type": "autosave"},
+                        {"type": "status"},
+                        {"type": "replay"},
+                        {"type": "quit"},
+                    )
+                    with patch(
+                        "sys.stdin",
+                        StringIO(
+                            "".join(json.dumps(item) + "\n" for item in requests)
+                        ),
+                    ), redirect_stdout(output):
+                        exit_code = main(
+                            [
+                                "play",
+                                str(save_path),
+                                "--data-dir",
+                                str(ROOT / "data"),
+                            ]
+                        )
+                    lines = [
+                        json.loads(line)
+                        for line in output.getvalue().splitlines()
+                    ]
+
+                    self.assertEqual(exit_code, 0)
+                    self.assertEqual(
+                        [item["type"] for item in lines],
+                        ["observation", "error", "status", "replay", "closed"],
+                    )
+                    error = lines[1]
+                    self.assertEqual(error["code"], "AUTOSAVE_SNAPSHOT_INVALID")
+                    self.assertEqual(error["field"], "$")
+                    self.assertEqual(error["reason"], "invalid_json")
+                    self.assertEqual(
+                        error["context"],
+                        {"parse_reason": "non_finite_number"},
+                    )
+                    self.assertEqual(lines[2]["status"]["state_sequence"], 1)
+                    self.assertEqual(lines[3]["replay"]["entries"], [])
+                    self.assertEqual(save_path.read_bytes(), original_primary_bytes)
+                    self.assertEqual(autosave_path.read_bytes(), damaged)
+
+    def test_json_lines_rejects_non_utf8_autosave_and_continues(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "non-utf8.json"
+            session = GameSession.new(
+                config_dir=ROOT / "data",
+                seed=1138,
+                save_path=save_path,
+            )
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            damaged = b"\xff\xfe\xfa"
+            autosave_path.write_bytes(damaged)
+            original_primary_bytes = save_path.read_bytes()
+            output = StringIO()
+            requests = (
+                {"type": "autosave"},
+                {"type": "status"},
+                {"type": "replay"},
+                {"type": "quit"},
+            )
+            with patch(
+                "sys.stdin",
+                StringIO("".join(json.dumps(item) + "\n" for item in requests)),
+            ), redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "play",
+                        str(save_path),
+                        "--data-dir",
+                        str(ROOT / "data"),
+                    ]
+                )
+            lines = [
+                json.loads(line) for line in output.getvalue().splitlines()
+            ]
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                [item["type"] for item in lines],
+                ["observation", "error", "status", "replay", "closed"],
+            )
+            error = lines[1]
+            self.assertEqual(error["code"], "AUTOSAVE_SNAPSHOT_INVALID")
+            self.assertEqual(error["field"], "$")
+            self.assertEqual(error["reason"], "invalid_text_encoding")
+            self.assertEqual(
+                error["constraint"],
+                "must be UTF-8 or UTF-8 with BOM",
+            )
+            self.assertEqual(lines[2]["status"]["state_sequence"], 1)
+            self.assertEqual(lines[3]["replay"]["entries"], [])
+            self.assertEqual(save_path.read_bytes(), original_primary_bytes)
+            self.assertEqual(autosave_path.read_bytes(), damaged)
+
+    def test_json_lines_rejects_oversized_autosave_integer_and_continues(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "oversized-integer.json"
+            session = GameSession.new(
+                config_dir=ROOT / "data",
+                seed=1139,
+                save_path=save_path,
+            )
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            original = autosave_path.read_text(encoding="utf-8")
+            damaged = original.replace(
+                '"resume_stage":"advance_day","settled_day":1,"slot"',
+                (
+                    '"resume_stage":"advance_day","settled_day":'
+                    + "1" * 5000
+                    + ',"slot"'
+                ),
+                1,
+            ).encode("utf-8")
+            self.assertNotEqual(damaged, original.encode("utf-8"))
+            autosave_path.write_bytes(damaged)
+            original_primary_bytes = save_path.read_bytes()
+            output = StringIO()
+            requests = (
+                {"type": "autosave"},
+                {"type": "status"},
+                {"type": "replay"},
+                {"type": "quit"},
+            )
+            with patch(
+                "sys.stdin",
+                StringIO("".join(json.dumps(item) + "\n" for item in requests)),
+            ), redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "play",
+                        str(save_path),
+                        "--data-dir",
+                        str(ROOT / "data"),
+                    ]
+                )
+            lines = [
+                json.loads(line) for line in output.getvalue().splitlines()
+            ]
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                [item["type"] for item in lines],
+                ["observation", "error", "status", "replay", "closed"],
+            )
+            error = lines[1]
+            self.assertEqual(error["code"], "AUTOSAVE_SNAPSHOT_INVALID")
+            self.assertEqual(error["field"], "$")
+            self.assertEqual(error["reason"], "invalid_json")
+            self.assertEqual(
+                error["context"],
+                {"parse_reason": "numeric_value_unsupported"},
+            )
+            self.assertEqual(lines[2]["status"]["state_sequence"], 1)
+            self.assertEqual(lines[3]["replay"]["entries"], [])
+            self.assertEqual(save_path.read_bytes(), original_primary_bytes)
+            self.assertEqual(autosave_path.read_bytes(), damaged)
 
     def test_json_lines_session_creates_save_and_returns_compact_status(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

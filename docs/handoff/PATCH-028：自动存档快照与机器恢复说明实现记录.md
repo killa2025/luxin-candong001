@@ -46,6 +46,19 @@
 - 使用第二十四次黑盒交付的真实旧快照复验：正式包络成功读取 D55 `final_settlement` 锁定快照；直接路径稳定返回专用错误；主存档和自动存档 SHA-256 均保持不变。
 - 全量 `unittest`：458 项通过；9 份 JSON 配置校验、`compileall` 与 `git diff --check` 通过。
 
+## 合并后黑盒修复
+
+第二十五次纯黑盒验收确认文件角色、无扩展名路径、双候选歧义、严格拒绝和只读边界均正确，但五类损坏快照都被 CLI 压缩成同一个 `SESSION_REQUEST_FAILED / ValueError`，机器无法确定损坏字段或区分未知阶段与阶段/状态不一致。
+
+- 新增稳定错误码 `AUTOSAVE_SNAPSHOT_INVALID`。
+- 错误响应统一返回快照路径、文件角色、字段、原因、约束、实际值、期望值、合法值与必要上下文。
+- 外层日数不一致、未知恢复阶段、合法阶段与状态不一致、重复日志序号和倒序日志序号分别返回可区分原因。
+- `resume_stage` 错误固定公开 `advance_day / terminal_state / final_settlement` 三个合法值，不提供恢复执行或决策建议。
+- 自动存档解析严格拒绝 `NaN / Infinity / -Infinity`、`1e9999` 等溢出为无穷值的数字，以及超过运行时安全位数上限的整数；后者稳定返回 `numeric_value_unsupported`。诊断详情在抛出前经过正式序列化安全化，不允许损坏值再次打断 JSON Lines 会话。
+- 非 UTF-8 快照返回 `invalid_text_encoding`，明确只接受 UTF-8 或带 BOM 的 UTF-8。
+- 查询失败仍不修改主存档、自动存档、状态、回放或序列。
+- 修复后全量 `unittest`：462 项通过；9 份 JSON 配置校验、`compileall` 与 `git diff --check` 通过。
+
 ## 越界自检
 
 - 未修改地图、资源、建筑、科技、炉律、事件、路线、天气、死亡、终霜或结局门槛。
