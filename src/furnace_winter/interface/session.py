@@ -698,6 +698,14 @@ class GameSession:
                 constraint="must contain one valid JSON document",
                 context={"line": exc.lineno, "column": exc.colno},
             ) from exc
+        except ValueError as exc:
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="$",
+                reason="invalid_json",
+                constraint="all JSON numeric values must be supported",
+                context={"parse_reason": "numeric_value_unsupported"},
+            ) from exc
         if not isinstance(document, Mapping):
             raise AutosaveSnapshotValidationError(
                 path,
