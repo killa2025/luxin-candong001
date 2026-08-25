@@ -52,6 +52,7 @@ from furnace_winter.interface.observation import Observation, PROTOCOL_VERSION
 from furnace_winter.interface.replay import (
     decode_log_entry,
     decode_replay_document,
+    EventLog,
     LogCategory,
     LogEntry,
     ReplayDocument,
@@ -59,6 +60,7 @@ from furnace_winter.interface.replay import (
     ReplayLog,
 )
 from furnace_winter.models import (
+    FINAL_DAY,
     GameState,
     RandomState,
     decode_game_state,
@@ -105,7 +107,20 @@ class AutosaveSnapshotPathError(ValueError):
     code = "AUTOSAVE_SNAPSHOT_NOT_PRIMARY_SAVE"
 
     def __init__(self, path: Path) -> None:
-        candidate = self._primary_save_candidate(path)
+        candidates = self._primary_save_candidates(path)
+        recognized = tuple(
+            candidate
+            for candidate in candidates
+            if self._is_recognized_primary_save(candidate)
+        )
+        candidate = recognized[0] if len(recognized) == 1 else None
+        resolution = (
+            "resolved"
+            if candidate is not None
+            else "ambiguous"
+            if len(recognized) > 1
+            else "not_found"
+        )
         self.details = {
             "reason": "end_day_autosave_snapshot_is_not_primary_save",
             "provided_document_type": "end_day_autosave_snapshot",
@@ -116,6 +131,14 @@ class AutosaveSnapshotPathError(ValueError):
                 "open_primary_save_path": (
                     str(candidate) if candidate is not None else None
                 ),
+                "primary_save_path_resolution": resolution,
+                "primary_save_path_ambiguous": len(recognized) > 1,
+                "primary_save_path_candidates": [
+                    str(candidate) for candidate in candidates
+                ],
+                "recognized_primary_save_paths": [
+                    str(candidate) for candidate in recognized
+                ],
                 "open_primary_save_instead": True,
                 "do_not_extract_nested_state": True,
             },
@@ -123,14 +146,28 @@ class AutosaveSnapshotPathError(ValueError):
         super().__init__(self.details["reason"])
 
     @staticmethod
-    def _primary_save_candidate(path: Path) -> Path | None:
+    def _primary_save_candidates(path: Path) -> tuple[Path, ...]:
         marker = f".{AUTOSAVE_END_DAY_SLOT}"
         if not path.stem.endswith(marker):
-            return None
+            return ()
         primary_stem = path.stem[: -len(marker)]
         if not primary_stem:
-            return None
-        return path.with_name(f"{primary_stem}{path.suffix}")
+            return ()
+        candidates = [path.with_name(f"{primary_stem}{path.suffix}")]
+        if path.suffix.casefold() == ".json":
+            candidates.insert(0, path.with_name(primary_stem))
+        return tuple(dict.fromkeys(candidates))
+
+    @staticmethod
+    def _is_recognized_primary_save(path: Path) -> bool:
+        if not path.is_file():
+            return False
+        try:
+            document = json.loads(path.read_text(encoding="utf-8-sig"))
+            decode_game_state(document)
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+            return False
+        return True
 
 
 class GameSession:
@@ -539,6 +576,7 @@ class GameSession:
             }
         snapshot_state = decode_game_state(record.state)
         self._validate_state_value(snapshot_state)
+        self._validate_end_day_autosave(record, snapshot_state)
         return {
             "available": True,
             "document_type": "end_day_autosave_snapshot",
@@ -564,13 +602,43 @@ class GameSession:
         logs = document["logs"]
         if not isinstance(logs, list):
             raise TypeError("end-day autosave logs must be an array")
+        event_log = EventLog()
+        for item in logs:
+            event_log.append(decode_log_entry(item))
         return AutosaveRecord(
             slot=document["slot"],
             settled_day=document["settled_day"],
             state=document["state"],
-            logs=tuple(decode_log_entry(item) for item in logs),
+            logs=event_log.entries(),
             resume_stage=document["resume_stage"],
         )
+
+    @staticmethod
+    def _validate_end_day_autosave(
+        record: AutosaveRecord,
+        state: GameState,
+    ) -> None:
+        if (
+            record.settled_day != state.calendar.current_day
+            or record.settled_day != state.daily_survival.settled_day
+        ):
+            raise ValueError("end-day autosave settled_day disagrees with state")
+        if not state.calendar.is_day_locked or not state.calendar.is_end_day_confirmed:
+            raise ValueError("end-day autosave state is not locked at settlement boundary")
+        allowed_stages = frozenset(
+            {"advance_day", "terminal_state", "final_settlement"}
+        )
+        if record.resume_stage not in allowed_stages:
+            raise ValueError("end-day autosave resume_stage is invalid")
+        expected_stage = (
+            "terminal_state"
+            if state.final_result.hard_fail_type is not None
+            else "final_settlement"
+            if record.settled_day == FINAL_DAY
+            else "advance_day"
+        )
+        if record.resume_stage != expected_stage:
+            raise ValueError("end-day autosave resume_stage disagrees with state")
 
     def status(self) -> dict[str, Any]:
         state = self._state

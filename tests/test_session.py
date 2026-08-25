@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from furnace_winter import GameSession
 from furnace_winter.cli import main
-from furnace_winter.interface import ErrorCode
+from furnace_winter.interface import AutosaveSnapshotPathError, ErrorCode
 from furnace_winter.models import dumps, encode_game_state
 
 
@@ -730,6 +730,70 @@ class GameSessionTests(unittest.TestCase):
             ):
                 restored.autosave_view()
 
+    def test_autosave_view_rejects_inconsistent_day_and_resume_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "game.json"
+            session = self.new_session(seed=1132, save_path=save_path)
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            original = json.loads(autosave_path.read_text(encoding="utf-8"))
+            restored = GameSession.load(save_path, config_dir=ROOT / "data")
+
+            cases = (
+                ("settled_day", 999, "settled_day disagrees with state"),
+                ("resume_stage", "invented_stage", "resume_stage is invalid"),
+                (
+                    "resume_stage",
+                    "terminal_state",
+                    "resume_stage disagrees with state",
+                ),
+            )
+            for field, value, message in cases:
+                with self.subTest(field=field, value=value):
+                    document = deepcopy(original)
+                    document[field] = value
+                    autosave_path.write_text(
+                        json.dumps(document, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(ValueError, message):
+                        restored.autosave_view()
+
+    def test_autosave_view_rejects_duplicate_and_descending_log_sequences(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "game.json"
+            session = self.new_session(seed=1133, save_path=save_path)
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            original = json.loads(autosave_path.read_text(encoding="utf-8"))
+            self.assertGreaterEqual(len(original["logs"]), 3)
+            restored = GameSession.load(save_path, config_dir=ROOT / "data")
+
+            for first, second in ((1, 1), (2, 1)):
+                with self.subTest(sequences=(first, second)):
+                    document = deepcopy(original)
+                    document["logs"][0]["sequence"] = first
+                    document["logs"][1]["sequence"] = second
+                    autosave_path.write_text(
+                        json.dumps(document, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "log sequence must be strictly increasing",
+                    ):
+                        restored.autosave_view()
+
     def test_overwrite_new_session_clears_previous_autosave(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             save_path = Path(temp_dir) / "game.json"
@@ -1285,6 +1349,71 @@ class PlayCliTests(unittest.TestCase):
                 save_path,
             )
             self.assertTrue(error["recovery"]["do_not_extract_nested_state"])
+
+    def test_autosave_path_error_resolves_extensionless_primary_save(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "game"
+            session = GameSession.new(
+                config_dir=ROOT / "data",
+                seed=1134,
+                save_path=save_path,
+            )
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+
+            with self.assertRaises(AutosaveSnapshotPathError) as caught:
+                GameSession.load(autosave_path, config_dir=ROOT / "data")
+
+            details = caught.exception.details
+            recovery = details["recovery"]
+            self.assertEqual(
+                Path(recovery["open_primary_save_path"]),
+                save_path,
+            )
+            self.assertEqual(recovery["primary_save_path_resolution"], "resolved")
+            self.assertFalse(recovery["primary_save_path_ambiguous"])
+            self.assertEqual(
+                [Path(path) for path in recovery["recognized_primary_save_paths"]],
+                [save_path],
+            )
+
+    def test_autosave_path_error_reports_ambiguous_primary_save_candidates(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            extensionless_path = Path(temp_dir) / "game"
+            session = GameSession.new(
+                config_dir=ROOT / "data",
+                seed=1135,
+                save_path=extensionless_path,
+            )
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            json_path = Path(temp_dir) / "game.json"
+            json_path.write_bytes(extensionless_path.read_bytes())
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+
+            with self.assertRaises(AutosaveSnapshotPathError) as caught:
+                GameSession.load(autosave_path, config_dir=ROOT / "data")
+
+            recovery = caught.exception.details["recovery"]
+            self.assertIsNone(recovery["open_primary_save_path"])
+            self.assertEqual(
+                recovery["primary_save_path_resolution"],
+                "ambiguous",
+            )
+            self.assertTrue(recovery["primary_save_path_ambiguous"])
+            self.assertEqual(
+                {Path(path) for path in recovery["recognized_primary_save_paths"]},
+                {extensionless_path, json_path},
+            )
 
     def test_json_lines_session_creates_save_and_returns_compact_status(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
