@@ -11,6 +11,8 @@ from furnace_winter.models.ending_selection import (
     canonical_report_body_text_ids,
     canonical_report_pending_text_ids,
     canonical_report_title_text_id,
+    patch020_report_body_text_ids,
+    patch020_report_pending_text_ids,
 )
 from furnace_winter.models.serialization import to_primitive
 from furnace_winter.models.state import (
@@ -39,6 +41,7 @@ from furnace_winter.models.state import (
     HungerState,
     LawState,
     LEGACY_ENDING_REPORT_FORMAT_VERSION,
+    PATCH_020_ENDING_REPORT_FORMAT_VERSION,
     MapState,
     MedicalState,
     OathOrderState,
@@ -3543,7 +3546,7 @@ def _migrate_v15_to_v16(document: dict[str, Any]) -> dict[str, Any]:
     if (
         report.get("is_generated") is True
         and report.get("format_version")
-        == CURRENT_ENDING_REPORT_FORMAT_VERSION
+        == PATCH_020_ENDING_REPORT_FORMAT_VERSION
         and bool(records)
         and set(
             [
@@ -3561,7 +3564,7 @@ def _migrate_v15_to_v16(document: dict[str, Any]) -> dict[str, Any]:
     elif (
         report.get("is_generated") is True
         and report.get("format_version")
-        == CURRENT_ENDING_REPORT_FORMAT_VERSION
+        == PATCH_020_ENDING_REPORT_FORMAT_VERSION
         and not records
     ):
         pending = set(report.get("pending_text_ids", []))
@@ -5163,7 +5166,13 @@ def _validate_state_invariants(
             "ending report limiting factor ids must be sorted"
         )
     if not report.is_generated:
-        if report != EndingReportState():
+        allowed_ungenerated_reports = (
+            EndingReportState(),
+            EndingReportState(
+                format_version=PATCH_020_ENDING_REPORT_FORMAT_VERSION
+            ),
+        )
+        if report not in allowed_ungenerated_reports:
             raise SaveDataError(
                 "ungenerated ending report cannot retain report fields"
             )
@@ -5202,6 +5211,8 @@ def _validate_state_invariants(
         legacy_pending_text_ids = _expected_report_pending_text_ids(state)
         canonical_body_text_ids = canonical_report_body_text_ids(state)
         canonical_pending_text_ids = canonical_report_pending_text_ids(state)
+        patch020_body_text_ids = patch020_report_body_text_ids(state)
+        patch020_pending_text_ids = patch020_report_pending_text_ids(state)
         is_legacy_report = (
             report.format_version == LEGACY_ENDING_REPORT_FORMAT_VERSION
             and report.title_text_id
@@ -5210,12 +5221,18 @@ def _validate_state_invariants(
             and report.pending_text_ids == legacy_pending_text_ids
         )
         is_patch020_report = (
+            report.format_version == PATCH_020_ENDING_REPORT_FORMAT_VERSION
+            and report.title_text_id == canonical_report_title_text_id(state)
+            and report.body_text_ids == patch020_body_text_ids
+            and report.pending_text_ids == patch020_pending_text_ids
+        )
+        is_current_report = (
             report.format_version == CURRENT_ENDING_REPORT_FORMAT_VERSION
             and report.title_text_id == canonical_report_title_text_id(state)
             and report.body_text_ids == canonical_body_text_ids
             and report.pending_text_ids == canonical_pending_text_ids
         )
-        if not (is_legacy_report or is_patch020_report):
+        if not (is_legacy_report or is_patch020_report or is_current_report):
             raise SaveDataError(
                 "ending report text selection is not canonical"
             )

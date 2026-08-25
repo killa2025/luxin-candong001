@@ -1065,6 +1065,62 @@ class GameSessionTests(unittest.TestCase):
 
 
 class PlayCliTests(unittest.TestCase):
+    def test_json_lines_exposes_status_specs_and_supported_envelopes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "cli-queries.json"
+            requests = (
+                {"type": "status"},
+                {"type": "command_specs"},
+                {"type": "unsupported"},
+                {"type": "quit"},
+            )
+            input_stream = StringIO(
+                "".join(json.dumps(item) + "\n" for item in requests)
+            )
+            output_stream = StringIO()
+            with patch("sys.stdin", input_stream), redirect_stdout(output_stream):
+                exit_code = main(
+                    [
+                        "play",
+                        str(save_path),
+                        "--data-dir",
+                        str(ROOT / "data"),
+                        "--new",
+                    ]
+                )
+            lines = [
+                json.loads(line)
+                for line in output_stream.getvalue().splitlines()
+            ]
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            [item["type"] for item in lines],
+            ["observation", "status", "command_specs", "error", "closed"],
+        )
+        self.assertEqual(lines[1]["status"]["day"], 1)
+        self.assertTrue(
+            any(
+                spec["name"] == "game.end_day"
+                for spec in lines[2]["command_specs"]
+            )
+        )
+        self.assertEqual(lines[3]["code"], "UNKNOWN_ENVELOPE_TYPE")
+        self.assertEqual(
+            lines[3]["supported_envelope_types"],
+            [
+                "command",
+                "command_specs",
+                "observe",
+                "quit",
+                "replay",
+                "rules",
+                "status",
+            ],
+        )
+        self.assertEqual(lines[1]["status"]["state_sequence"], 0)
+        self.assertEqual(lines[4]["status"]["state_sequence"], 0)
+
     def test_json_lines_session_creates_save_and_returns_compact_status(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             save_path = Path(temp_dir) / "cli-save.json"

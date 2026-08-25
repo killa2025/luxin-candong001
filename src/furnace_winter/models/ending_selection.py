@@ -140,6 +140,10 @@ _PENDING_MEDICAL_TEXT_IDS = (
     "ending.additional.medical.02",
 )
 _PENDING_FOOD_TEXT_ID = "ending.additional.food.01"
+_PENDING_REPORT_ILLNESS_TEXT_ID = (
+    "ending.report.illness.no_operational_service"
+)
+_PENDING_REPORT_COAL_FOOD_TEXT_ID = "ending.report.coal_food.zero_stock"
 
 
 def _choose(state: GameState, key: str, candidates: tuple[str, ...]) -> str:
@@ -250,7 +254,7 @@ def _hard_fail_body_candidates(state: GameState) -> tuple[str, ...]:
     return tuple(candidates)
 
 
-def _illness_text_id(state: GameState) -> str | None:
+def _legacy_illness_text_id(state: GameState) -> str | None:
     sick_total = (
         state.population.sick_population
         + state.population.critical_population
@@ -269,18 +273,53 @@ def _illness_text_id(state: GameState) -> str | None:
     return "ending.report.illness.01"
 
 
+def _final_day_service_record(state: GameState) -> object | None:
+    record = state.final_frost.daily_records.get(str(state.calendar.max_day))
+    if record is None or not getattr(record, "service_history_known", False):
+        return None
+    return record
+
+
+def _illness_text_id(state: GameState) -> str | None:
+    sick_total = (
+        state.population.sick_population
+        + state.population.critical_population
+    )
+    record = _final_day_service_record(state)
+    has_operational_medical_service = bool(
+        record is not None
+        and getattr(record, "medical_operational_building_count", 0) > 0
+        and getattr(record, "medical_building_capacity", 0) > 0
+    )
+    if not has_operational_medical_service:
+        return None
+    if sick_total == 0:
+        return "ending.report.illness.03"
+    score = state.final_result.system_scores.get("medical_and_disease", 0)
+    if score <= 1:
+        return "ending.report.illness.04"
+    return "ending.report.illness.01"
+
+
 def _score_text_id(prefix: str, score: int) -> str:
     index = 1 if score >= 4 else 2 if score == 3 else 3 if score == 2 else 4
     return f"ending.report.{prefix}.{index:02d}"
 
 
-def _coal_food_text_id(state: GameState) -> str:
+def _legacy_coal_food_text_id(state: GameState) -> str:
     score = min(
         state.final_result.system_scores.get("coal_and_core", 0),
         state.final_result.system_scores.get("food", 0),
     )
     index = 3 if score >= 3 else 2 if score == 2 else 1
     return f"ending.report.coal_food.{index:02d}"
+
+
+def _coal_food_text_id(state: GameState) -> str | None:
+    food_total = state.resources.raw_food + state.resources.cooked_food
+    if state.resources.coal <= 0 or food_total <= 0:
+        return None
+    return _legacy_coal_food_text_id(state)
 
 
 def _additional_text_ids(state: GameState) -> list[str]:
@@ -415,7 +454,9 @@ def _trace_text_ids(state: GameState) -> list[str]:
     return []
 
 
-def canonical_report_body_text_ids(state: GameState) -> list[str]:
+def _report_body_text_ids(
+    state: GameState, *, patch020_fact_contract: bool
+) -> list[str]:
     final = state.final_result
     if final.run_state is RunState.ENDED:
         return [
@@ -457,7 +498,11 @@ def canonical_report_body_text_ids(state: GameState) -> list[str]:
     ]
     if state.final_frost.frost_deaths > 0:
         body.append("ending.report.frostfall_deaths")
-    illness_text_id = _illness_text_id(state)
+    illness_text_id = (
+        _legacy_illness_text_id(state)
+        if patch020_fact_contract
+        else _illness_text_id(state)
+    )
     if illness_text_id is not None:
         body.append(illness_text_id)
     body.extend(
@@ -469,10 +514,16 @@ def canonical_report_body_text_ids(state: GameState) -> list[str]:
             _score_text_id(
                 "core", final.system_scores.get("coal_and_core", 0)
             ),
-            _coal_food_text_id(state),
-            _choose(state, "report.future", REPORT_FUTURE_CANDIDATES),
         )
     )
+    coal_food_text_id = (
+        _legacy_coal_food_text_id(state)
+        if patch020_fact_contract
+        else _coal_food_text_id(state)
+    )
+    if coal_food_text_id is not None:
+        body.append(coal_food_text_id)
+    body.append(_choose(state, "report.future", REPORT_FUTURE_CANDIDATES))
     body.extend(_additional_text_ids(state))
     body.extend(_trace_text_ids(state))
     body.append(
@@ -483,6 +534,16 @@ def canonical_report_body_text_ids(state: GameState) -> list[str]:
         )
     )
     return body
+
+
+def canonical_report_body_text_ids(state: GameState) -> list[str]:
+    return _report_body_text_ids(state, patch020_fact_contract=False)
+
+
+def patch020_report_body_text_ids(state: GameState) -> list[str]:
+    """Reproduce report format 2 without rewriting existing saved reports."""
+
+    return _report_body_text_ids(state, patch020_fact_contract=True)
 
 
 def canonical_report_title_text_id(state: GameState) -> str:
@@ -496,7 +557,9 @@ def canonical_report_title_text_id(state: GameState) -> str:
     return ENDING_TITLE_TEXT_IDS[final.ending_id]
 
 
-def canonical_report_pending_text_ids(state: GameState) -> list[str]:
+def _report_pending_text_ids(
+    state: GameState, *, patch020_fact_contract: bool
+) -> list[str]:
     pending: set[str] = set()
     ordinary_laws = set(state.laws.signed_law_ids)
     route_laws = set(state.oath_order.signed_law_ids)
@@ -504,6 +567,15 @@ def canonical_report_pending_text_ids(state: GameState) -> list[str]:
         *state.final_result.defining_tags,
         *state.final_result.major_tags,
     }
+    if not patch020_fact_contract and _uses_survival_report(state) and final_result_requires_illness_text(state):
+        if _illness_text_id(state) is None:
+            pending.add(_PENDING_REPORT_ILLNESS_TEXT_ID)
+    if (
+        not patch020_fact_contract
+        and _uses_survival_report(state)
+        and _coal_food_text_id(state) is None
+    ):
+        pending.add(_PENDING_REPORT_COAL_FOOD_TEXT_ID)
     if ending_tags & _ADDITIONAL_TOPICS["medical"]:
         records = tuple(state.final_frost.daily_records.values())
         if any(not record.service_history_known for record in records):
@@ -552,6 +624,35 @@ def canonical_report_pending_text_ids(state: GameState) -> list[str]:
     if state.old_city.is_unlocked:
         pending.add(_PENDING_LONG_TEXT_IDS["old_city"])
     return sorted(pending)
+
+
+def _uses_survival_report(state: GameState) -> bool:
+    return (
+        state.final_result.hard_fail_type is None
+        and state.final_result.ending_id in SURVIVAL_BODY_CANDIDATES
+        and state.final_result.run_state is not RunState.ENDED
+    )
+
+
+def final_result_requires_illness_text(state: GameState) -> bool:
+    return (
+        _uses_survival_report(state)
+        and (
+            state.population.sick_population
+            + state.population.critical_population
+            > 0
+        )
+    )
+
+
+def canonical_report_pending_text_ids(state: GameState) -> list[str]:
+    return _report_pending_text_ids(state, patch020_fact_contract=False)
+
+
+def patch020_report_pending_text_ids(state: GameState) -> list[str]:
+    """Reproduce the exact pending set used by report format 2."""
+
+    return _report_pending_text_ids(state, patch020_fact_contract=True)
 
 
 def legacy_report_pending_text_ids(state: GameState) -> list[str]:

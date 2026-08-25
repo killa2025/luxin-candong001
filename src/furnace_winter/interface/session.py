@@ -380,6 +380,20 @@ class GameSession:
     def _protocol_contract(self) -> dict[str, Any]:
         rule_sections = tuple(sorted(self._rule_documents))
         return {
+            "play_envelopes": {
+                "supported_types": [
+                    "command",
+                    "command_specs",
+                    "observe",
+                    "quit",
+                    "replay",
+                    "rules",
+                    "status",
+                ],
+                "status_request_shape": {"type": "status"},
+                "command_specs_request_shape": {"type": "command_specs"},
+                "contains_strategy_recommendations": False,
+            },
             "rules_query": {
                 "request_shape": {
                     "type": "rules",

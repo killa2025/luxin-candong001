@@ -895,6 +895,13 @@ class OathOrderSystem:
                     "required_facility_running": self._facility(
                         state, rule.route
                     ).is_running,
+                    "requires_recorded_death": action_id == "mourning_bell",
+                    "recorded_death_requirement_satisfied": (
+                        state.population.population_dead > 0
+                        or bool(state.events.deaths_today_by_cause)
+                        if action_id == "mourning_bell"
+                        else None
+                    ),
                     "old_city_change": rule.old_city,
                 }
                 for action_id, rule in sorted(self.rules.actions.items())
