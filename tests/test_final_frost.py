@@ -1042,6 +1042,69 @@ class FinalFrostPatchTests(unittest.TestCase):
         )
         self.assertEqual(state.population.population_dead, 1)
 
+    def test_disease_death_releases_last_route_worker_before_autosave(
+        self,
+    ) -> None:
+        state = self.make_state(day=48)
+        self.set_population(
+            state,
+            healthy=49,
+            critical=1,
+            housed=40,
+        )
+        state.oath_order.page_unlocked = True
+        state.oath_order.selected_route = "oath"
+        state.oath_order.signed_law_ids = ["guard_oath"]
+        state.oath_order.law_signed_days = {"guard_oath": 45}
+        state.oath_order.next_law_day = 47
+        hall = state.oath_order.oath_hall
+        hall.enabled = True
+        hall.visible = True
+        hall.assigned_workers = 1
+        hall.is_running = True
+        remaining_workers = 49
+        for point in sorted(
+            state.surface_resource_points.values(),
+            key=lambda item: item.resource_point_id,
+        ):
+            assigned = min(point.staff_capacity, remaining_workers)
+            point.assigned_workers = assigned
+            remaining_workers -= assigned
+            if remaining_workers == 0:
+                break
+        self.assertEqual(remaining_workers, 0)
+        autosaves: list[object] = []
+        engine, _events, _oath_order = self.full_engine(
+            autosave_sink=autosaves.append
+        )
+        engine._validate_state(state)
+
+        with patch.object(
+            FinalFrostSystem,
+            "_exposure",
+            return_value=[(3, 40, False), (3, 10, True)],
+        ):
+            settled = self.settle(
+                engine,
+                state,
+                "route-staff-death",
+            )
+
+        self.assertEqual(
+            settled.result.code,
+            ErrorCode.OK,
+            settled.result.data,
+        )
+        self.assertEqual(state.population.population_dead, 1)
+        self.assertEqual(state.oath_order.oath_hall.assigned_workers, 0)
+        self.assertFalse(state.oath_order.oath_hall.is_running)
+        self.assertEqual(len(autosaves), 1)
+        autosave = autosaves[0]
+        self.assertFalse(
+            autosave.state["oath_order"]["oath_hall"]["is_running"]
+        )
+        decode_game_state(autosave.state)
+
     def test_natural_death_cap_scales_and_only_two_crises_break_it(self) -> None:
         cases = (
             (80, False, 12, 12),

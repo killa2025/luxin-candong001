@@ -1952,6 +1952,17 @@ class FinalFrostSystem:
             removed = min(value, excess)
             setattr(item, field, value - removed)
             excess -= removed
+        if field in {"assigned_workers", "assigned_engineers"}:
+            for facility in (
+                state.oath_order.oath_hall,
+                state.oath_order.patrol_office,
+            ):
+                facility.is_running = (
+                    facility.enabled
+                    and facility.assigned_workers
+                    + facility.assigned_engineers
+                    >= 1
+                )
 
     @staticmethod
     def _settle_new_bodies(state: GameState, deaths: int) -> None:
