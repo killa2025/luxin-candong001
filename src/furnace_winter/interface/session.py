@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from collections.abc import Mapping
@@ -86,6 +87,33 @@ _AUTOSAVE_RESUME_STAGES = (
     "terminal_state",
     "final_settlement",
 )
+
+
+class _NonFiniteJsonNumber(ValueError):
+    pass
+
+
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise _NonFiniteJsonNumber(value)
+    return parsed
+
+
+def _reject_non_finite_json_constant(value: str) -> None:
+    raise _NonFiniteJsonNumber(value)
+
+
+def _safe_diagnostic_value(value: Any) -> Any:
+    """Return a value that the formal serializer can always emit."""
+
+    try:
+        return json.loads(dumps(value))
+    except (TypeError, ValueError):
+        return {
+            "value_not_serializable": True,
+            "python_type": type(value).__name__,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,10 +228,10 @@ class AutosaveSnapshotValidationError(ValueError):
             "path": str(path) if path is not None else None,
             "field": field,
             "constraint": constraint,
-            "actual_value": deepcopy(actual_value),
-            "expected_value": deepcopy(expected_value),
+            "actual_value": _safe_diagnostic_value(actual_value),
+            "expected_value": _safe_diagnostic_value(expected_value),
             "allowed_values": list(allowed_values),
-            "context": deepcopy(dict(context or {})),
+            "context": _safe_diagnostic_value(dict(context or {})),
         }
         super().__init__(reason)
 
@@ -639,7 +667,29 @@ class GameSession:
     @staticmethod
     def _read_end_day_autosave(path: Path) -> AutosaveRecord:
         try:
-            document = json.loads(path.read_text(encoding="utf-8-sig"))
+            text = path.read_text(encoding="utf-8-sig")
+        except UnicodeError as exc:
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="$",
+                reason="invalid_text_encoding",
+                constraint="must be UTF-8 or UTF-8 with BOM",
+                context={"decoding_exception_type": type(exc).__name__},
+            ) from exc
+        try:
+            document = json.loads(
+                text,
+                parse_float=_parse_finite_json_float,
+                parse_constant=_reject_non_finite_json_constant,
+            )
+        except _NonFiniteJsonNumber as exc:
+            raise AutosaveSnapshotValidationError(
+                path,
+                field="$",
+                reason="invalid_json",
+                constraint="all JSON numbers must be finite",
+                context={"parse_reason": "non_finite_number"},
+            ) from exc
         except json.JSONDecodeError as exc:
             raise AutosaveSnapshotValidationError(
                 path,

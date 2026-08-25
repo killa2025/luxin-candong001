@@ -1539,6 +1539,139 @@ class PlayCliTests(unittest.TestCase):
                     self.assertEqual(save_path.read_bytes(), original_primary_bytes)
                     self.assertEqual(autosave_path.read_bytes(), damaged_bytes)
 
+    def test_json_lines_rejects_non_finite_autosave_numbers_and_continues(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "non-finite.json"
+            session = GameSession.new(
+                config_dir=ROOT / "data",
+                seed=1137,
+                save_path=save_path,
+            )
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            original = autosave_path.read_text(encoding="utf-8")
+            original_primary_bytes = save_path.read_bytes()
+
+            for token in ("NaN", "Infinity", "-Infinity", "1e9999"):
+                with self.subTest(token=token):
+                    damaged = original.replace(
+                        '"resume_stage":"advance_day","settled_day":1,"slot"',
+                        (
+                            '"resume_stage":"advance_day",'
+                            f'"settled_day":{token},"slot"'
+                        ),
+                        1,
+                    ).encode("utf-8")
+                    self.assertNotEqual(damaged, original.encode("utf-8"))
+                    autosave_path.write_bytes(damaged)
+                    output = StringIO()
+                    requests = (
+                        {"type": "autosave"},
+                        {"type": "status"},
+                        {"type": "replay"},
+                        {"type": "quit"},
+                    )
+                    with patch(
+                        "sys.stdin",
+                        StringIO(
+                            "".join(json.dumps(item) + "\n" for item in requests)
+                        ),
+                    ), redirect_stdout(output):
+                        exit_code = main(
+                            [
+                                "play",
+                                str(save_path),
+                                "--data-dir",
+                                str(ROOT / "data"),
+                            ]
+                        )
+                    lines = [
+                        json.loads(line)
+                        for line in output.getvalue().splitlines()
+                    ]
+
+                    self.assertEqual(exit_code, 0)
+                    self.assertEqual(
+                        [item["type"] for item in lines],
+                        ["observation", "error", "status", "replay", "closed"],
+                    )
+                    error = lines[1]
+                    self.assertEqual(error["code"], "AUTOSAVE_SNAPSHOT_INVALID")
+                    self.assertEqual(error["field"], "$")
+                    self.assertEqual(error["reason"], "invalid_json")
+                    self.assertEqual(
+                        error["context"],
+                        {"parse_reason": "non_finite_number"},
+                    )
+                    self.assertEqual(lines[2]["status"]["state_sequence"], 1)
+                    self.assertEqual(lines[3]["replay"]["entries"], [])
+                    self.assertEqual(save_path.read_bytes(), original_primary_bytes)
+                    self.assertEqual(autosave_path.read_bytes(), damaged)
+
+    def test_json_lines_rejects_non_utf8_autosave_and_continues(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "non-utf8.json"
+            session = GameSession.new(
+                config_dir=ROOT / "data",
+                seed=1138,
+                save_path=save_path,
+            )
+            self.assertEqual(
+                session.command("game.end_day").result.code,
+                ErrorCode.OK,
+            )
+            autosave_path = session.autosave_path
+            assert autosave_path is not None
+            damaged = b"\xff\xfe\xfa"
+            autosave_path.write_bytes(damaged)
+            original_primary_bytes = save_path.read_bytes()
+            output = StringIO()
+            requests = (
+                {"type": "autosave"},
+                {"type": "status"},
+                {"type": "replay"},
+                {"type": "quit"},
+            )
+            with patch(
+                "sys.stdin",
+                StringIO("".join(json.dumps(item) + "\n" for item in requests)),
+            ), redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "play",
+                        str(save_path),
+                        "--data-dir",
+                        str(ROOT / "data"),
+                    ]
+                )
+            lines = [
+                json.loads(line) for line in output.getvalue().splitlines()
+            ]
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                [item["type"] for item in lines],
+                ["observation", "error", "status", "replay", "closed"],
+            )
+            error = lines[1]
+            self.assertEqual(error["code"], "AUTOSAVE_SNAPSHOT_INVALID")
+            self.assertEqual(error["field"], "$")
+            self.assertEqual(error["reason"], "invalid_text_encoding")
+            self.assertEqual(
+                error["constraint"],
+                "must be UTF-8 or UTF-8 with BOM",
+            )
+            self.assertEqual(lines[2]["status"]["state_sequence"], 1)
+            self.assertEqual(lines[3]["replay"]["entries"], [])
+            self.assertEqual(save_path.read_bytes(), original_primary_bytes)
+            self.assertEqual(autosave_path.read_bytes(), damaged)
+
     def test_json_lines_session_creates_save_and_returns_compact_status(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             save_path = Path(temp_dir) / "cli-save.json"
