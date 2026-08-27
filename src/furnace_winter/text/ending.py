@@ -14,6 +14,13 @@ _SOURCE = (
     "docs/text-assets/第 6 轮：FrostFinal  Ending  HardFail  "
     "EndingReport  EndingTag  Interrogation.md"
 )
+_USER_OVERRIDE_SOURCE = "用户于 Patch 029 明确确认的终局报告文案"
+_USER_OVERRIDE_TEXT_IDS = {
+    "ending.report.illness.no_service",
+    "ending.report.coal_food.coal_empty",
+    "ending.report.coal_food.food_empty",
+    "ending.report.coal_food.both_empty",
+}
 
 _RUNTIME_TEXT = {
     "ending.title.hard_fail": "炉城终止",
@@ -46,6 +53,26 @@ _RUNTIME_TEXT = {
         "而是因为执政官决定，不再继续追问。"
     ),
     "ending.report.opening": "你带领 {start_population} 个人走入寒冬。",
+    "ending.report.illness.no_service": (
+        "终局封存时，城里仍有病患，却已经没有一处医疗设施能够继续"
+        "接诊。\n\n人们只能自己决定，把仅剩的照料先留给谁——以及让谁"
+        "在无人回应的黑暗里继续等下去。"
+    ),
+    "ending.report.coal_food.coal_empty": (
+        "食物还留在仓里，煤仓却已经空了。\n\n人们守着最后的口粮争论："
+        "是把它分给今天仍活着的人，还是留给一个可能永远不会到来的"
+        "明天。"
+    ),
+    "ending.report.coal_food.food_empty": (
+        "煤仓里还留着黑色的余量，食物却一份也没有剩下。\n\n人们这才"
+        "明白，炉火可以让身体保持温暖，却不能阻止饥饿把尊严一点点"
+        "剥走。"
+    ),
+    "ending.report.coal_food.both_empty": (
+        "煤仓与食物仓一起见了底。\n\n人们围在炉城最后的余温旁，不再问"
+        "明天吃什么、烧什么，只开始沉默地看着彼此——仿佛最后的"
+        "答案，迟早要从某个人身上取走。"
+    ),
     "ending.report.frostfall_deaths": (
         "最后七天里，第七霜落又带走了 {frostfall_deaths} 个"
         "再过几天就能见到曙光的人。"
@@ -332,12 +359,12 @@ _PENDING_RUNTIME_TEXT_NOTES = {
 }
 _PENDING_CONDITION_NOTES = {
     "ending.report.illness.no_operational_service": (
-        "终局仍有病患但 D55 逐日事实不能证明医疗建筑仍在运行；"
-        "缺少适用的封存病患句时只登记缺失，不展示矛盾正文。"
+        "Patch 027 报告格式 3 的历史缺失项；Patch 029 格式 4 在 D55"
+        "事实明确无服务时已改用用户确认正文，历史未知时仍保守登记。"
     ),
     "ending.report.coal_food.zero_stock": (
-        "终局煤炭或食物库存为零；现有煤炭/食物合并句均暗示两者仍有"
-        "余量，缺少适用正文时只登记缺失。"
+        "Patch 027 报告格式 3 的历史缺失项；Patch 029 格式 4 已按煤炭"
+        "与食物库存事实使用用户确认正文，旧 ID 仅保留用于严格读档。"
     ),
     "ending.additional.medical.01": (
         "v15 及更早存档缺少逐日医疗服务历史；无法证明适用条件时"
@@ -369,13 +396,18 @@ def build_ending_text_registry() -> TextRegistry:
 
     registry = TextRegistry()
     for text_id, text in _expanded_runtime_text().items():
+        is_user_override = text_id in _USER_OVERRIDE_TEXT_IDS
         registry.register(
             TextEntry(
                 text_id=text_id,
                 text=text,
-                status=ConfigStatus.FINAL,
+                status=(
+                    ConfigStatus.USER_OVERRIDE
+                    if is_user_override
+                    else ConfigStatus.FINAL
+                ),
                 visibility=TextVisibility.PLAYER_VISIBLE,
-                source=_SOURCE,
+                source=_USER_OVERRIDE_SOURCE if is_user_override else _SOURCE,
             )
         )
     return registry
