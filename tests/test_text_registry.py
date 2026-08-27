@@ -151,6 +151,81 @@ class TextRegistryTests(unittest.TestCase):
                     "docs/handoff/PATCH-031：事件缺失正文收口实现记录.md",
                 )
 
+    def test_patch032_old_city_bodies_are_exact_and_final(self) -> None:
+        registry = build_event_text_registry()
+        expected = {
+            "old_city.event.southern_letter.body": (
+                "今天，一封从南方辗转送来的信进了炉城。\n"
+                "信里的消息并不完整，却提到更远的地方或许仍有人活着，也许还有能够落脚的去处。\n"
+                "没人知道这封信经过了多久，也没人能确认里面的话还剩几分真实。\n"
+                "可只要“城外也许还有路”这句话被人看见，\n"
+                "炉城就已经不再是唯一的答案。"
+            ),
+            "old_city.event.hidden_rumors.body": (
+                "最近，关于离开炉城的消息开始在私下流传。\n"
+                "有人说南边还有聚居地，有人说旧路并没有完全断掉，也有人只是反复问同一句话：\n"
+                "这里真的是最后一个还能活下去的地方吗？\n"
+                "这些话还没有被公开喊出来。\n"
+                "它们只是出现在排队、换班和熄灯以后，\n"
+                "越来越多人听见，也越来越少人愿意承认自己听见过。"
+            ),
+            "old_city.event.public_gathering.body": (
+                "原本藏在低声交谈里的怀疑，今天第一次聚到了明面上。\n"
+                "越来越多人停在公共区域，没有散去。\n"
+                "他们谈论城外的去处，谈论炉城还能撑多久，也要求得到一个足以让人继续留下的答案。\n"
+                "这还不是一场出走。\n"
+                "但已经不再只是传言。\n"
+                "当怀疑开始站在人群中央，\n"
+                "执政官就不能再假装它只存在于角落里。"
+            ),
+            "old_city.event.exodus_countdown.body": (
+                "旧城派的人数还在上升。\n"
+                "如今，已经有人开始整理能够带走的东西，询问城门、路线和外面的天气。\n"
+                "他们还没有真正离开。\n"
+                "可“要不要走”正在变成“什么时候走”。\n"
+                "炉城仍有时间。\n"
+                "只是已经没人能再把这件事当成一句随时会散掉的抱怨。\n"
+                "当有人开始为离开做准备时，\n"
+                "留下本身，也开始需要一个理由。"
+            ),
+        }
+
+        for text_id, text in expected.items():
+            with self.subTest(text_id=text_id):
+                entry = registry.require(text_id)
+                self.assertEqual(entry.text, text)
+                self.assertEqual(entry.status, ConfigStatus.FINAL)
+                self.assertEqual(
+                    entry.source,
+                    "docs/handoff/PATCH-032：旧城派阶段事件正文收口实现记录.md",
+                )
+
+        sealed = {
+            "old_city.event.southern_letter.title": "南方来信",
+            "old_city.event.southern_letter.option_a": "公布来信",
+            "old_city.event.southern_letter.option_b": "压下来信",
+            "old_city.event.hidden_rumors.title": "暗中传言",
+            "old_city.event.hidden_rumors.option_a": "公开解释",
+            "old_city.event.hidden_rumors.option_b": "暂不处理",
+            "old_city.event.public_gathering.title": "公开集结",
+            "old_city.event.public_gathering.option_a": "公开说明",
+            "old_city.event.public_gathering.option_b": "加强巡查",
+            "old_city.event.public_gathering.option_c": "暂不处理",
+            "old_city.event.exodus_countdown.title": "离城倒计时",
+            "old_city.event.exodus_countdown.option_a": "承诺压低旧城派人数",
+            "old_city.event.exodus_countdown.option_b": "暂不阻拦",
+            "old_city.event.exodus_countdown.option_c": "争取最后时间",
+        }
+        for text_id, text in sealed.items():
+            with self.subTest(text_id=text_id):
+                entry = registry.require(text_id)
+                self.assertEqual(entry.text, text)
+                self.assertEqual(entry.status, ConfigStatus.FINAL)
+                self.assertEqual(
+                    entry.source,
+                    "docs/text-assets/第 5 轮：Event  Promise  OldCity  FixedArrival  FrostWarning  Achievement.md",
+                )
+
     def test_confirmed_text_can_be_looked_up(self) -> None:
         registry = TextRegistry()
         entry = confirmed_entry()
