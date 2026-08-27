@@ -195,7 +195,7 @@
 | text_id | 模块 | 文案类型 | 中文原文 | 来源文件 | 来源章节 / 位置 | 状态 | 可见性 | 备注 |
 | ------------------------------- | -------------- | ------ | --------------------------------------------------------------------------- | ------------------ | ---------- | ------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ending.trace.child_labor | Ending / Trace | 儿童辅工摘要 | 你签署了儿童辅工。孩子们用细嫩的手搬运木料、整理仓库，甚至在最冷的日子里跟着成年人走近风雪。炉城因此多撑住了一些时刻，而这些时刻会永远记得他们的年纪。 | Patch 009-2 | 儿童线摘要 | 已封存原文 | 玩家可见 | 儿童伤害或死亡由重大状态标签另行处理，不在此重复。 |
-| ending.trace.children_protected | Ending / Trace | 儿童保护摘要 | 你修建了儿童保护所。孩子们在炉火旁学会数数、识字，拿起尺子、绷带和小小的手术刀。炉城没有急着把他们变成工人，而是把未来暂时藏进了更暖的屋子里。 | Patch 009-2；六轮文案总收口 | 儿童线摘要 | PENDING（原文保留，runtime 暂停） | 待判定 | 同时暗示互斥的医疗与工程学徒路线；分支适配文案封存前不得直接导入。 |
+| ending.trace.children_protected | Ending / Trace | 儿童保护旧摘要 | 你修建了儿童保护所。孩子们在炉火旁学会数数、识字，拿起尺子、绷带和小小的手术刀。炉城没有急着把他们变成工人，而是把未来暂时藏进了更暖的屋子里。 | Patch 009-2；六轮文案总收口 | 历史格式儿童线摘要 | 已被格式 5 分支正文取代 | 历史报告可见 | 原文同时暗示互斥学徒路线；Patch 030 不直接注册该 ID，改由七种可证明事实分支替代。 |
 | ending.trace.cemetery | Ending / Trace | 墓园摘要 | 你为死者留下了墓园。那些名字没有只停在数字里，人们仍能在风雪间找到一处地方，承认他们曾经活过。 | Patch 009-2 | 死亡处理线摘要 | 已封存原文 | 玩家可见 |  |
 | ending.trace.cold_pit | Ending / Trace | 冷藏坑摘要 | 你修建了冷藏坑。死者没有立刻离开炉城，他们被安置在冰冷的秩序里，等待城市决定如何继续面对他们。 | Patch 009-2 | 死亡处理线摘要 | 已封存原文 | 玩家可见 |  |
 | ending.trace.entertainment | Ending / Trace | 娱乐减压摘要 | 你给炉城留下了喘息的地方。有人在小酒馆、火盆或赌桌旁短暂忘记寒冷；只是忘记不是解决，笑声也不能替炉心添煤。 | Patch 009-2；用户补充校正 | 娱乐 / 减压线摘要 | 用户确认覆盖项 | 玩家可见 | 正式建筑名统一为“小酒馆”；正文内容仍按 A 干净封存版，只校正最新正式命名。若已触发 sedation_city 等重大后果，则不显示普通摘要。 |
@@ -350,14 +350,14 @@
 | text_id | 模块 | 文案类型 | 中文原文 | 来源文件 | 来源章节 / 位置 | 状态 | 可见性 | 备注 |
 | -------------------------------------- | -------------------- | ------------- | ----------- | --------------------------- | ------------- | --------- | ----------- | ---------------------------------------------------------- |
 | ending.report.death_record_sentence | Ending / Report | 死亡记录动态句 | 无死亡：没有任何人被霜落吞噬，你做得很好，执政官。\\n\\n墓园：{total_deaths} 人没能走到最后。你为他们留下了墓园，那些名字化成了一个个墓碑被纪念。\\n\\n冷藏坑：{total_deaths} 人没能走到最后。他们被安置在冷藏坑的冰冷秩序里，等待炉城决定他们还有什么价值。\\n\\n未处理遗体：{total_deaths} 人没能走到最后。档案封存时，{unhandled_bodies} 具遗体掩埋进风雪里。\\n\\n余烬名册：{total_deaths} 人没能走到最后。余烬名册记下了他们的名字，让死者没有只成为冰冷的数字。 | Patch 009-1；用户本轮明确补充覆盖 | 叙事式炉城报告 | 用户确认覆盖项 | 玩家可见（运行时模板） | 按本局实际死亡处理与余烬名册状态拼接；不得添加“本局共有”，不得把墓园 / 冷藏坑 / 余烬名册以斜杠形式直接显示。无死亡句覆盖 Patch 010 的“霜落死亡为 0 时隐藏”旧口径。 |
-| ending.route.final_oath.full_text | Ending / Route | 终火誓约专属完整结局文案 | TODO_TEXT | Patch 009-1 / 009-2 | 009-C 接口 | TODO_TEXT | 玩家可见 | 009-C 未提供，不得自行补写。 |
-| ending.route.final_decree.full_text | Ending / Route | 最高戒令专属完整结局文案 | TODO_TEXT | Patch 009-1 / 009-2 | 009-C 接口 | TODO_TEXT | 玩家可见 | 009-C 未提供，不得自行补写。 |
-| ending.route.oath.full_text | Ending / Route | 誓言路线完整总结 | TODO_TEXT | Patch 009-1 / 009-2 | 009-C 接口 | TODO_TEXT | 玩家可见 | 当前仅保留一句式路线痕迹。 |
-| ending.route.iron.full_text | Ending / Route | 铁腕路线完整总结 | TODO_TEXT | Patch 009-1 / 009-2 | 009-C 接口 | TODO_TEXT | 玩家可见 | 当前仅保留一句式路线痕迹。 |
-| ending.old_city.full_text | Ending / OldCity | 旧城派完整结局文案 | TODO_TEXT | Patch 009-1 / 009-2 | 009-C 接口 | TODO_TEXT | 玩家可见 | 当前仅保留一句式痕迹和内部标签。 |
-| ending.children.full_text | Ending / Institution | 儿童路线完整结局文案 | TODO_TEXT | Patch 009-1 / 009-2 | 009-C 接口 | TODO_TEXT | 玩家可见 |  |
-| ending.death_handling.full_text | Ending / Institution | 死亡处理完整结局文案 | TODO_TEXT | Patch 009-1 / 009-2 | 009-C 接口 | TODO_TEXT | 玩家可见 |  |
-| ending.entertainment.full_text | Ending / Institution | 娱乐 / 赌场完整结局文案 | TODO_TEXT | Patch 009-1 / 009-2 | 009-C 接口 | TODO_TEXT | 玩家可见 |  |
+| ending.route.final_oath.full_text | Ending / Route | 终火誓约专属完整结局文案 | 见 Patch 030 实现记录逐字原文 | 用户 Patch 030 明确确认 | 格式 5 路线正文 | USER_OVERRIDE | 玩家可见 | 终火誓约生效时替代普通誓言路线长文及短摘要。 |
+| ending.route.final_decree.full_text | Ending / Route | 最高戒令专属完整结局文案 | 见 Patch 030 实现记录逐字原文 | 用户 Patch 030 明确确认 | 格式 5 路线正文 | USER_OVERRIDE | 玩家可见 | 最高戒令生效时替代普通铁腕路线长文及短摘要。 |
+| ending.route.oath.full_text | Ending / Route | 誓言路线完整总结 | 见 Patch 030 实现记录逐字原文 | 用户 Patch 030 明确确认 | 格式 5 路线正文 | USER_OVERRIDE | 玩家可见 | 仅在未生效终火誓约时使用。 |
+| ending.route.iron.full_text | Ending / Route | 铁腕路线完整总结 | 见 Patch 030 实现记录逐字原文 | 用户 Patch 030 明确确认 | 格式 5 路线正文 | USER_OVERRIDE | 玩家可见 | 仅在未生效最高戒令时使用。 |
+| ending.old_city.full_text | Ending / OldCity | 旧城派完整结局文案 | 见 Patch 030 实现记录四种结算正文与两种承诺附加正文 | 用户 Patch 030 明确确认 | 格式 5 旧城正文 | USER_OVERRIDE / 条件 PENDING | 玩家可见 | 按 `result_id` 选择；部分/大规模出走还须实际离开大于 0 且至少一种实际资源损失大于 0，否则现有正文不适用并登记稳定 PENDING。已结算承诺独立追加且只追加一种结果。 |
+| ending.children.full_text | Ending / Institution | 儿童路线完整结局文案 | 见 Patch 030 实现记录七种事实分支正文 | 用户 Patch 030 明确确认 | 格式 5 儿童制度正文 | USER_OVERRIDE | 玩家可见 | 只按已签炉律与已建保护所/学校选择，不虚构实际学徒人口。 |
+| ending.death_handling.full_text | Ending / Institution | 死亡处理完整结局文案 | 使用 `ending.report.death_record.*` 动态死亡记录句 | 用户 Patch 020 / Patch 030 确认 | 格式 5 死亡记录 | 已覆盖，不另加重复段落 | 玩家可见 | 无死亡、墓园、冷藏坑、未处理遗体与余烬名册已按事实互斥选择。 |
+| ending.entertainment.full_text | Ending / Institution | 娱乐 / 赌场完整结局文案 | 见 Patch 030 实现记录四种事实分支正文 | 用户 Patch 030 明确确认 | 格式 5 娱乐制度正文 | USER_OVERRIDE / 部分 PENDING | 玩家可见 | 无运行设施、小酒馆、赌场三种正文按终局实际运行事实选择；`sedation_city` 正式触发公式未封存，镇静之城正文保留但暂停运行时注册。 |
 | ending.tag.children_lost.threshold | Ending / Tag | 儿童死亡阈值 | TODO_VALUE | Patch 009-2 | children_lost | TODO | 系统内部 | 具体阈值未封存，不得猜测。 |
 | ending.ui.detail_page | Ending / UI | 终局档案详情页 | TODO_TEXT | Patch 008-4 / 009-1 / 009-2 | UI 接口 | TODO_TEXT | 待判定 | 是否显示完整六大系统数值表尚未封存。 |
 | ending.pool.random_weight | Ending / Internal | 文案随机权重 | TODO_VALUE | Patch 009-2 | 随机与权重 | TODO | 系统内部 | 未封存；可先使用池内第一条或本局种子固定选择。 |
@@ -415,5 +415,5 @@
 14. 终局报告采用标题、主文案、叙事式炉城报告、重大状态附加句、重大炉律 / 路线痕迹、执政官拷问和隐藏成就名称记录，不默认展示大段数值表。  
 15. hope_state 未回流；“希望 / 未来 / 春天”只保留为文学表达。  
 16. 守炉堂 / 巡查所已按路线承接物“自动启用并运行”校正；旧 oath_hall_built、patrol_office_built 与“核心建筑停工”只保留在 Deprecated。  
-17. 009-C 路线专属完整长文案、儿童死亡阈值、随机权重和第 56 天后继续模拟均保持 TODO / 后置，没有擅自补写。  
+17. Patch 030 已按用户确认接入路线、旧城派、儿童与娱乐长文；儿童死亡阈值、正式随机权重、其他未确认正文和第 56 天后继续模拟仍保持 TODO / 后置，没有擅自补写。
 18. 第 6 轮为最后一轮正文；后续只做六轮总审，不再新增第 7 轮正文。  
