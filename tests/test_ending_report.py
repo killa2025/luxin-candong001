@@ -28,6 +28,7 @@ from furnace_winter.models import (
     CURRENT_ENDING_REPORT_FORMAT_VERSION,
     LEGACY_ENDING_REPORT_FORMAT_VERSION,
     PATCH_020_ENDING_REPORT_FORMAT_VERSION,
+    PATCH_027_ENDING_REPORT_FORMAT_VERSION,
     BuildingState,
     DeterministicRandom,
     EndingReportState,
@@ -45,6 +46,8 @@ from furnace_winter.models.ending_selection import (
     legacy_report_pending_text_ids,
     patch020_report_body_text_ids,
     patch020_report_pending_text_ids,
+    patch027_report_body_text_ids,
+    patch027_report_pending_text_ids,
     report_template_values,
 )
 from furnace_winter.text import (
@@ -415,7 +418,7 @@ class EndingReportPatchTests(unittest.TestCase):
         selected = canonical_report_body_text_ids(medical_state)
         self.assertIn("ending.additional.medical.03", selected)
 
-    def test_primary_illness_sentence_requires_d55_operational_service(self) -> None:
+    def test_primary_illness_sentence_matches_d55_service_fact(self) -> None:
         state = self.completed_state()
         state.population.sick_population = 6
         state.final_result.system_scores["medical_and_disease"] = 1
@@ -435,6 +438,39 @@ class EndingReportPatchTests(unittest.TestCase):
         selected = canonical_report_body_text_ids(state)
         self.assertNotIn("ending.report.illness.04", selected)
         self.assertIn(
+            "ending.report.illness.no_service",
+            selected,
+        )
+        self.assertNotIn(
+            "ending.report.illness.no_operational_service",
+            canonical_report_pending_text_ids(state),
+        )
+
+        state.resources.coal = 0
+        state.resources.raw_food = 1
+        state.resources.cooked_food = 0
+        selected = canonical_report_body_text_ids(state)
+        self.assertIn("ending.report.illness.no_service", selected)
+        self.assertIn("ending.report.coal_food.coal_empty", selected)
+        self.assertEqual(
+            sum(
+                text_id
+                in {
+                    "ending.report.coal_food.coal_empty",
+                    "ending.report.coal_food.food_empty",
+                    "ending.report.coal_food.both_empty",
+                }
+                for text_id in selected
+            ),
+            1,
+        )
+
+        record.service_history_known = False
+        self.assertNotIn(
+            "ending.report.illness.no_service",
+            canonical_report_body_text_ids(state),
+        )
+        self.assertIn(
             "ending.report.illness.no_operational_service",
             canonical_report_pending_text_ids(state),
         )
@@ -442,7 +478,16 @@ class EndingReportPatchTests(unittest.TestCase):
             "ending.report.illness.04",
             patch020_report_body_text_ids(state),
         )
+        self.assertNotIn(
+            "ending.report.illness.no_service",
+            patch027_report_body_text_ids(state),
+        )
+        self.assertIn(
+            "ending.report.illness.no_operational_service",
+            patch027_report_pending_text_ids(state),
+        )
 
+        record.service_history_known = True
         record.medical_operational_building_count = 1
         record.medical_building_capacity = 10
         self.assertIn(
@@ -454,7 +499,7 @@ class EndingReportPatchTests(unittest.TestCase):
             canonical_report_pending_text_ids(state),
         )
 
-    def test_primary_coal_food_sentence_omits_zero_stock_claim(self) -> None:
+    def test_primary_coal_food_sentence_matches_each_zero_stock_fact(self) -> None:
         state = self.completed_state()
         state.resources.coal = 7
         state.resources.raw_food = 0
@@ -463,19 +508,25 @@ class EndingReportPatchTests(unittest.TestCase):
         state.final_result.system_scores["food"] = 0
 
         selected = canonical_report_body_text_ids(state)
-        self.assertFalse(
-            any(
-                text_id.startswith("ending.report.coal_food.")
-                for text_id in selected
-            )
-        )
         self.assertIn(
+            "ending.report.coal_food.food_empty",
+            selected,
+        )
+        self.assertNotIn(
             "ending.report.coal_food.zero_stock",
             canonical_report_pending_text_ids(state),
         )
         self.assertIn(
             "ending.report.coal_food.01",
             patch020_report_body_text_ids(state),
+        )
+        self.assertNotIn(
+            "ending.report.coal_food.food_empty",
+            patch027_report_body_text_ids(state),
+        )
+        self.assertIn(
+            "ending.report.coal_food.zero_stock",
+            patch027_report_pending_text_ids(state),
         )
 
         state.resources.cooked_food = 1
@@ -487,6 +538,87 @@ class EndingReportPatchTests(unittest.TestCase):
             "ending.report.coal_food.zero_stock",
             canonical_report_pending_text_ids(state),
         )
+
+        state.resources.coal = 0
+        self.assertIn(
+            "ending.report.coal_food.coal_empty",
+            canonical_report_body_text_ids(state),
+        )
+
+        state.resources.cooked_food = 0
+        self.assertIn(
+            "ending.report.coal_food.both_empty",
+            canonical_report_body_text_ids(state),
+        )
+
+    def test_patch029_user_confirmed_report_text_is_exact(self) -> None:
+        registry = build_ending_text_registry()
+        expected = {
+            "ending.report.illness.no_service": (
+                "终局封存时，城里仍有病患，却已经没有一处医疗设施能够"
+                "继续接诊。\n\n人们只能自己决定，把仅剩的照料先留给"
+                "谁——以及让谁在无人回应的黑暗里继续等下去。"
+            ),
+            "ending.report.coal_food.coal_empty": (
+                "食物还留在仓里，煤仓却已经空了。\n\n人们守着最后的"
+                "口粮争论：是把它分给今天仍活着的人，还是留给一个可能"
+                "永远不会到来的明天。"
+            ),
+            "ending.report.coal_food.food_empty": (
+                "煤仓里还留着黑色的余量，食物却一份也没有剩下。\n\n"
+                "人们这才明白，炉火可以让身体保持温暖，却不能阻止饥饿"
+                "把尊严一点点剥走。"
+            ),
+            "ending.report.coal_food.both_empty": (
+                "煤仓与食物仓一起见了底。\n\n人们围在炉城最后的余温"
+                "旁，不再问明天吃什么、烧什么，只开始沉默地看着彼此"
+                "——仿佛最后的答案，迟早要从某个人身上取走。"
+            ),
+        }
+        for text_id, text in expected.items():
+            with self.subTest(text_id=text_id):
+                entry = registry.require(text_id)
+                self.assertEqual(entry.text, text)
+                self.assertEqual(entry.status.value, "USER_OVERRIDE")
+
+    def test_format_three_report_remains_strictly_loadable(self) -> None:
+        state = self.completed_state()
+        state.resources.coal = 0
+        state.resources.raw_food = 0
+        state.resources.cooked_food = 0
+        state.final_result.report.format_version = (
+            PATCH_027_ENDING_REPORT_FORMAT_VERSION
+        )
+        state.final_result.report.body_text_ids = patch027_report_body_text_ids(
+            state
+        )
+        state.final_result.report.pending_text_ids = (
+            patch027_report_pending_text_ids(state)
+        )
+
+        restored = decode_game_state(encode_game_state(state))
+
+        self.assertEqual(
+            restored.final_result.report.format_version,
+            PATCH_027_ENDING_REPORT_FORMAT_VERSION,
+        )
+        self.assertEqual(
+            restored.final_result.report.body_text_ids,
+            state.final_result.report.body_text_ids,
+        )
+        self.assertEqual(
+            restored.final_result.report.pending_text_ids,
+            state.final_result.report.pending_text_ids,
+        )
+
+        disguised_as_current = encode_game_state(state)
+        disguised_as_current["final_result"]["report"][
+            "format_version"
+        ] = CURRENT_ENDING_REPORT_FORMAT_VERSION
+        with self.assertRaisesRegex(
+            SaveDataError, "text selection is not canonical"
+        ):
+            decode_game_state(disguised_as_current)
 
     def test_format_two_report_remains_strictly_loadable(self) -> None:
         state = self.completed_state()
@@ -823,7 +955,7 @@ class EndingReportPatchTests(unittest.TestCase):
         )
         self.assertEqual(view["content_status"], "partial_pending_text")
 
-    def test_patch026_v17_ungenerated_report_loads_and_generates_v3(
+    def test_old_v17_ungenerated_report_loads_and_generates_current_format(
         self,
     ) -> None:
         legacy = self.state_before_finalization()
@@ -840,6 +972,17 @@ class EndingReportPatchTests(unittest.TestCase):
             "ungenerated ending report cannot retain report fields",
         ):
             decode_game_state(tampered)
+
+        patch027_document = deepcopy(document)
+        patch027_document["final_result"]["report"]["format_version"] = (
+            PATCH_027_ENDING_REPORT_FORMAT_VERSION
+        )
+        patch027_restored = decode_game_state(patch027_document)
+        self.assertFalse(patch027_restored.final_result.report.is_generated)
+        self.assertEqual(
+            patch027_restored.final_result.report.format_version,
+            PATCH_027_ENDING_REPORT_FORMAT_VERSION,
+        )
 
         restored = decode_game_state(document)
 

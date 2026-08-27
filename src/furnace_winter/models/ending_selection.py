@@ -280,7 +280,7 @@ def _final_day_service_record(state: GameState) -> object | None:
     return record
 
 
-def _illness_text_id(state: GameState) -> str | None:
+def _patch027_illness_text_id(state: GameState) -> str | None:
     sick_total = (
         state.population.sick_population
         + state.population.critical_population
@@ -301,6 +301,18 @@ def _illness_text_id(state: GameState) -> str | None:
     return "ending.report.illness.01"
 
 
+def _illness_text_id(state: GameState) -> str | None:
+    sick_total = (
+        state.population.sick_population
+        + state.population.critical_population
+    )
+    record = _final_day_service_record(state)
+    patch027_text_id = _patch027_illness_text_id(state)
+    if sick_total > 0 and record is not None and patch027_text_id is None:
+        return "ending.report.illness.no_service"
+    return patch027_text_id
+
+
 def _score_text_id(prefix: str, score: int) -> str:
     index = 1 if score >= 4 else 2 if score == 3 else 3 if score == 2 else 4
     return f"ending.report.{prefix}.{index:02d}"
@@ -315,10 +327,23 @@ def _legacy_coal_food_text_id(state: GameState) -> str:
     return f"ending.report.coal_food.{index:02d}"
 
 
-def _coal_food_text_id(state: GameState) -> str | None:
+def _patch027_coal_food_text_id(state: GameState) -> str | None:
     food_total = state.resources.raw_food + state.resources.cooked_food
     if state.resources.coal <= 0 or food_total <= 0:
         return None
+    return _legacy_coal_food_text_id(state)
+
+
+def _coal_food_text_id(state: GameState) -> str:
+    food_total = state.resources.raw_food + state.resources.cooked_food
+    coal_empty = state.resources.coal <= 0
+    food_empty = food_total <= 0
+    if coal_empty and food_empty:
+        return "ending.report.coal_food.both_empty"
+    if coal_empty:
+        return "ending.report.coal_food.coal_empty"
+    if food_empty:
+        return "ending.report.coal_food.food_empty"
     return _legacy_coal_food_text_id(state)
 
 
@@ -455,7 +480,10 @@ def _trace_text_ids(state: GameState) -> list[str]:
 
 
 def _report_body_text_ids(
-    state: GameState, *, patch020_fact_contract: bool
+    state: GameState,
+    *,
+    patch020_fact_contract: bool,
+    patch027_fact_contract: bool = False,
 ) -> list[str]:
     final = state.final_result
     if final.run_state is RunState.ENDED:
@@ -498,11 +526,12 @@ def _report_body_text_ids(
     ]
     if state.final_frost.frost_deaths > 0:
         body.append("ending.report.frostfall_deaths")
-    illness_text_id = (
-        _legacy_illness_text_id(state)
-        if patch020_fact_contract
-        else _illness_text_id(state)
-    )
+    if patch020_fact_contract:
+        illness_text_id = _legacy_illness_text_id(state)
+    elif patch027_fact_contract:
+        illness_text_id = _patch027_illness_text_id(state)
+    else:
+        illness_text_id = _illness_text_id(state)
     if illness_text_id is not None:
         body.append(illness_text_id)
     body.extend(
@@ -516,11 +545,12 @@ def _report_body_text_ids(
             ),
         )
     )
-    coal_food_text_id = (
-        _legacy_coal_food_text_id(state)
-        if patch020_fact_contract
-        else _coal_food_text_id(state)
-    )
+    if patch020_fact_contract:
+        coal_food_text_id = _legacy_coal_food_text_id(state)
+    elif patch027_fact_contract:
+        coal_food_text_id = _patch027_coal_food_text_id(state)
+    else:
+        coal_food_text_id = _coal_food_text_id(state)
     if coal_food_text_id is not None:
         body.append(coal_food_text_id)
     body.append(_choose(state, "report.future", REPORT_FUTURE_CANDIDATES))
@@ -546,6 +576,16 @@ def patch020_report_body_text_ids(state: GameState) -> list[str]:
     return _report_body_text_ids(state, patch020_fact_contract=True)
 
 
+def patch027_report_body_text_ids(state: GameState) -> list[str]:
+    """Reproduce report format 3 without rewriting existing saved reports."""
+
+    return _report_body_text_ids(
+        state,
+        patch020_fact_contract=False,
+        patch027_fact_contract=True,
+    )
+
+
 def canonical_report_title_text_id(state: GameState) -> str:
     final = state.final_result
     if final.run_state is RunState.ENDED:
@@ -558,7 +598,10 @@ def canonical_report_title_text_id(state: GameState) -> str:
 
 
 def _report_pending_text_ids(
-    state: GameState, *, patch020_fact_contract: bool
+    state: GameState,
+    *,
+    patch020_fact_contract: bool,
+    patch027_fact_contract: bool = False,
 ) -> list[str]:
     pending: set[str] = set()
     ordinary_laws = set(state.laws.signed_law_ids)
@@ -567,13 +610,22 @@ def _report_pending_text_ids(
         *state.final_result.defining_tags,
         *state.final_result.major_tags,
     }
-    if not patch020_fact_contract and _uses_survival_report(state) and final_result_requires_illness_text(state):
-        if _illness_text_id(state) is None:
+    if (
+        (patch027_fact_contract or not patch020_fact_contract)
+        and _uses_survival_report(state)
+        and final_result_requires_illness_text(state)
+    ):
+        selected_illness_text_id = (
+            _patch027_illness_text_id(state)
+            if patch027_fact_contract
+            else _illness_text_id(state)
+        )
+        if selected_illness_text_id is None:
             pending.add(_PENDING_REPORT_ILLNESS_TEXT_ID)
     if (
-        not patch020_fact_contract
+        patch027_fact_contract
         and _uses_survival_report(state)
-        and _coal_food_text_id(state) is None
+        and _patch027_coal_food_text_id(state) is None
     ):
         pending.add(_PENDING_REPORT_COAL_FOOD_TEXT_ID)
     if ending_tags & _ADDITIONAL_TOPICS["medical"]:
@@ -653,6 +705,16 @@ def patch020_report_pending_text_ids(state: GameState) -> list[str]:
     """Reproduce the exact pending set used by report format 2."""
 
     return _report_pending_text_ids(state, patch020_fact_contract=True)
+
+
+def patch027_report_pending_text_ids(state: GameState) -> list[str]:
+    """Return the exact pending set used by report format 3."""
+
+    return _report_pending_text_ids(
+        state,
+        patch020_fact_contract=False,
+        patch027_fact_contract=True,
+    )
 
 
 def legacy_report_pending_text_ids(state: GameState) -> list[str]:
