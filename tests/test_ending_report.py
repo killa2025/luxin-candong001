@@ -446,6 +446,25 @@ class EndingReportPatchTests(unittest.TestCase):
             canonical_report_pending_text_ids(state),
         )
 
+        state.resources.coal = 0
+        state.resources.raw_food = 1
+        state.resources.cooked_food = 0
+        selected = canonical_report_body_text_ids(state)
+        self.assertIn("ending.report.illness.no_service", selected)
+        self.assertIn("ending.report.coal_food.coal_empty", selected)
+        self.assertEqual(
+            sum(
+                text_id
+                in {
+                    "ending.report.coal_food.coal_empty",
+                    "ending.report.coal_food.food_empty",
+                    "ending.report.coal_food.both_empty",
+                }
+                for text_id in selected
+            ),
+            1,
+        )
+
         record.service_history_known = False
         self.assertNotIn(
             "ending.report.illness.no_service",
