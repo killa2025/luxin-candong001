@@ -29,6 +29,7 @@ from furnace_winter.models import (
     LEGACY_ENDING_REPORT_FORMAT_VERSION,
     PATCH_020_ENDING_REPORT_FORMAT_VERSION,
     PATCH_027_ENDING_REPORT_FORMAT_VERSION,
+    PATCH_029_ENDING_REPORT_FORMAT_VERSION,
     BuildingState,
     DeterministicRandom,
     EndingReportState,
@@ -48,6 +49,8 @@ from furnace_winter.models.ending_selection import (
     patch020_report_pending_text_ids,
     patch027_report_body_text_ids,
     patch027_report_pending_text_ids,
+    patch029_report_body_text_ids,
+    patch029_report_pending_text_ids,
     report_template_values,
 )
 from furnace_winter.text import (
@@ -581,6 +584,38 @@ class EndingReportPatchTests(unittest.TestCase):
                 self.assertEqual(entry.text, text)
                 self.assertEqual(entry.status.value, "USER_OVERRIDE")
 
+    def test_patch030_user_confirmed_long_text_is_runtime_safe(self) -> None:
+        registry = build_ending_text_registry()
+        text_ids = {
+            "ending.route.oath.full_text",
+            "ending.route.final_oath.full_text",
+            "ending.route.iron.full_text",
+            "ending.route.final_decree.full_text",
+            "ending.old_city.scattered.full_text",
+            "ending.old_city.partial_exodus.full_text",
+            "ending.old_city.large_exodus.full_text",
+            "ending.old_city.unresolved.full_text",
+            "ending.old_city.promise.success",
+            "ending.old_city.promise.failure",
+            "ending.children.labor_low_risk.full_text",
+            "ending.children.labor_all_jobs.full_text",
+            "ending.children.protection.no_shelter.full_text",
+            "ending.children.protection.shelter_only.full_text",
+            "ending.children.protection.school.full_text",
+            "ending.children.protection.medical_track.full_text",
+            "ending.children.protection.engineering_track.full_text",
+            "ending.entertainment.no_operational_facility.full_text",
+            "ending.entertainment.tavern.full_text",
+            "ending.entertainment.casino.full_text",
+            "ending.entertainment.sedation_city.full_text",
+        }
+        for text_id in sorted(text_ids):
+            with self.subTest(text_id=text_id):
+                entry = registry.require(text_id)
+                self.assertEqual(entry.status.value, "USER_OVERRIDE")
+                self.assertNotIn("TODO_TEXT", entry.text)
+                self.assertNotIn("PENDING", entry.text)
+
     def test_format_three_report_remains_strictly_loadable(self) -> None:
         state = self.completed_state()
         state.resources.coal = 0
@@ -609,6 +644,53 @@ class EndingReportPatchTests(unittest.TestCase):
         self.assertEqual(
             restored.final_result.report.pending_text_ids,
             state.final_result.report.pending_text_ids,
+        )
+
+        disguised_as_current = encode_game_state(state)
+        disguised_as_current["final_result"]["report"][
+            "format_version"
+        ] = CURRENT_ENDING_REPORT_FORMAT_VERSION
+        with self.assertRaisesRegex(
+            SaveDataError, "text selection is not canonical"
+        ):
+            decode_game_state(disguised_as_current)
+
+    def test_format_four_report_remains_strictly_loadable(self) -> None:
+        state = self.completed_state()
+        state.oath_order.page_unlocked = True
+        state.oath_order.selected_route = "oath"
+        state.oath_order.signed_law_ids = ["guard_oath"]
+        state.oath_order.law_signed_days = {"guard_oath": 35}
+        state.oath_order.next_law_day = 37
+        state.oath_order.oath_hall.enabled = True
+        state.oath_order.oath_hall.visible = True
+        state.final_result.report.format_version = (
+            PATCH_029_ENDING_REPORT_FORMAT_VERSION
+        )
+        state.final_result.report.body_text_ids = patch029_report_body_text_ids(
+            state
+        )
+        state.final_result.report.pending_text_ids = (
+            patch029_report_pending_text_ids(state)
+        )
+
+        restored = decode_game_state(encode_game_state(state))
+
+        self.assertEqual(
+            restored.final_result.report.format_version,
+            PATCH_029_ENDING_REPORT_FORMAT_VERSION,
+        )
+        self.assertEqual(
+            restored.final_result.report.body_text_ids,
+            state.final_result.report.body_text_ids,
+        )
+        self.assertIn(
+            "ending.route.oath.full_text",
+            restored.final_result.report.pending_text_ids,
+        )
+        self.assertNotIn(
+            "ending.route.oath.full_text",
+            restored.final_result.report.body_text_ids,
         )
 
         disguised_as_current = encode_game_state(state)
@@ -750,7 +832,7 @@ class EndingReportPatchTests(unittest.TestCase):
             selected_across_seeds.update(canonical_report_body_text_ids(state))
         self.assertIn("ending.additional.food.01", selected_across_seeds)
 
-    def test_children_protected_trace_is_pending_and_not_runtime_text(
+    def test_children_full_text_replaces_pending_protection_trace(
         self,
     ) -> None:
         registry = build_ending_text_registry()
@@ -759,11 +841,7 @@ class EndingReportPatchTests(unittest.TestCase):
         pending_entries = {
             entry.entry_id: entry for entry in pending_registry.entries()
         }
-        self.assertIn("ending.trace.children_protected", pending_entries)
-        self.assertEqual(
-            pending_entries["ending.trace.children_protected"].status.value,
-            "PENDING",
-        )
+        self.assertNotIn("ending.trace.children_protected", pending_entries)
 
         state = self.completed_state()
         state.laws.signed_law_ids = [
@@ -785,8 +863,173 @@ class EndingReportPatchTests(unittest.TestCase):
             canonical_report_body_text_ids(state),
         )
         self.assertIn(
+            "ending.children.protection.school.full_text",
+            canonical_report_body_text_ids(state),
+        )
+        self.assertNotIn(
             "ending.trace.children_protected",
             canonical_report_pending_text_ids(state),
+        )
+
+    def test_patch030_terminal_route_text_replaces_general_route_trace(
+        self,
+    ) -> None:
+        state = self.completed_state()
+        state.oath_order.selected_route = "oath"
+        selected = canonical_report_body_text_ids(state)
+        self.assertIn("ending.route.oath.full_text", selected)
+        self.assertNotIn("ending.trace.oath_route", selected)
+
+        state.oath_order.signed_law_ids = ["final_oath"]
+        state.oath_order.final_oath_active = True
+        selected = canonical_report_body_text_ids(state)
+        self.assertIn("ending.route.final_oath.full_text", selected)
+        self.assertNotIn("ending.route.oath.full_text", selected)
+
+        state.oath_order.selected_route = "iron"
+        state.oath_order.signed_law_ids = ["highest_order"]
+        state.oath_order.final_oath_active = False
+        state.oath_order.highest_order_active = True
+        selected = canonical_report_body_text_ids(state)
+        self.assertIn("ending.route.final_decree.full_text", selected)
+        self.assertNotIn("ending.route.iron.full_text", selected)
+        self.assertNotIn("ending.trace.iron_route", selected)
+
+    def test_patch030_old_city_text_uses_result_and_one_promise_appendix(
+        self,
+    ) -> None:
+        state = self.completed_state()
+        state.old_city.is_unlocked = True
+        cases = {
+            "scattered": "ending.old_city.scattered.full_text",
+            "partial_exodus": "ending.old_city.partial_exodus.full_text",
+            "large_exodus": "ending.old_city.large_exodus.full_text",
+            None: "ending.old_city.unresolved.full_text",
+        }
+        for result_id, expected in cases.items():
+            with self.subTest(result_id=result_id):
+                state.old_city.result_id = result_id
+                selected = canonical_report_body_text_ids(state)
+                self.assertIn(expected, selected)
+                self.assertNotIn("ending.trace.old_city", selected)
+
+        state.old_city.result_id = "partial_exodus"
+        state.old_city.actual_departures = 7
+        state.old_city.promise_settled = True
+        state.old_city.promise_outcome = "success"
+        selected = canonical_report_body_text_ids(state)
+        self.assertIn("ending.old_city.promise.success", selected)
+        self.assertNotIn("ending.old_city.promise.failure", selected)
+        rendered = build_ending_text_registry().require(
+            "ending.old_city.partial_exodus.full_text"
+        ).text.format_map(report_template_values(state))
+        self.assertIn("7 个人", rendered)
+
+        state.old_city.promise_outcome = "failure"
+        selected = canonical_report_body_text_ids(state)
+        self.assertIn("ending.old_city.promise.failure", selected)
+        self.assertNotIn("ending.old_city.promise.success", selected)
+
+    def test_patch030_children_text_uses_only_proven_law_and_building_facts(
+        self,
+    ) -> None:
+        state = self.completed_state()
+        cases = (
+            (["child_labor_low_risk_law"], "ending.children.labor_low_risk.full_text"),
+            (
+                ["child_labor_low_risk_law", "child_labor_all_jobs_law"],
+                "ending.children.labor_all_jobs.full_text",
+            ),
+            (
+                ["child_protection_law"],
+                "ending.children.protection.no_shelter.full_text",
+            ),
+        )
+        for laws, expected in cases:
+            with self.subTest(expected=expected):
+                state.laws.signed_law_ids = laws
+                self.assertIn(expected, canonical_report_body_text_ids(state))
+
+        state.laws.signed_law_ids = ["child_protection_law"]
+        state.buildings["child-shelter-test"] = BuildingState(
+            building_id="child-shelter-test",
+            building_type="child_shelter",
+            zone="inner_ring",
+            slot_size=1,
+            is_built=True,
+        )
+        self.assertIn(
+            "ending.children.protection.shelter_only.full_text",
+            canonical_report_body_text_ids(state),
+        )
+        state.buildings["school-test"] = BuildingState(
+            building_id="school-test",
+            building_type="school",
+            zone="inner_ring",
+            slot_size=1,
+            is_built=True,
+        )
+        state.laws.signed_law_ids.append("child_school_law")
+        self.assertIn(
+            "ending.children.protection.school.full_text",
+            canonical_report_body_text_ids(state),
+        )
+        state.laws.signed_law_ids.append("medical_apprentices_law")
+        self.assertIn(
+            "ending.children.protection.medical_track.full_text",
+            canonical_report_body_text_ids(state),
+        )
+        state.laws.signed_law_ids[-1] = "engineering_apprentices_law"
+        self.assertIn(
+            "ending.children.protection.engineering_track.full_text",
+            canonical_report_body_text_ids(state),
+        )
+        self.assertNotIn(
+            "ending.trace.children_protected",
+            canonical_report_pending_text_ids(state),
+        )
+
+    def test_patch030_entertainment_text_uses_current_operational_fact(
+        self,
+    ) -> None:
+        state = self.completed_state()
+        state.laws.signed_law_ids = ["tavern_law"]
+        selected = canonical_report_body_text_ids(state)
+        self.assertIn(
+            "ending.entertainment.no_operational_facility.full_text",
+            selected,
+        )
+        self.assertNotIn("ending.trace.entertainment", selected)
+
+        state.buildings["tavern-test"] = BuildingState(
+            building_id="tavern-test",
+            building_type="small_tavern",
+            zone="inner_ring",
+            slot_size=1,
+            is_built=True,
+            is_operational=True,
+        )
+        self.assertIn(
+            "ending.entertainment.tavern.full_text",
+            canonical_report_body_text_ids(state),
+        )
+        state.laws.signed_law_ids.append("casino_law")
+        state.buildings["casino-test"] = BuildingState(
+            building_id="casino-test",
+            building_type="grand_casino",
+            zone="middle_ring",
+            slot_size=1,
+            is_built=True,
+            is_operational=True,
+        )
+        self.assertIn(
+            "ending.entertainment.casino.full_text",
+            canonical_report_body_text_ids(state),
+        )
+        state.final_result.ending_tags.append("sedation_city")
+        self.assertIn(
+            "ending.entertainment.sedation_city.full_text",
+            canonical_report_body_text_ids(state),
         )
 
     def test_report_save_is_strict_and_v11_migrates_without_terminal_state(
@@ -1195,7 +1438,7 @@ class EndingReportPatchTests(unittest.TestCase):
             canonical_report_body_text_ids(state),
         )
 
-    def test_pending_ids_only_describe_unsealed_long_form_text(self) -> None:
+    def test_patch030_resolves_long_form_and_death_handling_pending(self) -> None:
         state = self.completed_state()
         self.assertEqual(canonical_report_pending_text_ids(state), [])
 
@@ -1204,14 +1447,17 @@ class EndingReportPatchTests(unittest.TestCase):
         state.oath_order.final_oath_active = True
         state.old_city.is_unlocked = True
         state.population.population_dead = 1
+        selected = canonical_report_body_text_ids(state)
         pending = canonical_report_pending_text_ids(state)
 
-        self.assertEqual(pending, sorted(set(pending)))
-        self.assertIn("ending.route.oath.full_text", pending)
-        self.assertIn("ending.route.final_oath.full_text", pending)
-        self.assertIn("ending.old_city.full_text", pending)
-        self.assertIn("ending.death_handling.full_text", pending)
-        self.assertFalse(any(text_id.endswith(".pool") for text_id in pending))
+        self.assertEqual(pending, [])
+        self.assertIn("ending.route.final_oath.full_text", selected)
+        self.assertNotIn("ending.route.oath.full_text", selected)
+        self.assertIn("ending.old_city.unresolved.full_text", selected)
+        self.assertFalse(
+            any("death_handling.full_text" in text_id for text_id in selected)
+        )
+        self.assertFalse(any(text_id.endswith(".pool") for text_id in selected))
 
     def test_report_template_values_recover_the_original_start_population(
         self,

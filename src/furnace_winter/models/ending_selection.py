@@ -145,6 +145,26 @@ _PENDING_REPORT_ILLNESS_TEXT_ID = (
 )
 _PENDING_REPORT_COAL_FOOD_TEXT_ID = "ending.report.coal_food.zero_stock"
 
+_OLD_CITY_FULL_TEXT_IDS = {
+    "scattered": "ending.old_city.scattered.full_text",
+    "partial_exodus": "ending.old_city.partial_exodus.full_text",
+    "large_exodus": "ending.old_city.large_exodus.full_text",
+}
+_OLD_CITY_PROMISE_TEXT_IDS = {
+    "success": "ending.old_city.promise.success",
+    "failure": "ending.old_city.promise.failure",
+}
+_PATCH_030_REPLACED_TRACE_TEXT_IDS = {
+    "children": {"ending.trace.child_labor"},
+    "route": {
+        "ending.trace.oath_route",
+        "ending.trace.iron_route",
+        "ending.report.death_record.ember_roster",
+    },
+    "old_city": {"ending.trace.old_city"},
+    "entertainment": {"ending.trace.entertainment"},
+}
+
 
 def _choose(state: GameState, key: str, candidates: tuple[str, ...]) -> str:
     if not candidates:
@@ -479,11 +499,102 @@ def _trace_text_ids(state: GameState) -> list[str]:
     return []
 
 
+def _route_full_text_id(state: GameState) -> str | None:
+    route_laws = set(state.oath_order.signed_law_ids)
+    if state.oath_order.final_oath_active or "final_oath" in route_laws:
+        return "ending.route.final_oath.full_text"
+    if state.oath_order.highest_order_active or "highest_order" in route_laws:
+        return "ending.route.final_decree.full_text"
+    if state.oath_order.selected_route == "oath":
+        return "ending.route.oath.full_text"
+    if state.oath_order.selected_route == "iron":
+        return "ending.route.iron.full_text"
+    return None
+
+
+def _old_city_full_text_ids(state: GameState) -> list[str]:
+    old = state.old_city
+    if not old.is_unlocked:
+        return []
+    selected = [
+        _OLD_CITY_FULL_TEXT_IDS.get(
+            old.result_id,
+            "ending.old_city.unresolved.full_text",
+        )
+    ]
+    if old.promise_settled and old.promise_outcome in _OLD_CITY_PROMISE_TEXT_IDS:
+        selected.append(_OLD_CITY_PROMISE_TEXT_IDS[old.promise_outcome])
+    return selected
+
+
+def _children_full_text_id(state: GameState) -> str | None:
+    ordinary_laws = set(state.laws.signed_law_ids)
+    if "child_labor_all_jobs_law" in ordinary_laws:
+        return "ending.children.labor_all_jobs.full_text"
+    if "child_labor_low_risk_law" in ordinary_laws:
+        return "ending.children.labor_low_risk.full_text"
+    if "child_protection_law" not in ordinary_laws:
+        return None
+    has_shelter = _has_building(state, "child_shelter")
+    has_school = _has_building(state, "school")
+    if not has_shelter:
+        return "ending.children.protection.no_shelter.full_text"
+    if not has_school:
+        return "ending.children.protection.shelter_only.full_text"
+    if "medical_apprentices_law" in ordinary_laws:
+        return "ending.children.protection.medical_track.full_text"
+    if "engineering_apprentices_law" in ordinary_laws:
+        return "ending.children.protection.engineering_track.full_text"
+    return "ending.children.protection.school.full_text"
+
+
+def _entertainment_full_text_id(state: GameState) -> str | None:
+    ordinary_laws = set(state.laws.signed_law_ids)
+    if not ordinary_laws & {"tavern_law", "casino_law"}:
+        return None
+    if "sedation_city" in set(state.final_result.ending_tags):
+        return "ending.entertainment.sedation_city.full_text"
+    if _has_operational_building(state, "grand_casino"):
+        return "ending.entertainment.casino.full_text"
+    if _has_operational_building(state, "small_tavern"):
+        return "ending.entertainment.tavern.full_text"
+    return "ending.entertainment.no_operational_facility.full_text"
+
+
+def _patch030_full_text_ids(state: GameState) -> list[str]:
+    selected: list[str] = []
+    route_text_id = _route_full_text_id(state)
+    if route_text_id is not None:
+        selected.append(route_text_id)
+    selected.extend(_old_city_full_text_ids(state))
+    children_text_id = _children_full_text_id(state)
+    if children_text_id is not None:
+        selected.append(children_text_id)
+    entertainment_text_id = _entertainment_full_text_id(state)
+    if entertainment_text_id is not None:
+        selected.append(entertainment_text_id)
+    return selected
+
+
+def _patch030_trace_text_ids(state: GameState) -> list[str]:
+    replaced: set[str] = set()
+    if _children_full_text_id(state) is not None:
+        replaced.update(_PATCH_030_REPLACED_TRACE_TEXT_IDS["children"])
+    if _route_full_text_id(state) is not None:
+        replaced.update(_PATCH_030_REPLACED_TRACE_TEXT_IDS["route"])
+    if _old_city_full_text_ids(state):
+        replaced.update(_PATCH_030_REPLACED_TRACE_TEXT_IDS["old_city"])
+    if _entertainment_full_text_id(state) is not None:
+        replaced.update(_PATCH_030_REPLACED_TRACE_TEXT_IDS["entertainment"])
+    return [text_id for text_id in _trace_text_ids(state) if text_id not in replaced]
+
+
 def _report_body_text_ids(
     state: GameState,
     *,
     patch020_fact_contract: bool,
     patch027_fact_contract: bool = False,
+    patch030_text_contract: bool = False,
 ) -> list[str]:
     final = state.final_result
     if final.run_state is RunState.ENDED:
@@ -555,7 +666,11 @@ def _report_body_text_ids(
         body.append(coal_food_text_id)
     body.append(_choose(state, "report.future", REPORT_FUTURE_CANDIDATES))
     body.extend(_additional_text_ids(state))
-    body.extend(_trace_text_ids(state))
+    if patch030_text_contract:
+        body.extend(_patch030_trace_text_ids(state))
+        body.extend(_patch030_full_text_ids(state))
+    else:
+        body.extend(_trace_text_ids(state))
     body.append(
         _choose(
             state,
@@ -567,6 +682,16 @@ def _report_body_text_ids(
 
 
 def canonical_report_body_text_ids(state: GameState) -> list[str]:
+    return _report_body_text_ids(
+        state,
+        patch020_fact_contract=False,
+        patch030_text_contract=True,
+    )
+
+
+def patch029_report_body_text_ids(state: GameState) -> list[str]:
+    """Reproduce report format 4 without rewriting existing saved reports."""
+
     return _report_body_text_ids(state, patch020_fact_contract=False)
 
 
@@ -602,6 +727,7 @@ def _report_pending_text_ids(
     *,
     patch020_fact_contract: bool,
     patch027_fact_contract: bool = False,
+    patch030_text_contract: bool = False,
 ) -> list[str]:
     pending: set[str] = set()
     ordinary_laws = set(state.laws.signed_law_ids)
@@ -648,33 +774,34 @@ def _report_pending_text_ids(
             and not _canteen_history_is_proven(state)
         ):
             pending.add(_PENDING_FOOD_TEXT_ID)
-    if ordinary_laws & {
-        "child_labor_low_risk_law",
-        "child_labor_all_jobs_law",
-        "child_protection_law",
-    }:
-        pending.add(_PENDING_LONG_TEXT_IDS["children"])
-    if (
-        "child_protection_law" in ordinary_laws
-        and "child_school_law" in ordinary_laws
-        and _has_building(state, "child_shelter")
-        and _has_building(state, "school")
-    ):
-        pending.add(_PENDING_LONG_TEXT_IDS["children_trace"])
-    if state.population.population_dead > 0:
-        pending.add(_PENDING_LONG_TEXT_IDS["death"])
-    if ordinary_laws & {"tavern_law", "casino_law"}:
-        pending.add(_PENDING_LONG_TEXT_IDS["entertainment"])
-    if state.oath_order.selected_route == "oath":
-        pending.add(_PENDING_LONG_TEXT_IDS["oath"])
-    if state.oath_order.selected_route == "iron":
-        pending.add(_PENDING_LONG_TEXT_IDS["iron"])
-    if state.oath_order.final_oath_active or "final_oath" in route_laws:
-        pending.add(_PENDING_LONG_TEXT_IDS["final_oath"])
-    if state.oath_order.highest_order_active or "highest_order" in route_laws:
-        pending.add(_PENDING_LONG_TEXT_IDS["final_decree"])
-    if state.old_city.is_unlocked:
-        pending.add(_PENDING_LONG_TEXT_IDS["old_city"])
+    if not patch030_text_contract:
+        if ordinary_laws & {
+            "child_labor_low_risk_law",
+            "child_labor_all_jobs_law",
+            "child_protection_law",
+        }:
+            pending.add(_PENDING_LONG_TEXT_IDS["children"])
+        if (
+            "child_protection_law" in ordinary_laws
+            and "child_school_law" in ordinary_laws
+            and _has_building(state, "child_shelter")
+            and _has_building(state, "school")
+        ):
+            pending.add(_PENDING_LONG_TEXT_IDS["children_trace"])
+        if state.population.population_dead > 0:
+            pending.add(_PENDING_LONG_TEXT_IDS["death"])
+        if ordinary_laws & {"tavern_law", "casino_law"}:
+            pending.add(_PENDING_LONG_TEXT_IDS["entertainment"])
+        if state.oath_order.selected_route == "oath":
+            pending.add(_PENDING_LONG_TEXT_IDS["oath"])
+        if state.oath_order.selected_route == "iron":
+            pending.add(_PENDING_LONG_TEXT_IDS["iron"])
+        if state.oath_order.final_oath_active or "final_oath" in route_laws:
+            pending.add(_PENDING_LONG_TEXT_IDS["final_oath"])
+        if state.oath_order.highest_order_active or "highest_order" in route_laws:
+            pending.add(_PENDING_LONG_TEXT_IDS["final_decree"])
+        if state.old_city.is_unlocked:
+            pending.add(_PENDING_LONG_TEXT_IDS["old_city"])
     return sorted(pending)
 
 
@@ -698,6 +825,16 @@ def final_result_requires_illness_text(state: GameState) -> bool:
 
 
 def canonical_report_pending_text_ids(state: GameState) -> list[str]:
+    return _report_pending_text_ids(
+        state,
+        patch020_fact_contract=False,
+        patch030_text_contract=True,
+    )
+
+
+def patch029_report_pending_text_ids(state: GameState) -> list[str]:
+    """Return the exact pending set used by report format 4."""
+
     return _report_pending_text_ids(state, patch020_fact_contract=False)
 
 
@@ -765,4 +902,5 @@ def report_template_values(state: GameState) -> dict[str, int]:
             state.population.sick_population
             + state.population.critical_population
         ),
+        "actual_departures": state.old_city.actual_departures,
     }

@@ -14,12 +14,36 @@ _SOURCE = (
     "docs/text-assets/第 6 轮：FrostFinal  Ending  HardFail  "
     "EndingReport  EndingTag  Interrogation.md"
 )
-_USER_OVERRIDE_SOURCE = "用户于 Patch 029 明确确认的终局报告文案"
-_USER_OVERRIDE_TEXT_IDS = {
+_PATCH_029_USER_OVERRIDE_SOURCE = "用户于 Patch 029 明确确认的终局报告文案"
+_PATCH_030_USER_OVERRIDE_SOURCE = "用户于 Patch 030 明确确认的终局完整文案"
+_PATCH_029_USER_OVERRIDE_TEXT_IDS = {
     "ending.report.illness.no_service",
     "ending.report.coal_food.coal_empty",
     "ending.report.coal_food.food_empty",
     "ending.report.coal_food.both_empty",
+}
+_PATCH_030_USER_OVERRIDE_TEXT_IDS = {
+    "ending.route.oath.full_text",
+    "ending.route.final_oath.full_text",
+    "ending.route.iron.full_text",
+    "ending.route.final_decree.full_text",
+    "ending.old_city.scattered.full_text",
+    "ending.old_city.partial_exodus.full_text",
+    "ending.old_city.large_exodus.full_text",
+    "ending.old_city.unresolved.full_text",
+    "ending.old_city.promise.success",
+    "ending.old_city.promise.failure",
+    "ending.children.labor_low_risk.full_text",
+    "ending.children.labor_all_jobs.full_text",
+    "ending.children.protection.no_shelter.full_text",
+    "ending.children.protection.shelter_only.full_text",
+    "ending.children.protection.school.full_text",
+    "ending.children.protection.medical_track.full_text",
+    "ending.children.protection.engineering_track.full_text",
+    "ending.entertainment.no_operational_facility.full_text",
+    "ending.entertainment.tavern.full_text",
+    "ending.entertainment.casino.full_text",
+    "ending.entertainment.sedation_city.full_text",
 }
 
 _RUNTIME_TEXT = {
@@ -95,6 +119,160 @@ _RUNTIME_TEXT = {
     "ending.report.death_record.ember_roster": (
         "{total_deaths} 人没能走到最后。余烬名册记下了他们的名字，"
         "让死者没有只成为冰冷的数字。"
+    ),
+    "ending.route.oath.full_text": (
+        "你选择让炉城依靠誓言维系，而不是先用惩罚逼迫所有人留下。\n\n"
+        "于是越来越多的决定，被交给“相信”本身。\n\n"
+        "人们继续围着同一座炉心生活，也继续承担那些已经说出口的承诺。"
+        "\n\n第七霜落过去以后，炉城仍然站着。\n\n"
+        "只是没人说得清，让他们最终留在这里的，究竟是共同的信念——"
+        "还是谁也不愿成为第一个承认自己已经不再相信的人。"
+    ),
+    "ending.route.final_oath.full_text": (
+        "终火誓约生效以后，炉城把最后的退路也写进了誓言。\n\n"
+        "信任可以耗尽，绝望可以蔓延，但已经立下的誓言不能反悔。\n\n"
+        "第七霜落结束时，它确实没有碎。\n\n炉城因此撑到了最后。\n\n"
+        "只是活下来的人也终于明白：\n\n"
+        "一条永远不允许松开的绳索，确实能把人从悬崖边拉回来。\n\n"
+        "可当所有人都被绑在上面时，它究竟还是誓言，"
+        "还是另一种无法逃离的命令。"
+    ),
+    "ending.route.iron.full_text": (
+        "你选择让秩序走在人的犹豫前面。\n\n"
+        "命令变得明确，服从也不再被当作一种选择。\n\n"
+        "风雪退去以后，炉城仍然存在。\n\n"
+        "这证明了强硬确实可以救下一座城市。\n\n"
+        "它也留下了另一个问题：\n\n"
+        "当一个人已经习惯在开口以前先确认自己是否被允许，"
+        "即使巡查者最终离开，那道目光还会不会继续留在他心里。"
+    ),
+    "ending.route.final_decree.full_text": (
+        "最高戒令生效以后，恐慌不再被允许成为一种公开的情绪。\n\n"
+        "人们继续点名、工作、服从调度。\n\n"
+        "城市因此没有在最后几天散开。\n\n风停以后，秩序仍然存在。\n\n"
+        "可很久以来，人们已经习惯等待命令告诉自己该做什么、"
+        "该沉默什么、该害怕什么。\n\n现在终于没有命令了。\n\n"
+        "于是没人知道，第一件真正由自己决定的事，应该是什么。"
+    ),
+    "ending.old_city.scattered.full_text": (
+        "旧城派最终没有带走任何人。\n\n"
+        "关于离开的声音渐渐沉下去，他们继续工作、领饭，也继续留在炉城。"
+        "\n\n这可以被记录为一次成功。\n\n可留下从来不等于相信。\n\n"
+        "有些人只是看过城外的风雪以后，发现这里也许不是他们真正想"
+        "留下的地方——只是已经成为他们唯一还能继续活着的地方。"
+    ),
+    "ending.old_city.partial_exodus.full_text": (
+        "{actual_departures} 个人在风停以前离开了炉城。\n\n"
+        "他们带走了一部分物资，也留下了空出来的岗位和名字。\n\n"
+        "城门在他们身后关闭。\n\n"
+        "之后，没有人知道那些离开的人最终去了哪里。\n\n"
+        "留下的人只能继续面对同一个问题：\n\n"
+        "如果有一天他们真的回来敲门，这座城还有没有余力，再把门打开一次。"
+    ),
+    "ending.old_city.large_exodus.full_text": (
+        "那一天，{actual_departures} 个人一起离开了炉城。\n\n"
+        "他们带走能够带走的物资，也把身后的岗位留给仍然留在炉城的人。"
+        "\n\n城门最终关闭。\n\n"
+        "炉城活了下来，却第一次如此清楚地划出了一条线：\n\n"
+        "门里面的是“我们”。\n\n门外面的是“他们”。\n\n"
+        "而直到风雪结束，也没有人知道这条线究竟救了多少人，又舍弃了多少人。"
+    ),
+    "ending.old_city.unresolved.full_text": (
+        "第七霜落结束时，旧城派的问题仍然没有答案。\n\n"
+        "他们没有真正离开，也没有真正留下。\n\n"
+        "人们仍围着同一座炉心取暖，却已经在心里走向不同的方向。\n\n"
+        "风雪暂时停了。\n\n但所有人都知道：\n\n"
+        "只要炉城下一次变冷，那条没有走成的路，还会重新出现。"
+    ),
+    "ending.old_city.promise.success": (
+        "你曾答应解决旧城派的问题。\n\n这一次，你兑现了承诺。\n\n"
+        "那些留下的人没有庆祝。\n\n"
+        "他们只是决定再留下一个晚上，再相信炉城一次。\n\n"
+        "在这里，这已经是一种很昂贵的信任。"
+    ),
+    "ending.old_city.promise.failure": (
+        "你曾答应解决旧城派的问题。\n\n期限到来时，承诺没有兑现。\n\n"
+        "人们没有忘记。\n\n从那以后，“再等等”仍然可以让他们继续工作，"
+        "却不再足以让他们相信，事情真的会变好。"
+    ),
+    "ending.children.labor_low_risk.full_text": (
+        "你允许孩子进入那些被称为“低风险”的岗位。\n\n"
+        "他们可以被安排搬运较轻的物资，承担成年人认为还能接受的工作。"
+        "\n\n真正难以回答的，不是这些工作是否足够安全。\n\n"
+        "而是从什么时候开始，大人们已经能够把“孩子也必须帮忙”"
+        "说成一句听起来完全合理的话。"
+    ),
+    "ending.children.labor_all_jobs.full_text": (
+        "后来，炉城不再为孩子保留所谓安全的边界。\n\n"
+        "只要一双手还能握住工具，它就可以被分配到岗位上。\n\n"
+        "炉城活了下来。\n\n"
+        "可真正夺走这些孩子童年的，并不只有寒冬。\n\n"
+        "还有那些爱他们的大人，在走投无路以后，"
+        "最终也同意让他们承担本来属于成年人的代价。"
+    ),
+    "ending.children.protection.no_shelter.full_text": (
+        "你宣布孩子不该再被送进岗位。\n\n"
+        "可一纸炉律不会自动变成屋顶、床铺和炉火。\n\n"
+        "承诺中的儿童保护所最终没有建成。\n\n孩子们不再工作。\n\n"
+        "这一次，炉城至少决定：\n\n"
+        "他们不必再用劳动证明，自己值得被留下。"
+    ),
+    "ending.children.protection.shelter_only.full_text": (
+        "你为孩子建成了保护所。\n\n"
+        "他们得以留在更安全的地方，等待风雪过去。\n\n"
+        "成年人把这称为保护。\n\n可保护从来不是免费的。\n\n"
+        "当孩子留在屋里时，总要有人替他们继续走进寒冷。\n\n"
+        "于是炉城不得不面对最难看的问题：\n\n"
+        "当保护弱者需要别人承担更多风险时，你还能坚持多久。"
+    ),
+    "ending.children.protection.school.full_text": (
+        "你为孩子留下了保护所，也建成了学校。\n\n"
+        "你决定为他们保留一个不只由岗位和配给组成的世界。\n\n"
+        "炉城没有急着把他们变成新的工人。\n\n这像是在证明，"
+        "人活下来并不只是为了继续工作。\n\n"
+        "至于这个证明能不能一直成立，没人知道。"
+    ),
+    "ending.children.protection.medical_track.full_text": (
+        "你决定让学校朝医疗方向准备，把绷带、药箱和救治知识写进"
+        "未来的课程。\n\n这听起来像是在为未来留下希望。\n\n"
+        "可它也提醒着所有人：\n\n"
+        "炉城之所以如此急着准备下一批能够救人的人，"
+        "正是因为现在能够救人的成年人，已经少了太多。"
+    ),
+    "ending.children.protection.engineering_track.full_text": (
+        "你决定让学校朝工程方向准备，把图纸、机械和炉心知识写进"
+        "未来的课程。\n\n人们希望这些孩子有一天能够把炉城修得更好。\n\n"
+        "可他们未来最先接触的，并不是怎样建造一个新世界。\n\n"
+        "而是怎样继续维持这个已经伤痕累累的旧世界。"
+    ),
+    "ending.entertainment.no_operational_facility.full_text": (
+        "你允许炉城寻找一些能够暂时忘记寒冷的办法。\n\n"
+        "可允许并不等于拥有。\n\n"
+        "终局封存时，炉城没有一处娱乐设施仍能运行。\n\n"
+        "人们依旧只能在有限的食物、燃料和休息之间寻找一点喘息。\n\n"
+        "在真正匮乏的时候，甚至“想开心一点”都会慢慢变成一种奢侈。"
+    ),
+    "ending.entertainment.tavern.full_text": (
+        "你给炉城留下了一间仍在运行的小酒馆。\n\n"
+        "它不能让煤变多，不能让病床变空，也不能让死者回来。\n\n"
+        "它能做的，只是给人们一个暂时离开恐惧的地方。\n\n"
+        "这究竟算不算浪费资源，没有一个简单答案。\n\n"
+        "因为一个可能活不到明天的人，是否仍有资格让今晚稍微好过一点——"
+        "同样没有简单答案。"
+    ),
+    "ending.entertainment.casino.full_text": (
+        "你让仍在运行的赌桌在寒冬里亮着。\n\n它给了人们一种错觉：\n\n"
+        "至少还有一些结果，不完全由风雪决定。\n\n"
+        "炉城没有强迫任何人坐在那里。\n\n这似乎让选择显得足够自由。\n\n"
+        "可当一个人已经没有多少东西可以失去时，"
+        "他做出的选择究竟还剩多少真正的自由，没人愿意回答。"
+    ),
+    "ending.entertainment.sedation_city.full_text": (
+        "你给了人们足够多可以暂时忘记现实的地方。\n\n"
+        "酒、赌局和火盆不能填饱肚子，也不能治病。\n\n"
+        "却能让饥饿、病床和空掉的房间暂时变得没那么刺眼。\n\n"
+        "后来，炉城确实安静了。\n\n只是那种安静不像平静。\n\n"
+        "更像所有人都知道问题仍在那里，却共同决定暂时不要再看。"
     ),
     "ending.trace.child_labor": (
         "你签署了儿童辅工。孩子们用细嫩的手搬运木料、整理仓库，"
@@ -341,22 +519,8 @@ _TEXT_POOLS = {
     ),
 }
 
-_PENDING_LONG_TEXT_IDS = (
-    "ending.route.final_oath.full_text",
-    "ending.route.final_decree.full_text",
-    "ending.route.oath.full_text",
-    "ending.route.iron.full_text",
-    "ending.old_city.full_text",
-    "ending.children.full_text",
-    "ending.death_handling.full_text",
-    "ending.entertainment.full_text",
-)
-_PENDING_RUNTIME_TEXT_NOTES = {
-    "ending.trace.children_protected": (
-        "现有正文同时暗示互斥的医疗与工程学徒路线；"
-        "分支适配文案封存前暂停运行时导入。"
-    ),
-}
+_PENDING_LONG_TEXT_IDS: tuple[str, ...] = ()
+_PENDING_RUNTIME_TEXT_NOTES: dict[str, str] = {}
 _PENDING_CONDITION_NOTES = {
     "ending.report.illness.no_operational_service": (
         "Patch 027 报告格式 3 的历史缺失项；Patch 029 格式 4 在 D55"
@@ -396,7 +560,9 @@ def build_ending_text_registry() -> TextRegistry:
 
     registry = TextRegistry()
     for text_id, text in _expanded_runtime_text().items():
-        is_user_override = text_id in _USER_OVERRIDE_TEXT_IDS
+        is_patch029_override = text_id in _PATCH_029_USER_OVERRIDE_TEXT_IDS
+        is_patch030_override = text_id in _PATCH_030_USER_OVERRIDE_TEXT_IDS
+        is_user_override = is_patch029_override or is_patch030_override
         registry.register(
             TextEntry(
                 text_id=text_id,
@@ -407,7 +573,13 @@ def build_ending_text_registry() -> TextRegistry:
                     else ConfigStatus.FINAL
                 ),
                 visibility=TextVisibility.PLAYER_VISIBLE,
-                source=_USER_OVERRIDE_SOURCE if is_user_override else _SOURCE,
+                source=(
+                    _PATCH_029_USER_OVERRIDE_SOURCE
+                    if is_patch029_override
+                    else _PATCH_030_USER_OVERRIDE_SOURCE
+                    if is_patch030_override
+                    else _SOURCE
+                ),
             )
         )
     return registry

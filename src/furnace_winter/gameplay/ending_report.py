@@ -23,6 +23,9 @@ from furnace_winter.models import (
     RunState,
     SaveDataError,
     TerminationReason,
+    PATCH_020_ENDING_REPORT_FORMAT_VERSION,
+    PATCH_027_ENDING_REPORT_FORMAT_VERSION,
+    PATCH_029_ENDING_REPORT_FORMAT_VERSION,
     validate_game_state,
 )
 from furnace_winter.models.state import (
@@ -33,6 +36,9 @@ from furnace_winter.models.ending_selection import (
     canonical_report_pending_text_ids,
     canonical_report_title_text_id,
     legacy_report_pending_text_ids,
+    patch020_report_pending_text_ids,
+    patch027_report_pending_text_ids,
+    patch029_report_pending_text_ids,
     report_template_values,
 )
 from furnace_winter.text import (
@@ -190,6 +196,12 @@ class EndingReportSystem:
             entry.entry_id for entry in self.pending_registry.entries()
         }
         pending_ids.update(legacy_report_pending_text_ids(state))
+        if report.format_version == PATCH_020_ENDING_REPORT_FORMAT_VERSION:
+            pending_ids.update(patch020_report_pending_text_ids(state))
+        elif report.format_version == PATCH_027_ENDING_REPORT_FORMAT_VERSION:
+            pending_ids.update(patch027_report_pending_text_ids(state))
+        elif report.format_version == PATCH_029_ENDING_REPORT_FORMAT_VERSION:
+            pending_ids.update(patch029_report_pending_text_ids(state))
         if set(report.pending_text_ids) - pending_ids:
             raise ValueError("ending report contains an unknown pending text id")
 
