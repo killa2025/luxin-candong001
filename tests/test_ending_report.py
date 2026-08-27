@@ -40,6 +40,7 @@ from furnace_winter.models import (
     SaveDataError,
     decode_game_state,
     encode_game_state,
+    validate_game_state,
 )
 from furnace_winter.models.ending_selection import (
     canonical_report_body_text_ids,
@@ -176,6 +177,42 @@ class EndingReportPatchTests(unittest.TestCase):
         restored = decode_game_state(encode_game_state(state))
         self.assertEqual(restored, state)
         return state
+
+    def configure_resolved_partial_old_city(
+        self,
+        state,
+        *,
+        actual_departures: int,
+        resource_losses: dict[str, int],
+    ) -> None:
+        old = state.old_city
+        old.is_unlocked = True
+        old.reference_population = state.population.population_alive
+        old.low_threshold = 5
+        old.middle_threshold = 10
+        old.high_threshold = 30
+        old.stage_events_seen = [
+            "southern_letter",
+            "rumors",
+            "public_gathering",
+            "countdown",
+        ]
+        old.countdown_day = 48
+        old.resolved = True
+        old.result_id = "partial_exodus"
+        old.settlement_day = 48
+        old.settlement_member_count = 20
+        old.theoretical_departures = 8
+        old.actual_departures = actual_departures
+        state.population.population_total_ever = (
+            state.population.population_total + actual_departures
+        )
+        old.reduction_reason = (
+            "population_protection" if actual_departures < 8 else None
+        )
+        old.settlement_resource_losses = resource_losses
+        state.final_result.report = EndingReportState()
+        EndingReportSystem().generate(state)
 
     @staticmethod
     def execute(
@@ -607,7 +644,6 @@ class EndingReportPatchTests(unittest.TestCase):
             "ending.entertainment.no_operational_facility.full_text",
             "ending.entertainment.tavern.full_text",
             "ending.entertainment.casino.full_text",
-            "ending.entertainment.sedation_city.full_text",
         }
         for text_id in sorted(text_ids):
             with self.subTest(text_id=text_id):
@@ -615,6 +651,19 @@ class EndingReportPatchTests(unittest.TestCase):
                 self.assertEqual(entry.status.value, "USER_OVERRIDE")
                 self.assertNotIn("TODO_TEXT", entry.text)
                 self.assertNotIn("PENDING", entry.text)
+        self.assertIsNone(
+            registry.get("ending.entertainment.sedation_city.full_text")
+        )
+        pending = {
+            entry.entry_id: entry
+            for entry in build_ending_pending_registry().entries()
+        }
+        self.assertEqual(
+            pending[
+                "ending.entertainment.sedation_city.full_text"
+            ].status.value,
+            "PENDING",
+        )
 
     def test_format_three_report_remains_strictly_loadable(self) -> None:
         state = self.completed_state()
@@ -909,12 +958,21 @@ class EndingReportPatchTests(unittest.TestCase):
         for result_id, expected in cases.items():
             with self.subTest(result_id=result_id):
                 state.old_city.result_id = result_id
+                state.old_city.actual_departures = (
+                    7 if result_id in {"partial_exodus", "large_exodus"} else 0
+                )
+                state.old_city.settlement_resource_losses = (
+                    {"coal": 1}
+                    if result_id in {"partial_exodus", "large_exodus"}
+                    else {}
+                )
                 selected = canonical_report_body_text_ids(state)
                 self.assertIn(expected, selected)
                 self.assertNotIn("ending.trace.old_city", selected)
 
         state.old_city.result_id = "partial_exodus"
         state.old_city.actual_departures = 7
+        state.old_city.settlement_resource_losses = {"coal": 1}
         state.old_city.promise_settled = True
         state.old_city.promise_outcome = "success"
         selected = canonical_report_body_text_ids(state)
@@ -929,6 +987,58 @@ class EndingReportPatchTests(unittest.TestCase):
         selected = canonical_report_body_text_ids(state)
         self.assertIn("ending.old_city.promise.failure", selected)
         self.assertNotIn("ending.old_city.promise.success", selected)
+
+    def test_patch030_old_city_omits_unproven_departure_claims(self) -> None:
+        zero_losses = {
+            "cooked_food": 0,
+            "coal": 0,
+            "wood": 0,
+            "steel": 0,
+        }
+        for actual_departures in (0, 7):
+            with self.subTest(actual_departures=actual_departures):
+                state = self.completed_state()
+                self.configure_resolved_partial_old_city(
+                    state,
+                    actual_departures=actual_departures,
+                    resource_losses=zero_losses,
+                )
+                selected = canonical_report_body_text_ids(state)
+                self.assertNotIn(
+                    "ending.old_city.partial_exodus.full_text",
+                    selected,
+                )
+                self.assertIn(
+                    "ending.old_city.full_text",
+                    canonical_report_pending_text_ids(state),
+                )
+                restored = decode_game_state(encode_game_state(state))
+                validate_game_state(
+                    restored,
+                    self.buildings,
+                    self.survival,
+                    self.technology,
+                )
+
+        applicable = self.completed_state()
+        self.configure_resolved_partial_old_city(
+            applicable,
+            actual_departures=7,
+            resource_losses={
+                "cooked_food": 0,
+                "coal": 1,
+                "wood": 0,
+                "steel": 0,
+            },
+        )
+        self.assertIn(
+            "ending.old_city.partial_exodus.full_text",
+            canonical_report_body_text_ids(applicable),
+        )
+        self.assertNotIn(
+            "ending.old_city.full_text",
+            canonical_report_pending_text_ids(applicable),
+        )
 
     def test_patch030_children_text_uses_only_proven_law_and_building_facts(
         self,
@@ -1027,10 +1137,28 @@ class EndingReportPatchTests(unittest.TestCase):
             canonical_report_body_text_ids(state),
         )
         state.final_result.ending_tags.append("sedation_city")
-        self.assertIn(
+        self.assertNotIn(
             "ending.entertainment.sedation_city.full_text",
             canonical_report_body_text_ids(state),
         )
+        self.assertIn(
+            "ending.entertainment.sedation_city.full_text",
+            canonical_report_pending_text_ids(state),
+        )
+
+    def test_patch030_rejects_forged_sedation_narrative(self) -> None:
+        state = self.completed_state()
+        forged = encode_game_state(state)
+        forged["final_result"]["report"]["body_text_ids"].insert(
+            -1,
+            "ending.entertainment.sedation_city.full_text",
+        )
+
+        with self.assertRaisesRegex(
+            SaveDataError,
+            "text selection is not canonical",
+        ):
+            decode_game_state(forged)
 
     def test_report_save_is_strict_and_v11_migrates_without_terminal_state(
         self,

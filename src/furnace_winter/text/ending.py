@@ -520,8 +520,17 @@ _TEXT_POOLS = {
 }
 
 _PENDING_LONG_TEXT_IDS: tuple[str, ...] = ()
-_PENDING_RUNTIME_TEXT_NOTES: dict[str, str] = {}
+_PENDING_RUNTIME_TEXT_NOTES = {
+    "ending.entertainment.sedation_city.full_text": (
+        "正文已经由用户确认，但 sedation_city 正式触发公式尚未封存；"
+        "Patch 030 不把旧设计标签接成新运行机制。"
+    ),
+}
 _PENDING_CONDITION_NOTES = {
+    "ending.old_city.full_text": (
+        "部分或大规模出走的实际离开人数为 0，或实际资源损失全部为 0"
+        "时，现有确认正文会陈述未发生事实；适配正文确认前只登记缺失。"
+    ),
     "ending.report.illness.no_operational_service": (
         "Patch 027 报告格式 3 的历史缺失项；Patch 029 格式 4 在 D55"
         "事实明确无服务时已改用用户确认正文，历史未知时仍保守登记。"
@@ -546,7 +555,11 @@ _PENDING_CONDITION_NOTES = {
 
 
 def _expanded_runtime_text() -> dict[str, str]:
-    text = dict(_RUNTIME_TEXT)
+    text = {
+        text_id: value
+        for text_id, value in _RUNTIME_TEXT.items()
+        if text_id not in _PENDING_RUNTIME_TEXT_NOTES
+    }
     for prefix, candidates in _TEXT_POOLS.items():
         for index, candidate in enumerate(candidates, start=1):
             text_id = f"{prefix}.{index:02d}"

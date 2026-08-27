@@ -354,10 +354,10 @@
 | ending.route.final_decree.full_text | Ending / Route | 最高戒令专属完整结局文案 | 见 Patch 030 实现记录逐字原文 | 用户 Patch 030 明确确认 | 格式 5 路线正文 | USER_OVERRIDE | 玩家可见 | 最高戒令生效时替代普通铁腕路线长文及短摘要。 |
 | ending.route.oath.full_text | Ending / Route | 誓言路线完整总结 | 见 Patch 030 实现记录逐字原文 | 用户 Patch 030 明确确认 | 格式 5 路线正文 | USER_OVERRIDE | 玩家可见 | 仅在未生效终火誓约时使用。 |
 | ending.route.iron.full_text | Ending / Route | 铁腕路线完整总结 | 见 Patch 030 实现记录逐字原文 | 用户 Patch 030 明确确认 | 格式 5 路线正文 | USER_OVERRIDE | 玩家可见 | 仅在未生效最高戒令时使用。 |
-| ending.old_city.full_text | Ending / OldCity | 旧城派完整结局文案 | 见 Patch 030 实现记录四种结算正文与两种承诺附加正文 | 用户 Patch 030 明确确认 | 格式 5 旧城正文 | USER_OVERRIDE | 玩家可见 | 按 `result_id` 选择一种结算正文；已结算承诺再追加且只追加一种结果。 |
+| ending.old_city.full_text | Ending / OldCity | 旧城派完整结局文案 | 见 Patch 030 实现记录四种结算正文与两种承诺附加正文 | 用户 Patch 030 明确确认 | 格式 5 旧城正文 | USER_OVERRIDE / 条件 PENDING | 玩家可见 | 按 `result_id` 选择；部分/大规模出走还须实际离开大于 0 且至少一种实际资源损失大于 0，否则现有正文不适用并登记稳定 PENDING。已结算承诺独立追加且只追加一种结果。 |
 | ending.children.full_text | Ending / Institution | 儿童路线完整结局文案 | 见 Patch 030 实现记录七种事实分支正文 | 用户 Patch 030 明确确认 | 格式 5 儿童制度正文 | USER_OVERRIDE | 玩家可见 | 只按已签炉律与已建保护所/学校选择，不虚构实际学徒人口。 |
 | ending.death_handling.full_text | Ending / Institution | 死亡处理完整结局文案 | 使用 `ending.report.death_record.*` 动态死亡记录句 | 用户 Patch 020 / Patch 030 确认 | 格式 5 死亡记录 | 已覆盖，不另加重复段落 | 玩家可见 | 无死亡、墓园、冷藏坑、未处理遗体与余烬名册已按事实互斥选择。 |
-| ending.entertainment.full_text | Ending / Institution | 娱乐 / 赌场完整结局文案 | 见 Patch 030 实现记录四种事实分支正文 | 用户 Patch 030 明确确认 | 格式 5 娱乐制度正文 | USER_OVERRIDE | 玩家可见 | 按终局镇静标签及实际运行的小酒馆/赌场选择；只签炉律而无运行设施使用对应分支。 |
+| ending.entertainment.full_text | Ending / Institution | 娱乐 / 赌场完整结局文案 | 见 Patch 030 实现记录四种事实分支正文 | 用户 Patch 030 明确确认 | 格式 5 娱乐制度正文 | USER_OVERRIDE / 部分 PENDING | 玩家可见 | 无运行设施、小酒馆、赌场三种正文按终局实际运行事实选择；`sedation_city` 正式触发公式未封存，镇静之城正文保留但暂停运行时注册。 |
 | ending.tag.children_lost.threshold | Ending / Tag | 儿童死亡阈值 | TODO_VALUE | Patch 009-2 | children_lost | TODO | 系统内部 | 具体阈值未封存，不得猜测。 |
 | ending.ui.detail_page | Ending / UI | 终局档案详情页 | TODO_TEXT | Patch 008-4 / 009-1 / 009-2 | UI 接口 | TODO_TEXT | 待判定 | 是否显示完整六大系统数值表尚未封存。 |
 | ending.pool.random_weight | Ending / Internal | 文案随机权重 | TODO_VALUE | Patch 009-2 | 随机与权重 | TODO | 系统内部 | 未封存；可先使用池内第一条或本局种子固定选择。 |

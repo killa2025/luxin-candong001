@@ -516,15 +516,36 @@ def _old_city_full_text_ids(state: GameState) -> list[str]:
     old = state.old_city
     if not old.is_unlocked:
         return []
-    selected = [
-        _OLD_CITY_FULL_TEXT_IDS.get(
-            old.result_id,
-            "ending.old_city.unresolved.full_text",
+    selected: list[str] = []
+    if old.result_id in {"partial_exodus", "large_exodus"}:
+        has_departures = old.actual_departures > 0
+        has_resource_losses = any(
+            loss > 0 for loss in old.settlement_resource_losses.values()
         )
-    ]
+        if has_departures and has_resource_losses:
+            selected.append(_OLD_CITY_FULL_TEXT_IDS[old.result_id])
+    else:
+        selected.append(
+            _OLD_CITY_FULL_TEXT_IDS.get(
+                old.result_id,
+                "ending.old_city.unresolved.full_text",
+            )
+        )
     if old.promise_settled and old.promise_outcome in _OLD_CITY_PROMISE_TEXT_IDS:
         selected.append(_OLD_CITY_PROMISE_TEXT_IDS[old.promise_outcome])
     return selected
+
+
+def _old_city_full_text_is_pending(state: GameState) -> bool:
+    old = state.old_city
+    if not old.is_unlocked or old.result_id not in {
+        "partial_exodus",
+        "large_exodus",
+    }:
+        return False
+    return old.actual_departures <= 0 or not any(
+        loss > 0 for loss in old.settlement_resource_losses.values()
+    )
 
 
 def _children_full_text_id(state: GameState) -> str | None:
@@ -552,8 +573,6 @@ def _entertainment_full_text_id(state: GameState) -> str | None:
     ordinary_laws = set(state.laws.signed_law_ids)
     if not ordinary_laws & {"tavern_law", "casino_law"}:
         return None
-    if "sedation_city" in set(state.final_result.ending_tags):
-        return "ending.entertainment.sedation_city.full_text"
     if _has_operational_building(state, "grand_casino"):
         return "ending.entertainment.casino.full_text"
     if _has_operational_building(state, "small_tavern"):
@@ -802,6 +821,11 @@ def _report_pending_text_ids(
             pending.add(_PENDING_LONG_TEXT_IDS["final_decree"])
         if state.old_city.is_unlocked:
             pending.add(_PENDING_LONG_TEXT_IDS["old_city"])
+    else:
+        if _old_city_full_text_is_pending(state):
+            pending.add(_PENDING_LONG_TEXT_IDS["old_city"])
+        if ordinary_laws & {"tavern_law", "casino_law"}:
+            pending.add("ending.entertainment.sedation_city.full_text")
     return sorted(pending)
 
 
