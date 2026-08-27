@@ -807,12 +807,24 @@ class OathOrderPatchTests(unittest.TestCase):
         self.assertTrue(state.old_city.is_unlocked)
         self.assertEqual(state.old_city.pending_event_id, "southern_letter")
         view = system.old_city_view(state)
+        self.assertEqual(view["title_text_id"], "old_city.event.southern_letter.title")
+        self.assertEqual(view["title_text"], "南方来信")
+        self.assertEqual(view["body_text_id"], "old_city.event.southern_letter.body")
+        self.assertEqual(view["body_status"], "AVAILABLE")
+        self.assertIn("炉城就已经不再是唯一的答案", view["body_text"])
         self.assertEqual(
             view["available_option_ids"], ["publish", "suppress"]
         )
         self.assertEqual(
             [item["option_id"] for item in view["option_previews"]],
             ["publish", "suppress"],
+        )
+        self.assertEqual(
+            [(item["text_id"], item["text"]) for item in view["option_previews"]],
+            [
+                ("old_city.event.southern_letter.option_a", "公布来信"),
+                ("old_city.event.southern_letter.option_b", "压下来信"),
+            ],
         )
         self.assertEqual(view["unavailable_options"], [])
         warnings = system.evaluate_risks(state)
@@ -878,10 +890,101 @@ class OathOrderPatchTests(unittest.TestCase):
             [
                 {
                     "option_id": "ask_for_time",
+                    "text_id": "old_city.event.exodus_countdown.option_c",
+                    "text": "争取最后时间",
                     "reason": "old_city_time_request_unavailable",
                 }
             ],
         )
+
+    def test_all_old_city_stage_views_expose_confirmed_text_without_mutation(
+        self,
+    ) -> None:
+        system = self.system()
+        state = self.make_state(day=24)
+        system.prepare_new_day(state)
+        expected = (
+            (
+                "southern_letter",
+                "old_city.event.southern_letter.title",
+                "南方来信",
+                "old_city.event.southern_letter.body",
+                ("公布来信", "压下来信"),
+            ),
+            (
+                "rumors",
+                "old_city.event.hidden_rumors.title",
+                "暗中传言",
+                "old_city.event.hidden_rumors.body",
+                ("公开解释", "暂不处理"),
+            ),
+            (
+                "public_gathering",
+                "old_city.event.public_gathering.title",
+                "公开集结",
+                "old_city.event.public_gathering.body",
+                ("公开说明", "加强巡查", "暂不处理"),
+            ),
+            (
+                "countdown",
+                "old_city.event.exodus_countdown.title",
+                "离城倒计时",
+                "old_city.event.exodus_countdown.body",
+                ("承诺压低旧城派人数", "暂不阻拦", "争取最后时间"),
+            ),
+        )
+        resolution_options = (
+            "publish",
+            "public_explain",
+            "ignore",
+        )
+
+        for index, (event_id, title_id, title, body_id, option_texts) in enumerate(
+            expected
+        ):
+            with self.subTest(event_id=event_id):
+                before = deepcopy(state)
+                view = system.old_city_view(state)
+                self.assertEqual(view["pending_event_id"], event_id)
+                self.assertEqual(view["title_text_id"], title_id)
+                self.assertEqual(view["title_text"], title)
+                self.assertEqual(view["body_text_id"], body_id)
+                self.assertIsInstance(view["body_text"], str)
+                self.assertEqual(view["body_status"], "AVAILABLE")
+                self.assertEqual(
+                    tuple(item["text"] for item in view["option_previews"]),
+                    option_texts,
+                )
+                self.assertEqual(state, before)
+            if index == len(resolution_options):
+                break
+            result = self.execute(
+                system,
+                state,
+                RESOLVE_OLD_CITY_COMMAND,
+                event_id=event_id,
+                option_id=resolution_options[index],
+            )
+            self.assertEqual(result.code, ErrorCode.OK)
+            if index == 0:
+                state.old_city.member_count = state.old_city.low_threshold
+            elif index == 1:
+                state.old_city.member_count = state.old_city.middle_threshold
+            else:
+                state.old_city.member_count = state.old_city.high_threshold
+            system._advance_old_city_stage(state)
+
+    def test_inactive_old_city_view_has_stable_empty_text_shape(self) -> None:
+        system = self.system()
+        state = self.make_state(day=1)
+
+        view = system.old_city_view(state)
+
+        self.assertIsNone(view["title_text_id"])
+        self.assertIsNone(view["title_text"])
+        self.assertIsNone(view["body_text_id"])
+        self.assertIsNone(view["body_text"])
+        self.assertEqual(view["body_status"], "NOT_ACTIVE")
 
     def test_countdown_previews_expose_outcomes_without_mutating_state(
         self,

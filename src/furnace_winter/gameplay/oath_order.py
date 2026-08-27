@@ -41,6 +41,7 @@ from furnace_winter.models import (
     SaveDataError,
     validate_game_state,
 )
+from furnace_winter.text import TextRegistry, build_event_text_registry
 
 
 RESOLVE_OLD_CITY_COMMAND = "game.resolve_old_city_event"
@@ -90,6 +91,12 @@ _OLD_CITY_OPTIONS = {
     "rumors": ("public_explain", "ignore"),
     "public_gathering": ("public_explain", "strengthen_patrol", "ignore"),
     "countdown": ("promise_reduce_old_city", "do_not_stop", "ask_for_time"),
+}
+_OLD_CITY_TEXT_KEYS = {
+    "southern_letter": "southern_letter",
+    "rumors": "hidden_rumors",
+    "public_gathering": "public_gathering",
+    "countdown": "exodus_countdown",
 }
 
 
@@ -156,11 +163,13 @@ class OathOrderSystem:
         building_rules: BuildingRules,
         survival_rules: SurvivalRules,
         technology_rules: TechnologyRules | None = None,
+        text_registry: TextRegistry | None = None,
     ) -> None:
         self.rules = rules
         self.building_rules = building_rules
         self.survival_rules = survival_rules
         self.technology_rules = technology_rules
+        self.text_registry = text_registry or build_event_text_registry()
         self._catalog = build_oath_order_catalog(rules)
         self._validator = CommandValidator(self._catalog)
 
@@ -922,6 +931,9 @@ class OathOrderSystem:
         available_option_ids = self._available_old_city_options(
             state, pending_event_id
         )
+        title_text_id, body_text_id = self._old_city_text_ids(pending_event_id)
+        title_text = self._registered_text(title_text_id)
+        body_text = self._registered_text(body_text_id)
         option_previews = []
         for option_id in available_option_ids:
             preview_state = deepcopy(state)
@@ -936,8 +948,17 @@ class OathOrderSystem:
                     },
                 ),
             )
+            option_text_id = self._old_city_option_text_id(
+                pending_event_id, option_id
+            )
             option_previews.append(
-                {"option_id": option_id, "preview": preview}
+                {
+                    "option_id": option_id,
+                    "text_id": option_text_id,
+                    "text": self._registered_text(option_text_id),
+                    "available": True,
+                    "preview": preview,
+                }
             )
         unavailable_options = []
         if pending_event_id is not None:
@@ -946,14 +967,33 @@ class OathOrderSystem:
                     state, pending_event_id, option_id
                 )
                 if reason is not None:
+                    option_text_id = self._old_city_option_text_id(
+                        pending_event_id, option_id
+                    )
                     unavailable_options.append(
-                        {"option_id": option_id, "reason": reason}
+                        {
+                            "option_id": option_id,
+                            "text_id": option_text_id,
+                            "text": self._registered_text(option_text_id),
+                            "reason": reason,
+                        }
                     )
         return {
             "is_unlocked": old.is_unlocked,
             "member_count": old.member_count,
             "active_stage_id": old.active_stage_id,
             "pending_event_id": pending_event_id,
+            "title_text_id": title_text_id,
+            "title_text": title_text,
+            "body_text_id": body_text_id,
+            "body_text": body_text,
+            "body_status": (
+                "NOT_ACTIVE"
+                if pending_event_id is None
+                else "AVAILABLE"
+                if body_text is not None
+                else "TEXT_ID_ONLY"
+            ),
             "available_option_ids": list(available_option_ids),
             "option_previews": option_previews,
             "unavailable_options": unavailable_options,
@@ -981,6 +1021,27 @@ class OathOrderSystem:
                 old.settlement_resource_losses
             ),
         }
+
+    def _registered_text(self, text_id: str | None) -> str | None:
+        if text_id is None:
+            return None
+        entry = self.text_registry.get(text_id)
+        return entry.text if entry is not None else None
+
+    @staticmethod
+    def _old_city_text_ids(event_id: str | None) -> tuple[str | None, str | None]:
+        if event_id is None:
+            return None, None
+        key = _OLD_CITY_TEXT_KEYS[event_id]
+        prefix = f"old_city.event.{key}"
+        return f"{prefix}.title", f"{prefix}.body"
+
+    @staticmethod
+    def _old_city_option_text_id(event_id: str, option_id: str) -> str:
+        canonical = _OLD_CITY_OPTIONS[event_id]
+        letter = "abc"[canonical.index(option_id)]
+        key = _OLD_CITY_TEXT_KEYS[event_id]
+        return f"old_city.event.{key}.option_{letter}"
 
     def _available_old_city_options(
         self, state: GameState, event_id: str | None = None

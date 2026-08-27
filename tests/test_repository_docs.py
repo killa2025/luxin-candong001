@@ -19,7 +19,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("`docs/PENDING.md`", index)
         self.assertNotIn("handoff/PENDING 登记.md", index)
 
-    def test_repository_status_text_matches_patch_031_boundary(self) -> None:
+    def test_repository_status_text_matches_patch_032_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
@@ -42,6 +42,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("Patch 029", readme)
         self.assertIn("Patch 030", readme)
         self.assertIn("Patch 031", readme)
+        self.assertIn("Patch 032", readme)
         self.assertIn("格式 5", readme)
         self.assertIn('{"type":"autosave"}', readme)
         self.assertIn("command_specs", readme)
@@ -49,6 +50,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("Patch 022", agents)
         self.assertIn("Patch 030", agents)
         self.assertIn("Patch 031", agents)
+        self.assertIn("Patch 032", agents)
         self.assertIn("TEST_NUMERIC", agents)
         self.assertIn("legacy_patch021", agents)
         self.assertIn("patch022", agents)
@@ -66,6 +68,14 @@ class RepositoryDocumentationTests(unittest.TestCase):
                 / "docs"
                 / "handoff"
                 / "PATCH-031：事件缺失正文收口实现记录.md"
+            ).is_file()
+        )
+        self.assertTrue(
+            (
+                REPOSITORY_ROOT
+                / "docs"
+                / "handoff"
+                / "PATCH-032：旧城派阶段事件正文收口实现记录.md"
             ).is_file()
         )
         self.assertTrue(
