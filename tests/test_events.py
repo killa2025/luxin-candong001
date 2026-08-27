@@ -736,7 +736,9 @@ class EventPatchTests(unittest.TestCase):
 
         self.assertEqual(view["title_text_id"], "arrival.day6.title")
         self.assertEqual(view["title_text"], "早期求生者")
-        self.assertEqual(view["body_status"], "TODO_TEXT")
+        self.assertEqual(view["body_text_id"], "arrival.day6.body")
+        self.assertIn("救下一个人和养活一个人", view["body_text"])
+        self.assertEqual(view["body_status"], "AVAILABLE")
         accept_all = next(
             item for item in view["options"] if item["option_id"] == "accept_all"
         )
@@ -789,8 +791,8 @@ class EventPatchTests(unittest.TestCase):
             if item["event_id"] == "long_shift_collapse"
         )
         self.assertEqual(long_shift["title_text"], "长班后的倒下")
-        self.assertIsNone(long_shift["body_text"])
-        self.assertEqual(long_shift["body_status"], "TODO_TEXT")
+        self.assertIn("允许那双手停下来的余地", long_shift["body_text"])
+        self.assertEqual(long_shift["body_status"], "AVAILABLE")
         self.assertEqual(
             [item["text"] for item in long_shift["options"]],
             ["暂停长班一天", "提供熟食补偿", "继续长班"],
@@ -958,7 +960,8 @@ class EventPatchTests(unittest.TestCase):
             if item["event_id"] == "seventh_frost_start"
         )
         self.assertEqual(frost_view["title_text"], "第七霜落")
-        self.assertEqual(frost_view["body_status"], "TODO_TEXT")
+        self.assertIn("究竟够不够撑到风停", frost_view["body_text"])
+        self.assertEqual(frost_view["body_status"], "AVAILABLE")
 
     def test_fixed_frost_warning_view_exposes_sealed_player_text(self) -> None:
         state = self.make_state(day=34)
@@ -980,6 +983,54 @@ class EventPatchTests(unittest.TestCase):
             ["公开预警", "只通知管理与工程人员", "暂缓公布"],
         )
         self.assertEqual(state.events.resolution_history, history_before)
+
+    def test_patch031_all_confirmed_bodies_are_available_in_event_views(self) -> None:
+        cases = []
+        for day, event_id in (
+            (6, "arrival_day6"),
+            (19, "arrival_day19"),
+            (37, "arrival_day37"),
+        ):
+            cases.append((self.make_state(day=day), event_id))
+
+        long_shift = self.make_state(day=7)
+        long_shift.social_policy.consecutive_long_shift_days = 3
+        cases.append((long_shift, "long_shift_collapse"))
+
+        overtime = self.make_state(day=10)
+        overtime.events.metrics["overtime_harm_today"] = 1
+        cases.append((overtime, "overtime_empty_post"))
+
+        frost = self.make_state(day=49)
+        frost.final_frost.entered = True
+        frost.final_frost.baseline_day = 49
+        frost.final_frost.baseline_alive_population = frost.population.population_alive
+        frost.final_frost.baseline_healthy_population = (
+            frost.population.healthy_population
+        )
+        frost.final_frost.baseline_sick_population = frost.population.sick_population
+        frost.final_frost.baseline_critical_population = (
+            frost.population.critical_population
+        )
+        frost.final_frost.baseline_disabled_population = (
+            frost.population.disabled_population
+        )
+        frost.final_frost.baseline_workable_population = (
+            frost.population.workers + frost.population.engineers
+        )
+        cases.append((frost, "seventh_frost_start"))
+
+        for state, event_id in cases:
+            with self.subTest(event_id=event_id):
+                system = self.event_system()
+                system.initialize_day(state)
+                view = next(
+                    item
+                    for item in system.active_event_views(state)
+                    if item["event_id"] == event_id
+                )
+                self.assertIsNotNone(view["body_text"])
+                self.assertEqual(view["body_status"], "AVAILABLE")
 
     def test_observation_exposes_formal_event_and_promise_views(self) -> None:
         state = self.make_empty_pot_state()

@@ -8,6 +8,17 @@ _SOURCE = (
     "docs/text-assets/第 5 轮：Event  Promise  OldCity  FixedArrival  "
     "FrostWarning  Achievement.md"
 )
+_USER_OVERRIDE_SOURCE = (
+    "docs/handoff/PATCH-031：事件缺失正文收口实现记录.md"
+)
+_USER_OVERRIDE_TEXT_IDS = {
+    "event.long_shift_collapse.body",
+    "event.overtime_empty_post.body",
+    "arrival.day6.body",
+    "arrival.day19.body",
+    "arrival.day37.body",
+    "event.seventh_frost_start.body",
+}
 
 _RUNTIME_TEXT = {
     "event.empty_pot.title": "空锅请愿",
@@ -94,10 +105,25 @@ _RUNTIME_TEXT = {
     "event.red_frozen_hands.option_b": "提供额外防寒照料",
     "event.red_frozen_hands.option_c": "继续维持安排",
     "event.long_shift_collapse.title": "长班后的倒下",
+    "event.long_shift_collapse.body": (
+        "长班还没有结束，就有人在岗位旁倒了下去。\n"
+        "没有事故，也没有巨响。只是身体终于比命令更早承认，它已经撑不住了。\n"
+        "其他人停了一会儿，又重新回到工作里。\n"
+        "炉城缺的从来不只是一双手。\n"
+        "更缺的是允许那双手停下来的余地。"
+    ),
     "event.long_shift_collapse.option_a": "暂停长班一天",
     "event.long_shift_collapse.option_b": "提供熟食补偿",
     "event.long_shift_collapse.option_c": "继续长班",
     "event.overtime_empty_post.title": "加班后的空位",
+    "event.overtime_empty_post.body": (
+        "加班已经不是第一次。\n"
+        "今天点名时，一个岗位没有等到应该站在那里的人。\n"
+        "炉城仍然可以把别人调过去，把缺口重新填满。\n"
+        "可岗位可以补，人却不能像名册上的数字一样无限往前挪。\n"
+        "当每一个空位都需要另一个更疲惫的人顶上去时——\n"
+        "迟早还会再空一个。"
+    ),
     "event.overtime_empty_post.option_a": "承诺补足人手或降低过劳压力",
     "event.overtime_empty_post.option_b": "提供熟食补偿",
     "event.overtime_empty_post.option_c": "继续维持安排",
@@ -150,8 +176,33 @@ _RUNTIME_TEXT = {
     "event.city_unrest.option_b": "组织安抚 / 巡查",
     "event.city_unrest.option_c": "维持现状",
     "arrival.day6.title": "早期求生者",
+    "arrival.day6.body": (
+        "雪线外出现了一批求生者。\n"
+        "他们没有带来足以改变炉城命运的东西，只带来了还能劳动的身体，以及身后已经无法回去的路。\n"
+        "城里的人看着他们。\n"
+        "多几双手，也意味着多几张嘴。\n"
+        "寒冬第一次逼你承认：\n"
+        "救下一个人和养活一个人，从来不是同一道题。"
+    ),
     "arrival.day19.title": "中期工程残队",
+    "arrival.day19.body": (
+        "一支残余工程队抵达了炉城。\n"
+        "他们知道怎样修东西，也知道一座设施在彻底坏掉以前，会先发出什么声音。\n"
+        "这本该算是好消息。\n"
+        "可炉城现在最不缺的，正是需要修补的东西。\n"
+        "新的工程人手走进城门时，没有人问他们还能建造什么。\n"
+        "人们先问的是——\n"
+        "还有什么来得及不让它坏掉。"
+    ),
     "arrival.day37.title": "后期难民潮",
+    "arrival.day37.body": (
+        "黑霜之后，又有人出现在城外。\n"
+        "这一次不是零散的求生者。\n"
+        "越来越多的人挤在炉城能够看见的地方，等待一扇门决定他们接下来还能不能活。\n"
+        "城里的食物、床位和燃料不会因为同情而变多。\n"
+        "可把门关上以后，\n"
+        "风雪也不会替你忘记门外还有人。"
+    ),
     "arrival.option.accept_all": "全部接纳",
     "arrival.option.accept_partial": "部分接纳",
     "arrival.option.reject": "拒绝接纳",
@@ -162,6 +213,15 @@ _RUNTIME_TEXT = {
         "新增人口已经进城，并立即计入住房、食物、医疗和疾病压力。"
     ),
     "event.seventh_frost_start.title": "第七霜落",
+    "event.seventh_frost_start.body": (
+        "第七霜落来了。\n"
+        "从今天起，城外不再是可以指望的退路，炉心、食物、医疗和住房都会被压到最后的余量。\n"
+        "之前所有被拖延的问题，现在都要一起结账。\n"
+        "炉城已经没有多少东西可以再失去。\n"
+        "接下来的七天，只会回答一个问题：\n"
+        "你此前选择保住的一切，\n"
+        "究竟够不够撑到风停。"
+    ),
     "event.black_frost_echo.title": "黑霜回声",
     "event.black_frost_echo.body": (
         "夜里，炉城外传来一种很低的声音。\n\n"
@@ -206,7 +266,11 @@ def build_event_text_registry() -> TextRegistry:
                 text=text,
                 status=ConfigStatus.FINAL,
                 visibility=TextVisibility.PLAYER_VISIBLE,
-                source=_SOURCE,
+                source=(
+                    _USER_OVERRIDE_SOURCE
+                    if text_id in _USER_OVERRIDE_TEXT_IDS
+                    else _SOURCE
+                ),
             )
         )
     return registry
