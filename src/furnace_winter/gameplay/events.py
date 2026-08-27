@@ -57,14 +57,6 @@ _FROST_STAGE_BY_DAY = {
     48: "day48",
     49: "day49",
 }
-_TODO_BODY_EVENTS = {
-    "long_shift_collapse",
-    "overtime_empty_post",
-    "seventh_frost_start",
-    "arrival_day6",
-    "arrival_day19",
-    "arrival_day37",
-}
 _FOLLOWUP_COMMANDS = {
     "adjust_ration_prompt": "game.set_ration",
     "medical_ration_prompt": "game.medical_ration",
@@ -213,11 +205,7 @@ class EventSystem:
                     "body_text_id": body_id,
                     "body_text": body_text,
                     "body_status": (
-                        "TODO_TEXT"
-                        if event.event_id in _TODO_BODY_EVENTS
-                        else "AVAILABLE"
-                        if body_text is not None
-                        else "TEXT_ID_ONLY"
+                        "AVAILABLE" if body_text is not None else "TEXT_ID_ONLY"
                     ),
                     "status_summary": self._event_status_snapshot(state),
                     "options": option_views,
