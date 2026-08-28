@@ -423,24 +423,23 @@ class BuildingSystem:
                 "basic_to_improved_residence",
                 "improved_to_advanced_residence",
             }:
-                text_id = "building.house.upgrade_missing_requirement_hint"
-                required_tech_name = upgrade.required_tech_id
-                if self.technology_rules is not None:
-                    tech_rule = self.technology_rules.technologies.get(
-                        upgrade.required_tech_id
-                    )
-                    if tech_rule is not None:
-                        required_tech_name = tech_rule.display_name
-                details.update(
-                    {
-                        "requirement_text_id": text_id,
-                        "requirement_text": render_action_text(
-                            self.text_registry,
-                            text_id,
-                            required_tech_name=required_tech_name,
-                        ),
-                    }
+                tech_rule = (
+                    self.technology_rules.technologies.get(upgrade.required_tech_id)
+                    if self.technology_rules is not None
+                    else None
                 )
+                if tech_rule is not None:
+                    text_id = "building.house.upgrade_missing_requirement_hint"
+                    details.update(
+                        {
+                            "requirement_text_id": text_id,
+                            "requirement_text": render_action_text(
+                                self.text_registry,
+                                text_id,
+                                required_tech_name=tech_rule.display_name,
+                            ),
+                        }
+                    )
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, details)
         if state.resources.wood < upgrade.wood_cost or state.resources.steel < upgrade.steel_cost:
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "insufficient_resources", "required_wood": upgrade.wood_cost, "required_steel": upgrade.steel_cost})

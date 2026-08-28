@@ -2289,6 +2289,56 @@ class BuildingPatchTests(unittest.TestCase):
             "这座住宅还不能升级。需要先完成「改良住宅标准」研究。",
         )
 
+        housing_state.technologies.researched_tech_ids.extend(
+            [
+                "tech_drawing_board",
+                "tech_drafting_instrument",
+                "tech_mechanical_calculator",
+                "tech_housing_insulation_1",
+                "tech_improved_housing_standard",
+            ]
+        )
+        first_upgrade = self.execute(
+            housing_state,
+            UPGRADE_COMMAND,
+            {
+                "building_id": "residence-start-001",
+                "upgrade_id": "basic_to_improved_residence",
+            },
+            system=system,
+        )
+        self.assertTrue(first_upgrade.accepted)
+        advanced_upgrade = self.execute(
+            housing_state,
+            UPGRADE_COMMAND,
+            {
+                "building_id": "residence-start-001",
+                "upgrade_id": "improved_to_advanced_residence",
+            },
+            system=system,
+        )
+        self.assertEqual(advanced_upgrade.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(
+            advanced_upgrade.data["requirement_text"],
+            "这座住宅还不能升级。需要先完成「高级住宅标准」研究。",
+        )
+
+    def test_patch034_house_hint_never_uses_internal_id_without_tech_rules(self) -> None:
+        state = self.make_state()
+        result = self.execute(
+            state,
+            UPGRADE_COMMAND,
+            {
+                "building_id": "residence-start-001",
+                "upgrade_id": "basic_to_improved_residence",
+            },
+        )
+
+        self.assertEqual(result.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(result.data["reason"], "prerequisite_missing")
+        self.assertNotIn("requirement_text_id", result.data)
+        self.assertNotIn("requirement_text", result.data)
+
 
 if __name__ == "__main__":
     unittest.main()
