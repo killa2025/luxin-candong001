@@ -525,6 +525,8 @@ class EventPatchTests(unittest.TestCase):
                 "source_instance_id": "trust_crack#0001",
                 "settled_day": 2,
                 "outcome": "success",
+                "title_text_id": "promise.success.title",
+                "title_text": "承诺兑现",
                 "severity": "serious",
                 "trust_change": 3,
                 "panic_change": -2,
@@ -553,6 +555,8 @@ class EventPatchTests(unittest.TestCase):
                 "source_instance_id": "trust_crack#0001",
                 "settled_day": 6,
                 "outcome": "failure",
+                "title_text_id": "promise.failure.title",
+                "title_text": "承诺落空",
                 "severity": "serious",
                 "trust_change": -8,
                 "panic_change": 8,
@@ -1105,6 +1109,22 @@ class EventPatchTests(unittest.TestCase):
             promise_option["reason"],
             "same_promise_type_already_active",
         )
+        self.assertEqual(
+            promise_option["feedback_text_id"],
+            "event.option.unavailable.feedback",
+        )
+        self.assertEqual(
+            promise_option["feedback_text"],
+            "这个选项当前不可用。请查看返回的具体原因与所需条件。",
+        )
+        self.assertEqual(
+            promise_option["reason_text_id"],
+            "promise.same_type.active",
+        )
+        self.assertEqual(
+            promise_option["reason_text"],
+            "同类型承诺仍在履行中。在它完成或失败以前，不能再次作出相同承诺。",
+        )
         self.assertNotIn(
             "promise_food", [item["option_id"] for item in view["options"]]
         )
@@ -1113,6 +1133,14 @@ class EventPatchTests(unittest.TestCase):
         self.assertEqual(
             rejected.feedback[0].data["unavailable_reason"],
             "same_promise_type_already_active",
+        )
+        self.assertEqual(
+            rejected.data["feedback_text"],
+            "这个选项当前不可用。请查看返回的具体原因与所需条件。",
+        )
+        self.assertEqual(
+            rejected.data["reason_text"],
+            "同类型承诺仍在履行中。在它完成或失败以前，不能再次作出相同承诺。",
         )
 
     def test_overtime_risk_points_alone_do_not_fake_actual_harm(self) -> None:

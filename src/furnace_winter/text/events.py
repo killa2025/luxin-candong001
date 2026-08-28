@@ -28,8 +28,25 @@ _PATCH032_TEXT_IDS = {
     "old_city.event.public_gathering.body",
     "old_city.event.exodus_countdown.body",
 }
+_PATCH033_SOURCE = (
+    "docs/handoff/PATCH-033：事件与承诺反馈文案收口实现记录.md"
+)
+_PATCH033_TEXT_IDS = {
+    "event.option.unavailable.feedback",
+    "promise.same_type.active",
+    "promise.success.title",
+    "promise.failure.title",
+}
 
 _RUNTIME_TEXT = {
+    "event.option.unavailable.feedback": (
+        "这个选项当前不可用。请查看返回的具体原因与所需条件。"
+    ),
+    "promise.same_type.active": (
+        "同类型承诺仍在履行中。在它完成或失败以前，不能再次作出相同承诺。"
+    ),
+    "promise.success.title": "承诺兑现",
+    "promise.failure.title": "承诺落空",
     "event.empty_pot.title": "空锅请愿",
     "event.empty_pot.body": (
         "食堂外有人举起空碗。\n\n"
@@ -328,6 +345,8 @@ def build_event_text_registry() -> TextRegistry:
                     if text_id in _PATCH031_TEXT_IDS
                     else _PATCH032_SOURCE
                     if text_id in _PATCH032_TEXT_IDS
+                    else _PATCH033_SOURCE
+                    if text_id in _PATCH033_TEXT_IDS
                     else _SOURCE
                 ),
             )

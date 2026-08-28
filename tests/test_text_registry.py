@@ -226,6 +226,29 @@ class TextRegistryTests(unittest.TestCase):
                     "docs/text-assets/第 5 轮：Event  Promise  OldCity  FixedArrival  FrostWarning  Achievement.md",
                 )
 
+    def test_patch033_event_and_promise_feedback_is_exact_and_final(self) -> None:
+        registry = build_event_text_registry()
+        expected = {
+            "event.option.unavailable.feedback": (
+                "这个选项当前不可用。请查看返回的具体原因与所需条件。"
+            ),
+            "promise.same_type.active": (
+                "同类型承诺仍在履行中。在它完成或失败以前，不能再次作出相同承诺。"
+            ),
+            "promise.success.title": "承诺兑现",
+            "promise.failure.title": "承诺落空",
+        }
+
+        for text_id, text in expected.items():
+            with self.subTest(text_id=text_id):
+                entry = registry.require(text_id)
+                self.assertEqual(entry.text, text)
+                self.assertEqual(entry.status, ConfigStatus.FINAL)
+                self.assertEqual(
+                    entry.source,
+                    "docs/handoff/PATCH-033：事件与承诺反馈文案收口实现记录.md",
+                )
+
     def test_confirmed_text_can_be_looked_up(self) -> None:
         registry = TextRegistry()
         entry = confirmed_entry()
