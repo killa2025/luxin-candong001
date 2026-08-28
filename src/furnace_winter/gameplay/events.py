@@ -158,14 +158,16 @@ class EventSystem:
                     option_text_id = self._option_text_id(
                         event.event_id, option_id, canonical
                     )
+                    unavailable_reason = self._option_unavailable_reason(
+                        state, event.event_id, option_id
+                    )
                     unavailable_views.append(
                         {
                             "option_id": option_id,
                             "text_id": option_text_id,
                             "text": self._registered_text(option_text_id),
-                            "reason": self._option_unavailable_reason(
-                                state, event.event_id, option_id
-                            ),
+                            "reason": unavailable_reason,
+                            **self._unavailable_feedback(unavailable_reason),
                         }
                     )
                     continue
@@ -336,23 +338,27 @@ class EventSystem:
         if event is None:
             return self._illegal("event_not_active", event_id=event_id)
         if option_id not in event.option_ids:
+            unavailable_reason = self._option_unavailable_reason(
+                state, event_id, option_id
+            )
             return self._illegal(
                 "event_option_unavailable",
                 event_id=event_id,
                 option_id=option_id,
                 available_option_ids=list(event.option_ids),
-                unavailable_reason=self._option_unavailable_reason(
-                    state, event_id, option_id
-                ),
+                unavailable_reason=unavailable_reason,
+                **self._unavailable_feedback(unavailable_reason),
             )
         if option_id not in self._available_options(state, event_id):
+            unavailable_reason = self._option_unavailable_reason(
+                state, event_id, option_id
+            )
             return self._illegal(
                 "event_option_prerequisite_changed",
                 event_id=event_id,
                 option_id=option_id,
-                unavailable_reason=self._option_unavailable_reason(
-                    state, event_id, option_id
-                ),
+                unavailable_reason=unavailable_reason,
+                **self._unavailable_feedback(unavailable_reason),
             )
         return CommandValidation.valid()
 
@@ -495,6 +501,7 @@ class EventSystem:
         )
         for settlement in settlements:
             source = source_by_promise_id.get(settlement.promise_id)
+            title_text_id = f"promise.{settlement.outcome}.title"
             context.emit(
                 "events.promise.settled",
                 {
@@ -508,6 +515,8 @@ class EventSystem:
                     ),
                     "settled_day": settlement.settled_day,
                     "outcome": settlement.outcome,
+                    "title_text_id": title_text_id,
+                    "title_text": self._registered_text(title_text_id),
                     "severity": settlement.severity,
                     "trust_change": settlement.trust_change,
                     "panic_change": settlement.panic_change,
@@ -1004,6 +1013,20 @@ class EventSystem:
         if food_cost is not None and state.resources.cooked_food < food_cost:
             return "insufficient_cooked_food"
         return "option_not_offered_when_event_activated"
+
+    def _unavailable_feedback(self, reason: str) -> dict[str, str | None]:
+        feedback_text_id = "event.option.unavailable.feedback"
+        reason_text_id = (
+            "promise.same_type.active"
+            if reason == "same_promise_type_already_active"
+            else None
+        )
+        return {
+            "feedback_text_id": feedback_text_id,
+            "feedback_text": self._registered_text(feedback_text_id),
+            "reason_text_id": reason_text_id,
+            "reason_text": self._registered_text(reason_text_id),
+        }
 
     def _can_create_promise(self, state: GameState, promise_type: str) -> bool:
         return (
