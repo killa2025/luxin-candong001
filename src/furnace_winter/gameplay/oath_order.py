@@ -41,7 +41,11 @@ from furnace_winter.models import (
     SaveDataError,
     validate_game_state,
 )
-from furnace_winter.text import TextRegistry, build_event_text_registry
+from furnace_winter.text import (
+    TextRegistry,
+    build_oath_order_text_registry,
+    render_route_text,
+)
 
 
 RESOLVE_OLD_CITY_COMMAND = "game.resolve_old_city_event"
@@ -169,7 +173,7 @@ class OathOrderSystem:
         self.building_rules = building_rules
         self.survival_rules = survival_rules
         self.technology_rules = technology_rules
-        self.text_registry = text_registry or build_event_text_registry()
+        self.text_registry = text_registry or build_oath_order_text_registry()
         self._catalog = build_oath_order_catalog(rules)
         self._validator = CommandValidator(self._catalog)
 
@@ -288,9 +292,22 @@ class OathOrderSystem:
         if law_id in signed:
             return self._illegal("law_already_signed")
         if state.calendar.current_day < state.oath_order.next_law_day:
+            feedback_text_id = "cooldown.route.not_ready.feedback"
+            next_day_text_id = "cooldown.route.next_available_day"
             return self._illegal(
                 "law_cooldown_active",
                 next_available_day=state.oath_order.next_law_day,
+                feedback_text_id=feedback_text_id,
+                feedback_text=render_route_text(
+                    self.text_registry,
+                    feedback_text_id,
+                ),
+                next_available_text_id=next_day_text_id,
+                next_available_text=render_route_text(
+                    self.text_registry,
+                    next_day_text_id,
+                    next_available_day=state.oath_order.next_law_day,
+                ),
             )
         if state.oath_order.selected_route not in {None, rule.route}:
             return self._illegal("law_route_locked")
@@ -298,12 +315,17 @@ class OathOrderSystem:
         if state.oath_order.selected_route is None and law_id != entry_law:
             return self._illegal("route_entry_law_required", required_law_id=entry_law)
         if law_id == entry_law and request.arguments.get("confirm") is not True:
-            return self._illegal("confirmation_required")
+            text_id = "confirm.route.warning_mutual_exclusive"
+            return self._illegal(
+                "confirmation_required",
+                confirmation_text_id=text_id,
+                confirmation_text=render_route_text(self.text_registry, text_id),
+            )
         missing = sorted(set(rule.requires) - signed)
         if missing:
             return self._illegal("law_prerequisite_missing", missing_law_ids=missing)
         if law_id in _TERMINAL_LAWS and not self._facility(state, rule.route).is_running:
-            return self._illegal("route_facility_not_running")
+            return self._facility_not_running(rule.route)
         return CommandValidation.valid()
 
     def _staff_legality(
@@ -342,7 +364,7 @@ class OathOrderSystem:
                 "law_prerequisite_missing", missing_law_ids=[rule.required_law]
             )
         if not self._facility(state, rule.route).is_running:
-            return self._illegal("route_facility_not_running")
+            return self._facility_not_running(rule.route)
         next_day = state.oath_order.action_next_available_day.get(action_id, 1)
         if state.calendar.current_day < next_day:
             return self._illegal("action_cooldown_active", next_available_day=next_day)
@@ -350,20 +372,41 @@ class OathOrderSystem:
             state.population.population_dead <= 0
             and not state.events.deaths_today_by_cause
         ):
-            return self._illegal("no_death_to_mourn")
+            text_id = "requirement.death_recent"
+            return self._illegal(
+                "no_death_to_mourn",
+                requirement_text_id=text_id,
+                requirement_text=render_route_text(self.text_registry, text_id),
+            )
         if rule.old_city < 0 and (
             not state.old_city.is_unlocked
             or state.old_city.resolved
             or state.old_city.member_count <= 0
         ):
-            return self._illegal("old_city_not_active")
+            text_id = "requirement.old_city.active"
+            return self._illegal(
+                "old_city_not_active",
+                requirement_text_id=text_id,
+                requirement_text=render_route_text(self.text_registry, text_id),
+            )
         cost = self._action_cooked_food_cost(state, action_id)
         if state.resources.cooked_food < cost:
+            text_id = "requirement.cooked_food.enough"
             return self._illegal(
                 "insufficient_cooked_food", required=cost,
                 available=state.resources.cooked_food,
+                requirement_text_id=text_id,
+                requirement_text=render_route_text(self.text_registry, text_id),
             )
         return CommandValidation.valid()
+
+    def _facility_not_running(self, route: str) -> CommandValidation:
+        text_id = self._facility_requirement_text_id(route)
+        return self._illegal(
+            "route_facility_not_running",
+            requirement_text_id=text_id,
+            requirement_text=render_route_text(self.text_registry, text_id),
+        )
 
     def _resolve_old_city(
         self, state: GameState, request: CommandRequest
@@ -852,6 +895,7 @@ class OathOrderSystem:
 
     def route_view(self, state: GameState) -> dict[str, Any]:
         self.validate_state(state)
+        route_confirmation_id = "confirm.route.warning_mutual_exclusive"
         return {
             "balance_status": self.rules.config_status.value,
             "page_unlocked": state.oath_order.page_unlocked or self._is_page_available(state),
@@ -859,6 +903,27 @@ class OathOrderSystem:
             "signed_law_ids": list(state.oath_order.signed_law_ids),
             "next_law_day": state.oath_order.next_law_day,
             "entry_law_ids": dict(_ROUTE_ENTRY_LAWS),
+            "route_confirmation": {
+                "text_id": route_confirmation_id,
+                "text": render_route_text(
+                    self.text_registry,
+                    route_confirmation_id,
+                ),
+                "argument": {"confirm": True},
+            },
+            "law_cooldown_feedback": {
+                "text_id": "cooldown.route.not_ready.feedback",
+                "text": render_route_text(
+                    self.text_registry,
+                    "cooldown.route.not_ready.feedback",
+                ),
+                "next_available_text_id": "cooldown.route.next_available_day",
+                "next_available_text": render_route_text(
+                    self.text_registry,
+                    "cooldown.route.next_available_day",
+                    next_available_day=state.oath_order.next_law_day,
+                ),
+            },
             "law_rules": [
                 {
                     "law_id": law_id,
@@ -869,8 +934,26 @@ class OathOrderSystem:
                     "confirmation_required": (
                         law_id == _ROUTE_ENTRY_LAWS[rule.route]
                     ),
+                    "confirmation_text_id": (
+                        route_confirmation_id
+                        if law_id == _ROUTE_ENTRY_LAWS[rule.route]
+                        else None
+                    ),
                     "terminal_law": law_id in _TERMINAL_LAWS,
                     "facility_required": law_id in _TERMINAL_LAWS,
+                    "facility_requirement_text_id": (
+                        self._facility_requirement_text_id(rule.route)
+                        if law_id in _TERMINAL_LAWS
+                        else None
+                    ),
+                    "facility_requirement_text": (
+                        render_route_text(
+                            self.text_registry,
+                            self._facility_requirement_text_id(rule.route),
+                        )
+                        if law_id in _TERMINAL_LAWS
+                        else None
+                    ),
                     "is_signed": law_id in state.oath_order.signed_law_ids,
                 }
                 for law_id, rule in sorted(self.rules.laws.items())
@@ -901,10 +984,30 @@ class OathOrderSystem:
                     ),
                     "facility_required": True,
                     "required_facility_id": _ROUTE_FACILITIES[rule.route],
+                    "facility_requirement_text_id": (
+                        self._facility_requirement_text_id(rule.route)
+                    ),
+                    "facility_requirement_text": render_route_text(
+                        self.text_registry,
+                        self._facility_requirement_text_id(rule.route),
+                    ),
                     "required_facility_running": self._facility(
                         state, rule.route
                     ).is_running,
                     "requires_recorded_death": action_id == "mourning_bell",
+                    "recorded_death_requirement_text_id": (
+                        "requirement.death_recent"
+                        if action_id == "mourning_bell"
+                        else None
+                    ),
+                    "recorded_death_requirement_text": (
+                        render_route_text(
+                            self.text_registry,
+                            "requirement.death_recent",
+                        )
+                        if action_id == "mourning_bell"
+                        else None
+                    ),
                     "recorded_death_requirement_satisfied": (
                         state.population.population_dead > 0
                         or bool(state.events.deaths_today_by_cause)
@@ -912,6 +1015,30 @@ class OathOrderSystem:
                         else None
                     ),
                     "old_city_change": rule.old_city,
+                    "old_city_requirement_text_id": (
+                        "requirement.old_city.active" if rule.old_city < 0 else None
+                    ),
+                    "old_city_requirement_text": (
+                        render_route_text(
+                            self.text_registry,
+                            "requirement.old_city.active",
+                        )
+                        if rule.old_city < 0
+                        else None
+                    ),
+                    "cooked_food_requirement_text_id": (
+                        "requirement.cooked_food.enough"
+                        if self._action_cooked_food_cost(state, action_id) > 0
+                        else None
+                    ),
+                    "cooked_food_requirement_text": (
+                        render_route_text(
+                            self.text_registry,
+                            "requirement.cooked_food.enough",
+                        )
+                        if self._action_cooked_food_cost(state, action_id) > 0
+                        else None
+                    ),
                 }
                 for action_id, rule in sorted(self.rules.actions.items())
             ],
@@ -1021,6 +1148,14 @@ class OathOrderSystem:
                 old.settlement_resource_losses
             ),
         }
+
+    @staticmethod
+    def _facility_requirement_text_id(route: str) -> str:
+        return (
+            "requirement.oath_hall.enabled_running"
+            if route == "oath"
+            else "requirement.patrol_office.enabled_running"
+        )
 
     def _registered_text(self, text_id: str | None) -> str | None:
         if text_id is None:

@@ -15,6 +15,7 @@ from furnace_winter.text import (
     TextVisibility,
     build_action_text_registry,
     build_event_text_registry,
+    build_oath_order_text_registry,
 )
 
 
@@ -29,6 +30,38 @@ def confirmed_entry(text_id: str = "test.confirmed") -> TextEntry:
 
 
 class TextRegistryTests(unittest.TestCase):
+    def test_patch035_route_feedback_is_exact_and_user_confirmed(self) -> None:
+        registry = build_oath_order_text_registry()
+        expected = {
+            "confirm.route.warning_mutual_exclusive": (
+                "选择誓言路线后，铁腕路线及巡查所不会启用；"
+                "选择铁腕路线后，誓言路线及守炉堂不会启用。"
+            ),
+            "requirement.oath_hall.enabled_running": (
+                "守炉堂必须已启用，并处于运行状态。"
+            ),
+            "requirement.patrol_office.enabled_running": (
+                "巡查所必须已启用，并处于运行状态。"
+            ),
+            "cooldown.route.not_ready.feedback": "誓言与铁腕炉约仍在冷却中。",
+            "cooldown.route.next_available_day": (
+                "下一条炉律可在第 {next_available_day} 天签署。"
+            ),
+            "requirement.old_city.active": "旧城派危机已激活时可用。",
+            "requirement.cooked_food.enough": "需要拥有足够熟食。",
+            "requirement.death_recent": "仅在近期存在死亡事件时可用。",
+        }
+
+        for text_id, text in expected.items():
+            with self.subTest(text_id=text_id):
+                entry = registry.require(text_id)
+                self.assertEqual(entry.text, text)
+                self.assertEqual(entry.status, ConfigStatus.USER_OVERRIDE)
+                self.assertEqual(
+                    entry.source,
+                    "docs/handoff/PATCH-035：社会路线条件反馈文案接线实现记录.md",
+                )
+
     def test_patch034_action_text_is_exact_and_final(self) -> None:
         registry = build_action_text_registry()
         expected = {
