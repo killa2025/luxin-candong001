@@ -985,13 +985,18 @@ class GameSession:
                 f"unknown rules section {section!r}; "
                 f"expected one of {sorted(self._rule_documents)}"
             )
-        return {
+        result = {
             "section": section,
             "config_status": self._rule_documents[section][
                 "config_status"
             ],
             "document": deepcopy(self._rule_documents[section]),
         }
+        if section == "technologies":
+            result["interface_text"] = {
+                "research_start": self.technologies.research_start_notice()
+            }
+        return result
 
     def execute_payload(self, payload: Mapping[str, Any]) -> SessionExecution:
         if not isinstance(payload, Mapping):

@@ -53,6 +53,11 @@ from furnace_winter.interface import (
     FeedbackLevel,
 )
 from furnace_winter.models import BuildingState, GameState, SaveDataError, validate_game_state
+from furnace_winter.text import (
+    TextRegistry,
+    build_action_text_registry,
+    render_action_text,
+)
 
 
 BUILD_COMMAND = "game.build"
@@ -223,10 +228,12 @@ class BuildingSystem:
         rules: BuildingRules,
         survival_rules: SurvivalRules,
         technology_rules: TechnologyRules | None = None,
+        text_registry: TextRegistry | None = None,
     ) -> None:
         self.rules = rules
         self.survival_rules = survival_rules
         self.technology_rules = technology_rules
+        self.text_registry = text_registry or build_action_text_registry()
         self._catalog = build_building_catalog(rules)
         self._validator = CommandValidator(self._catalog)
 
@@ -341,7 +348,27 @@ class BuildingSystem:
         missing_laws = sorted(set(rule.required_law_ids) - signed_laws)
         missing_techs = sorted(set(rule.required_tech_ids) - set(state.technologies.researched_tech_ids))
         if missing_laws or missing_techs:
-            return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "prerequisite_missing", "missing_law_ids": missing_laws, "missing_tech_ids": missing_techs})
+            details: dict[str, Any] = {
+                "reason": "prerequisite_missing",
+                "missing_law_ids": missing_laws,
+                "missing_tech_ids": missing_techs,
+            }
+            if (
+                building_type == "hospital"
+                and missing_laws == ["basic_medical_law"]
+                and missing_techs == ["tech_hospital_standardization"]
+            ):
+                text_id = "building.hospital.missing_requirement_hint"
+                details.update(
+                    {
+                        "requirement_text_id": text_id,
+                        "requirement_text": render_action_text(
+                            self.text_registry,
+                            text_id,
+                        ),
+                    }
+                )
+            return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, details)
         if state.resources.wood < rule.wood_cost or state.resources.steel < rule.steel_cost:
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "insufficient_resources", "required_wood": rule.wood_cost, "required_steel": rule.steel_cost})
         assert isinstance(zone, str)
@@ -377,7 +404,44 @@ class BuildingSystem:
         if building.building_type != upgrade.from_type:
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "upgrade_not_supported_for_building"})
         if upgrade.required_tech_id not in state.technologies.researched_tech_ids:
-            return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "prerequisite_missing", "missing_tech_ids": [upgrade.required_tech_id]})
+            details: dict[str, Any] = {
+                "reason": "prerequisite_missing",
+                "missing_tech_ids": [upgrade.required_tech_id],
+            }
+            if upgrade_id == "greenhouse_to_improved":
+                text_id = "building.greenhouse.upgrade_missing_requirement_hint"
+                details.update(
+                    {
+                        "requirement_text_id": text_id,
+                        "requirement_text": render_action_text(
+                            self.text_registry,
+                            text_id,
+                        ),
+                    }
+                )
+            elif upgrade_id in {
+                "basic_to_improved_residence",
+                "improved_to_advanced_residence",
+            }:
+                text_id = "building.house.upgrade_missing_requirement_hint"
+                required_tech_name = upgrade.required_tech_id
+                if self.technology_rules is not None:
+                    tech_rule = self.technology_rules.technologies.get(
+                        upgrade.required_tech_id
+                    )
+                    if tech_rule is not None:
+                        required_tech_name = tech_rule.display_name
+                details.update(
+                    {
+                        "requirement_text_id": text_id,
+                        "requirement_text": render_action_text(
+                            self.text_registry,
+                            text_id,
+                            required_tech_name=required_tech_name,
+                        ),
+                    }
+                )
+            return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, details)
         if state.resources.wood < upgrade.wood_cost or state.resources.steel < upgrade.steel_cost:
             return CommandValidation(False, ErrorCode.ILLEGAL_COMMAND, {"reason": "insufficient_resources", "required_wood": upgrade.wood_cost, "required_steel": upgrade.steel_cost})
         return CommandValidation.valid()

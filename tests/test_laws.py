@@ -1659,6 +1659,76 @@ class LawPatchTests(unittest.TestCase):
         )
         self.assertEqual(state.population.engineering_apprentices, 0)
 
+    def test_patch034_overtime_and_emergency_confirmation_text_is_exact(self) -> None:
+        overtime_state = self.make_state()
+        canteen = self.execute_building(
+            overtime_state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        self.execute_building(
+            overtime_state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": canteen.data["building_id"],
+                "population_type": "workers",
+                "count": 5,
+            },
+        )
+        overtime_state.laws.signed_law_ids.append("overtime_law")
+        before_overtime = deepcopy(overtime_state)
+
+        overtime = self.execute_law(
+            overtime_state,
+            OVERTIME_COMMAND,
+            {"building_id": canteen.data["building_id"]},
+        )
+
+        self.assertEqual(overtime.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(overtime.data["reason"], "confirmation_required")
+        self.assertEqual(
+            overtime.data["confirmation_text_id"],
+            "confirm.action.overtime_day.body",
+        )
+        self.assertEqual(
+            overtime.data["confirmation_text"],
+            "确认让「食堂」执行加班日？本日不可取消；普通生产提高至两倍，"
+            "医疗与研究进度提高至 1.5 倍，但信任 -2、恐慌 +3，并会新增患病者与事故风险。",
+        )
+        self.assertEqual(overtime_state, before_overtime)
+
+        emergency_state = self.make_state()
+        emergency_state.laws.signed_law_ids.extend(
+            ["coarse_soup_law", "emergency_ration_law"]
+        )
+        before_emergency = deepcopy(emergency_state)
+        emergency = self.execute_law(
+            emergency_state,
+            SET_RATION_COMMAND,
+            {"mode": "emergency"},
+        )
+
+        self.assertEqual(emergency.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(emergency.data["reason"], "confirmation_required")
+        self.assertEqual(
+            emergency.data["confirmation_text"],
+            "确认启用应急口粮？本日人均食物消耗降至一半，信任 -3、恐慌 +4；"
+            "只持续当天，随后恢复此前配给，四天内不能再次使用。",
+        )
+        self.assertEqual(emergency_state, before_emergency)
+
+        overtime_spec = next(
+            spec
+            for spec in self.law_system().command_specs()
+            if spec.name == OVERTIME_COMMAND
+        )
+        self.assertNotIn("confirm", overtime_spec.required_arguments)
+        self.assertIn("confirm", overtime_spec.optional_arguments)
+        self.assertEqual(
+            overtime_spec.pre_execution_text_id,
+            "confirm.action.overtime_day.body",
+        )
+
     def test_law_hooks_complete_all_55_days_deterministically(self) -> None:
         def run():
             state = self.make_state()

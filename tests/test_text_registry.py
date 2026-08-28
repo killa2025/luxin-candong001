@@ -13,6 +13,7 @@ from furnace_winter.text import (
     TextRegistry,
     TextRegistryError,
     TextVisibility,
+    build_action_text_registry,
     build_event_text_registry,
 )
 
@@ -28,6 +29,44 @@ def confirmed_entry(text_id: str = "test.confirmed") -> TextEntry:
 
 
 class TextRegistryTests(unittest.TestCase):
+    def test_patch034_action_text_is_exact_and_final(self) -> None:
+        registry = build_action_text_registry()
+        expected = {
+            "confirm.action.overtime_day.body": (
+                "确认让「{building_name}」执行加班日？本日不可取消；普通生产提高至两倍，"
+                "医疗与研究进度提高至 1.5 倍，但信任 -2、恐慌 +3，并会新增患病者与事故风险。"
+            ),
+            "confirm.action.emergency_ration.body": (
+                "确认启用应急口粮？本日人均食物消耗降至一半，信任 -3、恐慌 +4；"
+                "只持续当天，随后恢复此前配给，四天内不能再次使用。"
+            ),
+            "building.hospital.missing_requirement_hint": (
+                "医院尚未解锁。需要先签署「基础医疗法」，并完成「医院标准化」研究。"
+            ),
+            "building.greenhouse.upgrade_missing_requirement_hint": (
+                "温室还不能升级。需要先完成「温室改良」研究。"
+            ),
+            "building.house.upgrade_missing_requirement_hint": (
+                "这座住宅还不能升级。需要先完成「{required_tech_name}」研究。"
+            ),
+            "research.confirm.body": (
+                "开始研究「{technology_name}」时，木材 {wood_cost}、钢材 {steel_cost} 将立即扣除；"
+                "同一时间不能进行其他研究。"
+            ),
+            "research.resource.not_enough": (
+                "当前资源不足，无法开始这项研究。还缺少：{missing_resources}。"
+            ),
+        }
+
+        self.assertEqual(
+            {entry.text_id: entry.text for entry in registry.entries()},
+            expected,
+        )
+        for entry in registry.entries():
+            self.assertEqual(entry.status, ConfigStatus.FINAL)
+            self.assertEqual(entry.visibility, TextVisibility.PLAYER_VISIBLE)
+            self.assertIn("PATCH-034", entry.source)
+
     def test_event_text_is_registered_from_sealed_assets(self) -> None:
         registry = build_event_text_registry()
 

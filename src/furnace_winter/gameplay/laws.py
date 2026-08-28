@@ -21,6 +21,11 @@ from furnace_winter.models import (
     SaveDataError,
     validate_game_state,
 )
+from furnace_winter.text import (
+    TextRegistry,
+    build_action_text_registry,
+    render_action_text,
+)
 
 
 SIGN_LAW_COMMAND = "game.sign_law"
@@ -44,7 +49,12 @@ _LONG_SHIFT_EXCLUDED_TYPES = frozenset({
 })
 
 
-def build_law_catalog(rules: LawRules | None = None) -> CommandCatalog:
+def build_law_catalog(
+    rules: LawRules | None = None,
+    text_registry: TextRegistry | None = None,
+) -> CommandCatalog:
+    registry = text_registry or build_action_text_registry()
+    overtime_confirmation = registry.require("confirm.action.overtime_day.body")
     catalog = CommandCatalog()
     law_ids = tuple(sorted(rules.laws)) if rules else ()
     ration_ids = tuple(sorted(rules.rations)) if rules else (
@@ -72,8 +82,14 @@ def build_law_catalog(rules: LawRules | None = None) -> CommandCatalog:
     ))
     catalog.register(CommandSpec(
         name=OVERTIME_COMMAND,
-        required_arguments={"building_id": ArgumentKind.STRING, "confirm": ArgumentKind.BOOLEAN},
+        required_arguments={"building_id": ArgumentKind.STRING},
+        optional_arguments={"confirm": ArgumentKind.BOOLEAN},
         related_rule_sections=("laws", "buildings"),
+        pre_execution_text_id=overtime_confirmation.text_id,
+        pre_execution_text_template=overtime_confirmation.text,
+        pre_execution_text_parameters={
+            "building_name": "buildings.<arguments.building_id>.display_name",
+        },
     ))
     catalog.register(CommandSpec(
         name=MEDICAL_RATION_COMMAND,
@@ -103,12 +119,14 @@ class LawSystem:
         building_rules: BuildingRules,
         survival_rules: SurvivalRules,
         technology_rules: TechnologyRules | None = None,
+        text_registry: TextRegistry | None = None,
     ) -> None:
         self.rules = rules
         self.building_rules = building_rules
         self.survival_rules = survival_rules
         self.technology_rules = technology_rules
-        self._catalog = build_law_catalog(rules)
+        self.text_registry = text_registry or build_action_text_registry()
+        self._catalog = build_law_catalog(rules, self.text_registry)
         self._validator = CommandValidator(self._catalog)
 
     def command_specs(self) -> tuple[CommandSpec, ...]:
@@ -199,7 +217,15 @@ class LawSystem:
             return self._illegal("law_prerequisite_missing", missing_law_ids=[ration.required_law_id])
         if mode == "emergency":
             if request.arguments.get("confirm") is not True:
-                return self._illegal("confirmation_required")
+                text_id = "confirm.action.emergency_ration.body"
+                return self._illegal(
+                    "confirmation_required",
+                    confirmation_text_id=text_id,
+                    confirmation_text=render_action_text(
+                        self.text_registry,
+                        text_id,
+                    ),
+                )
             next_day = state.laws.cooldowns.get(_EMERGENCY_COOLDOWN, 1)
             if state.calendar.current_day < next_day:
                 return self._illegal("action_cooldown_active", next_available_day=next_day)
@@ -226,7 +252,23 @@ class LawSystem:
         if "overtime_law" not in state.laws.signed_law_ids:
             return self._illegal("law_prerequisite_missing", missing_law_ids=["overtime_law"])
         if request.arguments.get("confirm") is not True:
-            return self._illegal("confirmation_required")
+            building_id = str(request.arguments["building_id"])
+            building = state.buildings.get(building_id)
+            building_name = building_id
+            if building is not None:
+                rule = self.building_rules.buildings.get(building.building_type)
+                if rule is not None:
+                    building_name = rule.display_name
+            text_id = "confirm.action.overtime_day.body"
+            return self._illegal(
+                "confirmation_required",
+                confirmation_text_id=text_id,
+                confirmation_text=render_action_text(
+                    self.text_registry,
+                    text_id,
+                    building_name=building_name,
+                ),
+            )
         if state.social_policy.overtime_building_id is not None:
             return self._illegal("overtime_daily_limit_reached")
         building = state.buildings.get(str(request.arguments["building_id"]))

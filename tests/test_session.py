@@ -1227,6 +1227,30 @@ class GameSessionTests(unittest.TestCase):
                     self.assertEqual(path.read_bytes(), malformed_bytes)
 
 
+    def test_patch034_research_notice_is_discoverable_without_new_confirmation(self) -> None:
+        session = self.new_session(seed=1134)
+        research = next(
+            spec
+            for spec in session.command_specs()
+            if spec.name == "game.research"
+        )
+
+        self.assertNotIn("confirm", research.required_arguments)
+        self.assertNotIn("confirm", research.optional_arguments)
+        self.assertEqual(research.pre_execution_text_id, "research.confirm.body")
+        self.assertEqual(
+            research.pre_execution_text_template,
+            "开始研究「{technology_name}」时，木材 {wood_cost}、钢材 {steel_cost} 将立即扣除；"
+            "同一时间不能进行其他研究。",
+        )
+        rules_notice = session.rules_view("technologies")["interface_text"][
+            "research_start"
+        ]
+        self.assertEqual(rules_notice["text_id"], "research.confirm.body")
+        self.assertFalse(rules_notice["confirmation_required"])
+        self.assertEqual(rules_notice["payment_timing"], "on_start")
+
+
 class PlayCliTests(unittest.TestCase):
     def test_json_lines_exposes_status_specs_and_supported_envelopes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

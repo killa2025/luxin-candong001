@@ -157,8 +157,16 @@ class BuildingPatchTests(unittest.TestCase):
         state.daily_survival.is_over_capacity = False
         return state
 
-    def execute(self, state, name: str, arguments: dict, command_id: str = "command"):
-        return self.make_system().execute(
+    def execute(
+        self,
+        state,
+        name: str,
+        arguments: dict,
+        command_id: str = "command",
+        *,
+        system: BuildingSystem | None = None,
+    ):
+        return (system or self.make_system()).execute(
             state,
             CommandRequest(
                 command_id,
@@ -2213,6 +2221,73 @@ class BuildingPatchTests(unittest.TestCase):
         self.assertEqual(first_logs, second_logs)
         self.assertEqual(first_state.calendar.current_day, 55)
         self.assertTrue(first_state.calendar.is_day_locked)
+
+    def test_patch034_building_requirement_hints_are_exact(self) -> None:
+        system = self.make_system(with_technology_rules=True)
+
+        hospital_state = self.make_state()
+        hospital = self.execute(
+            hospital_state,
+            BUILD_COMMAND,
+            {"building_type": "hospital", "zone": "inner_ring"},
+            system=system,
+        )
+        self.assertEqual(hospital.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(
+            hospital.data["requirement_text_id"],
+            "building.hospital.missing_requirement_hint",
+        )
+        self.assertEqual(
+            hospital.data["requirement_text"],
+            "医院尚未解锁。需要先签署「基础医疗法」，并完成「医院标准化」研究。",
+        )
+
+        greenhouse_state = self.make_state()
+        greenhouse_state.technologies.researched_tech_ids.extend(
+            [
+                "tech_drawing_board",
+                "tech_drafting_instrument",
+                "tech_mechanical_calculator",
+                "tech_greenhouse_cultivation",
+            ]
+        )
+        greenhouse = self.execute(
+            greenhouse_state,
+            BUILD_COMMAND,
+            {"building_type": "greenhouse", "zone": "middle_ring"},
+            system=system,
+        )
+        self.assertTrue(greenhouse.accepted)
+        greenhouse_upgrade = self.execute(
+            greenhouse_state,
+            UPGRADE_COMMAND,
+            {
+                "building_id": greenhouse.data["building_id"],
+                "upgrade_id": "greenhouse_to_improved",
+            },
+            system=system,
+        )
+        self.assertEqual(greenhouse_upgrade.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(
+            greenhouse_upgrade.data["requirement_text"],
+            "温室还不能升级。需要先完成「温室改良」研究。",
+        )
+
+        housing_state = self.make_state()
+        housing_upgrade = self.execute(
+            housing_state,
+            UPGRADE_COMMAND,
+            {
+                "building_id": "residence-start-001",
+                "upgrade_id": "basic_to_improved_residence",
+            },
+            system=system,
+        )
+        self.assertEqual(housing_upgrade.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(
+            housing_upgrade.data["requirement_text"],
+            "这座住宅还不能升级。需要先完成「改良住宅标准」研究。",
+        )
 
 
 if __name__ == "__main__":
