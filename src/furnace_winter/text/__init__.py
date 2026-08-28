@@ -15,6 +15,10 @@ from furnace_winter.text.ending import (
     build_ending_text_registry,
 )
 from furnace_winter.text.events import build_event_text_registry
+from furnace_winter.text.actions import (
+    build_action_text_registry,
+    render_action_text,
+)
 
 __all__ = [
     "DeprecatedEntry",
@@ -30,4 +34,6 @@ __all__ = [
     "build_ending_pending_registry",
     "build_ending_text_registry",
     "build_event_text_registry",
+    "build_action_text_registry",
+    "render_action_text",
 ]

@@ -290,6 +290,53 @@ class TechnologyPatchTests(unittest.TestCase):
         self.assertIsNone(state.technologies.active_research_id)
         self.assertEqual(cancelled.data["refund"], {"wood": 0, "steel": 0})
 
+    def test_patch034_research_notice_and_resource_failure_text_are_exact(self) -> None:
+        state = self.make_state()
+        self.add_research_institute(state)
+        state.resources.wood = 0
+        state.resources.steel = 0
+        before = deepcopy(state)
+        system = self.technology_system()
+
+        rejected = self.execute(
+            system,
+            state,
+            RESEARCH_COMMAND,
+            {"tech_id": "tech_furnace_coal_saving_1"},
+        )
+
+        self.assertEqual(rejected.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(rejected.data["reason"], "insufficient_resources")
+        self.assertEqual(
+            rejected.data["missing_resources"],
+            {"wood": 20, "steel": 5},
+        )
+        self.assertEqual(
+            rejected.data["feedback_text_id"],
+            "research.resource.not_enough",
+        )
+        self.assertEqual(
+            rejected.data["feedback_text"],
+            "当前资源不足，无法开始这项研究。还缺少：木材 20、钢材 5。",
+        )
+        self.assertEqual(state, before)
+
+        research_spec = next(
+            spec
+            for spec in system.command_specs()
+            if spec.name == RESEARCH_COMMAND
+        )
+        self.assertNotIn("confirm", research_spec.required_arguments)
+        self.assertNotIn("confirm", research_spec.optional_arguments)
+        self.assertEqual(
+            research_spec.pre_execution_text_id,
+            "research.confirm.body",
+        )
+        self.assertEqual(
+            system.research_start_notice()["confirmation_required"],
+            False,
+        )
+
     def test_one_queue_tiers_and_prerequisites_are_strict(self) -> None:
         state = self.make_state()
         self.add_research_institute(state)

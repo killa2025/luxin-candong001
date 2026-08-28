@@ -34,6 +34,11 @@ from furnace_winter.interface import (
     FeedbackLevel,
 )
 from furnace_winter.models import GameState, SaveDataError, validate_game_state
+from furnace_winter.text import (
+    TextRegistry,
+    build_action_text_registry,
+    render_action_text,
+)
 
 
 RESEARCH_COMMAND = "game.research"
@@ -41,7 +46,12 @@ CANCEL_RESEARCH_COMMAND = "game.cancel_research"
 SET_OVERLOAD_COMMAND = "game.set_overload"
 
 
-def build_technology_catalog(rules: TechnologyRules) -> CommandCatalog:
+def build_technology_catalog(
+    rules: TechnologyRules,
+    text_registry: TextRegistry | None = None,
+) -> CommandCatalog:
+    registry = text_registry or build_action_text_registry()
+    research_notice = registry.require("research.confirm.body")
     catalog = CommandCatalog()
     catalog.register(
         CommandSpec(
@@ -49,6 +59,13 @@ def build_technology_catalog(rules: TechnologyRules) -> CommandCatalog:
             required_arguments={"tech_id": ArgumentKind.STRING},
             argument_options={"tech_id": tuple(sorted(rules.technologies))},
             related_rule_sections=("technologies",),
+            pre_execution_text_id=research_notice.text_id,
+            pre_execution_text_template=research_notice.text,
+            pre_execution_text_parameters={
+                "technology_name": "technologies.<arguments.tech_id>.display_name",
+                "wood_cost": "technologies.<arguments.tech_id>.wood_cost",
+                "steel_cost": "technologies.<arguments.tech_id>.steel_cost",
+            },
         )
     )
     catalog.register(
@@ -76,13 +93,15 @@ class TechnologySystem:
         building_rules: BuildingRules,
         survival_rules: SurvivalRules,
         law_rules: LawRules | None = None,
+        text_registry: TextRegistry | None = None,
     ) -> None:
         self.rules = rules
         self.building_rules = building_rules
         self.survival_rules = survival_rules
         self.law_rules = law_rules
+        self.text_registry = text_registry or build_action_text_registry()
         validate_technology_building_links(rules, building_rules)
-        self._catalog = build_technology_catalog(rules)
+        self._catalog = build_technology_catalog(rules, self.text_registry)
         self._validator = CommandValidator(self._catalog)
 
     def command_specs(self) -> tuple[CommandSpec, ...]:
@@ -181,8 +200,19 @@ class TechnologySystem:
         if state.resources.steel < rule.steel_cost:
             missing_resources["steel"] = rule.steel_cost - state.resources.steel
         if missing_resources:
+            missing_resources_text = "、".join(
+                f"{'木材' if resource == 'wood' else '钢材'} {amount}"
+                for resource, amount in missing_resources.items()
+            )
             return self._illegal(
-                "insufficient_resources", missing_resources=missing_resources
+                "insufficient_resources",
+                missing_resources=missing_resources,
+                feedback_text_id="research.resource.not_enough",
+                feedback_text=render_action_text(
+                    self.text_registry,
+                    "research.resource.not_enough",
+                    missing_resources=missing_resources_text,
+                ),
             )
         return CommandValidation.valid()
 
@@ -450,6 +480,22 @@ class TechnologySystem:
                 }
             )
         return tuple(result)
+
+    def research_start_notice(self) -> dict[str, Any]:
+        """Return the non-confirming research payment notice for machine rules."""
+
+        entry = self.text_registry.require("research.confirm.body")
+        return {
+            "text_id": entry.text_id,
+            "text_template": entry.text,
+            "confirmation_required": False,
+            "payment_timing": "on_start",
+            "parameter_sources": {
+                "technology_name": "technologies.<tech_id>.display_name",
+                "wood_cost": "technologies.<tech_id>.wood_cost",
+                "steel_cost": "technologies.<tech_id>.steel_cost",
+            },
+        }
 
     @staticmethod
     def _staffed_research_institutes(

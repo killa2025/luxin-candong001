@@ -117,6 +117,9 @@ class CommandSpec:
     argument_semantics: Mapping[str, str] = field(default_factory=dict)
     related_rule_sections: tuple[str, ...] = ()
     related_protocol_contracts: tuple[str, ...] = ()
+    pre_execution_text_id: str | None = None
+    pre_execution_text_template: str | None = None
+    pre_execution_text_parameters: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +196,28 @@ class CommandCatalog:
             spec.related_protocol_contracts
         ):
             raise ValueError("related protocol contracts must be unique")
+        if (spec.pre_execution_text_id is None) != (
+            spec.pre_execution_text_template is None
+        ):
+            raise ValueError(
+                "pre-execution text id and template must be provided together"
+            )
+        if spec.pre_execution_text_id is not None and (
+            not COMMAND_NAME_PATTERN.fullmatch(spec.pre_execution_text_id)
+            or not spec.pre_execution_text_template
+            or spec.pre_execution_text_template != spec.pre_execution_text_template.strip()
+        ):
+            raise ValueError("pre-execution text must be normalized and non-blank")
+        if spec.pre_execution_text_id is None and spec.pre_execution_text_parameters:
+            raise ValueError("pre-execution parameters require registered text")
+        if any(
+            not COMMAND_NAME_PATTERN.fullmatch(parameter)
+            or not isinstance(source, str)
+            or not source.strip()
+            or source != source.strip()
+            for parameter, source in spec.pre_execution_text_parameters.items()
+        ):
+            raise ValueError("pre-execution text parameters must be normalized")
         if "confirm" in known_arguments and "confirm" not in spec.argument_semantics:
             spec = replace(
                 spec,
