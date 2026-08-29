@@ -280,7 +280,10 @@ class TechnologyPatchTests(unittest.TestCase):
             {"tech_id": "tech_drawing_board"},
         )
         cancelled = self.execute(
-            self.technology_system(), state, CANCEL_RESEARCH_COMMAND
+            self.technology_system(),
+            state,
+            CANCEL_RESEARCH_COMMAND,
+            {"confirm": True},
         )
 
         self.assertEqual((started.code, cancelled.code), (ErrorCode.OK, ErrorCode.OK))
@@ -289,6 +292,86 @@ class TechnologyPatchTests(unittest.TestCase):
         self.assertEqual(state.resources.steel, steel_before - rule.steel_cost)
         self.assertIsNone(state.technologies.active_research_id)
         self.assertEqual(cancelled.data["refund"], {"wood": 0, "steel": 0})
+
+    def test_patch037_cancel_research_requires_fact_complete_confirmation(self) -> None:
+        state = self.make_state()
+        self.add_research_institute(state)
+        system = self.technology_system()
+        started = self.execute(
+            system,
+            state,
+            RESEARCH_COMMAND,
+            {"tech_id": "tech_drawing_board"},
+        )
+        self.assertEqual(started.code, ErrorCode.OK)
+        state.technologies.research_progress_units = 2
+        before = deepcopy(state)
+
+        preview = self.execute(system, state, CANCEL_RESEARCH_COMMAND)
+
+        self.assertEqual(preview.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(preview.data["reason"], "confirmation_required")
+        self.assertEqual(
+            preview.data["confirmation_text_id"],
+            "research.cancel.confirm",
+        )
+        self.assertEqual(
+            preview.data["confirmation_text"],
+            "确认取消正在进行的「绘图板」研究？"
+            "已经投入的木材与钢材不会返还，当前研究进度也会清零。",
+        )
+        self.assertEqual(preview.data["active_research_id"], "tech_drawing_board")
+        self.assertEqual(preview.data["active_research_name"], "绘图板")
+        self.assertEqual(preview.data["paid_resources"], {"wood": 10, "steel": 0})
+        self.assertEqual(preview.data["research_progress_units"], 2)
+        self.assertEqual(preview.data["research_required_units"], 4)
+        self.assertEqual(preview.data["refund"], {"wood": 0, "steel": 0})
+        self.assertEqual(state, before)
+
+        explicit_false = self.execute(
+            system,
+            state,
+            CANCEL_RESEARCH_COMMAND,
+            {"confirm": False},
+        )
+        self.assertEqual(explicit_false.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(
+            explicit_false.data["reason"],
+            "confirm_false_is_not_preview",
+        )
+        self.assertEqual(state, before)
+
+        spec = next(
+            item
+            for item in system.command_specs()
+            if item.name == CANCEL_RESEARCH_COMMAND
+        )
+        self.assertNotIn("confirm", spec.required_arguments)
+        self.assertEqual(spec.optional_arguments["confirm"].value, "BOOLEAN")
+        self.assertEqual(spec.pre_execution_text_id, "research.cancel.confirm")
+        self.assertEqual(
+            spec.argument_semantics["confirm"],
+            "explicit_true_only_never_preview",
+        )
+
+        cancelled = self.execute(
+            system,
+            state,
+            CANCEL_RESEARCH_COMMAND,
+            {"confirm": True},
+        )
+        self.assertEqual(cancelled.code, ErrorCode.OK)
+        self.assertIsNone(state.technologies.active_research_id)
+        self.assertEqual(state.technologies.research_progress_units, 0)
+        self.assertEqual(cancelled.data["refund"], {"wood": 0, "steel": 0})
+
+        no_active = self.execute(
+            system,
+            state,
+            CANCEL_RESEARCH_COMMAND,
+        )
+        self.assertEqual(no_active.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(no_active.data["reason"], "no_active_research")
 
     def test_patch034_research_notice_and_resource_failure_text_are_exact(self) -> None:
         state = self.make_state()

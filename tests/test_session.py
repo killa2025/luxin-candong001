@@ -1332,6 +1332,103 @@ class GameSessionTests(unittest.TestCase):
         )
         self.assertEqual(session.state, before)
 
+    def test_patch037_cancel_research_confirmation_is_atomic_and_persistent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "patch037.json"
+            session = self.new_session(
+                seed=1137,
+                save_path=save_path,
+            )
+            built = session.command(
+                "game.build",
+                {
+                    "building_type": "research_institute",
+                    "zone": "middle_ring",
+                },
+            )
+            self.assertTrue(built.result.accepted)
+            assigned = session.command(
+                "game.assign",
+                {
+                    "building_id": built.result.data["building_id"],
+                    "population_type": "engineers",
+                    "count": 1,
+                },
+            )
+            self.assertTrue(assigned.result.accepted)
+            started = session.command(
+                "game.research",
+                {"tech_id": "tech_drawing_board"},
+            )
+            self.assertTrue(started.result.accepted)
+
+            session = GameSession.load(save_path, config_dir=ROOT / "data")
+            self.assertEqual(
+                session.state.technologies.active_research_id,
+                "tech_drawing_board",
+            )
+
+            before = session.state
+            save_before = save_path.read_bytes()
+            state_sequence = before.command_sequence
+            preview = session.command("game.cancel_research")
+
+            self.assertEqual(preview.result.code, ErrorCode.ILLEGAL_COMMAND)
+            self.assertEqual(
+                preview.result.data["confirmation_text"],
+                "确认取消正在进行的「绘图板」研究？"
+                "已经投入的木材与钢材不会返还，当前研究进度也会清零。",
+            )
+            self.assertEqual(
+                preview.result.data["paid_resources"],
+                {"wood": 10, "steel": 0},
+            )
+            self.assertEqual(
+                preview.result.data["refund"],
+                {"wood": 0, "steel": 0},
+            )
+            self.assertFalse(preview.save_written)
+            self.assertEqual(session.state, before)
+            self.assertEqual(session.state.command_sequence, state_sequence)
+            self.assertEqual(save_path.read_bytes(), save_before)
+            self.assertFalse(
+                session.replay_document().entries[-1].result.accepted
+            )
+
+            explicit_false = session.command(
+                "game.cancel_research",
+                {"confirm": False},
+            )
+            self.assertEqual(
+                explicit_false.result.data["reason"],
+                "confirm_false_is_not_preview",
+            )
+            self.assertEqual(session.state, before)
+            self.assertEqual(save_path.read_bytes(), save_before)
+
+            accepted = session.command(
+                "game.cancel_research",
+                {"confirm": True},
+            )
+            self.assertTrue(accepted.result.accepted)
+            self.assertTrue(accepted.save_written)
+            self.assertIsNone(session.state.technologies.active_research_id)
+            self.assertEqual(
+                accepted.result.data["refund"],
+                {"wood": 0, "steel": 0},
+            )
+
+            loaded = GameSession.load(save_path, config_dir=ROOT / "data")
+            self.assertIsNone(loaded.state.technologies.active_research_id)
+            cancel_spec = next(
+                item
+                for item in loaded.command_specs()
+                if item.name == "game.cancel_research"
+            )
+            self.assertEqual(
+                cancel_spec.pre_execution_text_id,
+                "research.cancel.confirm",
+            )
 
 class PlayCliTests(unittest.TestCase):
     def test_json_lines_exposes_status_specs_and_supported_envelopes(self) -> None:

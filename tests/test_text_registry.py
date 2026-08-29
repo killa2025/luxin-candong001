@@ -130,6 +130,21 @@ class TextRegistryTests(unittest.TestCase):
         self.assertIsNone(registry.get("requirement.medical_building.target"))
         self.assertIsNone(registry.get("requirement.care_home.not_target"))
 
+    def test_patch037_cancel_research_confirmation_is_user_confirmed(self) -> None:
+        entry = build_action_text_registry().require("research.cancel.confirm")
+
+        self.assertEqual(
+            entry.text,
+            "确认取消正在进行的「{technology_name}」研究？"
+            "已经投入的木材与钢材不会返还，当前研究进度也会清零。",
+        )
+        self.assertEqual(entry.status, ConfigStatus.USER_OVERRIDE)
+        self.assertEqual(entry.visibility, TextVisibility.PLAYER_VISIBLE)
+        self.assertEqual(
+            entry.source,
+            "docs/handoff/PATCH-037：取消研究确认与损失反馈实现记录.md",
+        )
+
     def test_event_text_is_registered_from_sealed_assets(self) -> None:
         registry = build_event_text_registry()
 
