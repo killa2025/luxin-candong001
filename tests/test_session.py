@@ -1250,6 +1250,37 @@ class GameSessionTests(unittest.TestCase):
         self.assertFalse(rules_notice["confirmation_required"])
         self.assertEqual(rules_notice["payment_timing"], "on_start")
 
+    def test_patch035_route_feedback_is_discoverable_from_formal_rules(self) -> None:
+        session = self.new_session(seed=1135)
+        rules = session.rules_view("oath_order")["interface_text"]
+
+        self.assertEqual(
+            rules["route_confirmation"],
+            {
+                "text_id": "confirm.route.warning_mutual_exclusive",
+                "text": (
+                    "选择誓言路线后，铁腕路线及巡查所不会启用；"
+                    "选择铁腕路线后，誓言路线及守炉堂不会启用。"
+                ),
+                "argument": {"confirm": True},
+            },
+        )
+        actions = {item["action_id"]: item for item in rules["action_rules"]}
+        self.assertTrue(actions["mourning_bell"]["requires_recorded_death"])
+        self.assertNotIn(
+            "recorded_death_requirement_text",
+            actions["mourning_bell"],
+        )
+        self.assertFalse(rules["law_cooldown_feedback"]["active"])
+        self.assertIsNone(rules["law_cooldown_feedback"]["text"])
+        self.assertIsNone(
+            rules["law_cooldown_feedback"]["next_available_text"]
+        )
+        self.assertEqual(
+            actions["stay_persuasion"]["old_city_requirement_text"],
+            "旧城派危机已激活时可用。",
+        )
+
 
 class PlayCliTests(unittest.TestCase):
     def test_json_lines_exposes_status_specs_and_supported_envelopes(self) -> None:

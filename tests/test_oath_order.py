@@ -23,6 +23,7 @@ from furnace_winter.gameplay import (
     OathOrderSystem,
     BuildingSystem,
     EndDayEngine,
+    FinalFrostSystem,
     create_initial_survival_state,
 )
 from furnace_winter.gameplay.end_day import (
@@ -30,6 +31,7 @@ from furnace_winter.gameplay.end_day import (
     EndDayStage,
     RiskWarningLevel,
 )
+from furnace_winter.gameplay.hunger import remove_non_hunger_deaths_or_departures
 from furnace_winter.interface import CommandRequest, ErrorCode, GameSession
 from furnace_winter.models import (
     BuildingState,
@@ -276,6 +278,7 @@ class OathOrderPatchTests(unittest.TestCase):
         )
         self.assertEqual(blocked.code, ErrorCode.ILLEGAL_COMMAND)
         state.calendar.current_day = 35
+        before = deepcopy(state)
         missing_confirmation = self.execute(
             system,
             state,
@@ -283,8 +286,79 @@ class OathOrderPatchTests(unittest.TestCase):
             law_id="guard_oath",
         )
         self.assertEqual(missing_confirmation.data["reason"], "confirmation_required")
+        self.assertEqual(
+            missing_confirmation.data["confirmation_text_id"],
+            "confirm.route.warning_mutual_exclusive",
+        )
+        self.assertEqual(
+            missing_confirmation.data["confirmation_text"],
+            "选择誓言路线后，铁腕路线及巡查所不会启用；"
+            "选择铁腕路线后，誓言路线及守炉堂不会启用。",
+        )
+        self.assertNotIn("confirm sign", missing_confirmation.data["confirmation_text"])
+        self.assertEqual(state, before)
+
+        iron_state = self.make_state(day=35)
+        iron_confirmation = self.execute(
+            system,
+            iron_state,
+            SIGN_OATH_ORDER_LAW_COMMAND,
+            law_id="city_patrol_order",
+        )
+        self.assertEqual(
+            iron_confirmation.data["confirmation_text"],
+            missing_confirmation.data["confirmation_text"],
+        )
         self.enter_oath_route(system, state)
         self.assertEqual(state.oath_order.selected_route, "oath")
+
+    def test_patch035_law_cooldown_feedback_includes_exact_next_day(self) -> None:
+        system = self.system()
+        locked_view = system.route_view(self.make_state(day=1))[
+            "law_cooldown_feedback"
+        ]
+        self.assertFalse(locked_view["active"])
+        self.assertIsNone(locked_view["text"])
+        self.assertIsNone(locked_view["next_available_text"])
+        self.assertEqual(
+            locked_view["next_available_text_template"],
+            "下一条炉律可在第 {next_available_day} 天签署。",
+        )
+
+        available_view = system.route_view(self.make_state(day=35))[
+            "law_cooldown_feedback"
+        ]
+        self.assertFalse(available_view["active"])
+        self.assertIsNone(available_view["text"])
+        self.assertIsNone(available_view["next_available_text"])
+
+        state = self.make_state(day=35)
+        self.enter_oath_route(system, state)
+        active_view = system.route_view(state)["law_cooldown_feedback"]
+        self.assertTrue(active_view["active"])
+        self.assertEqual(
+            active_view["next_available_text"],
+            "下一条炉律可在第 37 天签署。",
+        )
+        before = deepcopy(state)
+
+        result = self.execute(
+            system,
+            state,
+            SIGN_OATH_ORDER_LAW_COMMAND,
+            law_id="mourning_bell",
+        )
+
+        self.assertEqual(result.data["reason"], "law_cooldown_active")
+        self.assertEqual(
+            result.data["feedback_text"],
+            "誓言与铁腕炉约仍在冷却中。",
+        )
+        self.assertEqual(
+            result.data["next_available_text"],
+            "下一条炉律可在第 37 天签署。",
+        )
+        self.assertEqual(state, before)
 
     def test_social_law_unlock_and_independent_cooldown(self) -> None:
         system = self.system()
@@ -335,6 +409,13 @@ class OathOrderPatchTests(unittest.TestCase):
             "oath": "guard_oath",
             "iron": "city_patrol_order",
         })
+        self.assertEqual(
+            view["route_confirmation"]["text_id"],
+            "confirm.route.warning_mutual_exclusive",
+        )
+        self.assertEqual(view["route_confirmation"]["argument"], {"confirm": True})
+        self.assertFalse(view["law_cooldown_feedback"]["active"])
+        self.assertIsNone(view["law_cooldown_feedback"]["next_available_text"])
         self.assertTrue(laws["city_patrol_order"]["confirmation_required"])
         self.assertEqual(
             laws["morning_roll_call"]["required_law_ids"],
@@ -386,6 +467,10 @@ class OathOrderPatchTests(unittest.TestCase):
             (6, -2),
         )
         self.assertTrue(actions["mourning_bell"]["requires_recorded_death"])
+        self.assertNotIn(
+            "recorded_death_requirement_text",
+            actions["mourning_bell"],
+        )
         self.assertFalse(
             actions["mourning_bell"][
                 "recorded_death_requirement_satisfied"
@@ -421,6 +506,158 @@ class OathOrderPatchTests(unittest.TestCase):
                 actions["stay_persuasion"]["old_city_change"],
             ),
             (5, 0, 40, -6),
+        )
+        self.assertEqual(
+            actions["stay_persuasion"]["old_city_requirement_text"],
+            "旧城派危机已激活时可用。",
+        )
+        self.assertEqual(
+            actions["stay_persuasion"]["cooked_food_requirement_text"],
+            "需要拥有足够熟食。",
+        )
+
+    def test_patch035_route_action_facility_feedback_is_exact(self) -> None:
+        system = self.system()
+
+        oath_state = self.make_state(day=35)
+        self.enter_oath_route(system, oath_state)
+        oath_state.calendar.current_day = oath_state.oath_order.next_law_day
+        self.assertEqual(
+            self.execute(
+                system,
+                oath_state,
+                SIGN_OATH_ORDER_LAW_COMMAND,
+                law_id="shared_meal",
+            ).code,
+            ErrorCode.OK,
+        )
+        oath_before = deepcopy(oath_state)
+        oath_block = self.execute(
+            system,
+            oath_state,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="shared_meal",
+        )
+        self.assertEqual(oath_block.data["reason"], "route_facility_not_running")
+        self.assertEqual(
+            oath_block.data["requirement_text"],
+            "守炉堂必须已启用，并处于运行状态。",
+        )
+        self.assertEqual(oath_state, oath_before)
+
+        iron_state = self.make_state(day=35)
+        self.assertEqual(
+            self.execute(
+                system,
+                iron_state,
+                SIGN_OATH_ORDER_LAW_COMMAND,
+                law_id="city_patrol_order",
+                confirm=True,
+            ).code,
+            ErrorCode.OK,
+        )
+        iron_block = self.execute(
+            system,
+            iron_state,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="patrol",
+        )
+        self.assertEqual(
+            iron_block.data["requirement_text"],
+            "巡查所必须已启用，并处于运行状态。",
+        )
+
+    def test_patch035_death_old_city_and_food_feedback_is_exact(self) -> None:
+        system = self.system()
+        state = self.make_state(day=35)
+        self.enter_oath_route(system, state)
+        self.assertEqual(
+            self.execute(
+                system,
+                state,
+                STAFF_OATH_ORDER_FACILITY_COMMAND,
+                facility_id="oath_hall",
+                workers=1,
+                engineers=0,
+            ).code,
+            ErrorCode.OK,
+        )
+
+        state.calendar.current_day = state.oath_order.next_law_day
+        self.assertEqual(
+            self.execute(
+                system,
+                state,
+                SIGN_OATH_ORDER_LAW_COMMAND,
+                law_id="mourning_bell",
+            ).code,
+            ErrorCode.OK,
+        )
+        death_block = self.execute(
+            system,
+            state,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="mourning_bell",
+        )
+        self.assertEqual(death_block.data["reason"], "no_death_to_mourn")
+        self.assertNotIn("requirement_text_id", death_block.data)
+        self.assertNotIn("requirement_text", death_block.data)
+
+        FinalFrostSystem._apply_deaths(state, 1, "historical_test")
+        remove_non_hunger_deaths_or_departures(state, 1)
+        state.events.deaths_today_by_cause.clear()
+        historical_death_result = self.execute(
+            system,
+            state,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="mourning_bell",
+        )
+        self.assertEqual(historical_death_result.code, ErrorCode.OK)
+        state.oath_order.death_panic_aftershock_halved_day = None
+
+        state.calendar.current_day = state.oath_order.next_law_day
+        self.assertEqual(
+            self.execute(
+                system,
+                state,
+                SIGN_OATH_ORDER_LAW_COMMAND,
+                law_id="shared_meal",
+            ).code,
+            ErrorCode.OK,
+        )
+        state.resources.cooked_food = 0
+        food_block = self.execute(
+            system,
+            state,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="shared_meal",
+        )
+        self.assertEqual(food_block.data["reason"], "insufficient_cooked_food")
+        self.assertEqual(
+            food_block.data["requirement_text"],
+            "需要拥有足够熟食。",
+        )
+
+        state.calendar.current_day = state.oath_order.next_law_day
+        self.assertEqual(
+            self.execute(
+                system,
+                state,
+                SIGN_OATH_ORDER_LAW_COMMAND,
+                law_id="stay_oath",
+            ).code,
+            ErrorCode.OK,
+        )
+        old_city_block = self.execute(
+            system,
+            state,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="stay_persuasion",
+        )
+        self.assertEqual(old_city_block.data["reason"], "old_city_not_active")
+        self.assertEqual(
+            old_city_block.data["requirement_text"],
+            "旧城派危机已激活时可用。",
         )
 
     def test_patch019_guard_oath_action_applies_provisional_values(self) -> None:

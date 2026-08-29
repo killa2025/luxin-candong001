@@ -996,6 +996,8 @@ class GameSession:
             result["interface_text"] = {
                 "research_start": self.technologies.research_start_notice()
             }
+        elif section == "oath_order":
+            result["interface_text"] = self.oath_order.route_view(self._state)
         return result
 
     def execute_payload(self, payload: Mapping[str, Any]) -> SessionExecution:

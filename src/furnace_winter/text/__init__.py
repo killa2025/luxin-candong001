@@ -19,6 +19,10 @@ from furnace_winter.text.actions import (
     build_action_text_registry,
     render_action_text,
 )
+from furnace_winter.text.routes import (
+    build_oath_order_text_registry,
+    render_route_text,
+)
 
 __all__ = [
     "DeprecatedEntry",
@@ -36,4 +40,6 @@ __all__ = [
     "build_event_text_registry",
     "build_action_text_registry",
     "render_action_text",
+    "build_oath_order_text_registry",
+    "render_route_text",
 ]
