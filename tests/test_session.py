@@ -1281,6 +1281,57 @@ class GameSessionTests(unittest.TestCase):
             "旧城派危机已激活时可用。",
         )
 
+    def test_patch036_triage_target_feedback_is_formally_discoverable(self) -> None:
+        session = self.new_session(seed=1136)
+        triage = next(
+            spec
+            for spec in session.command_specs()
+            if spec.name == "game.triage"
+        )
+        self.assertEqual(
+            triage.pre_execution_text_id,
+            "medical.triage.target_rule",
+        )
+        self.assertEqual(
+            triage.pre_execution_text_template,
+            "启动时必须指定一座医疗站或医院。",
+        )
+
+        contract = session.observe().law_view["triage_target_contract"]
+        self.assertEqual(
+            contract,
+            {
+                "allowed_building_types": ["medical_station", "hospital"],
+                "requirement_text_id": "medical.triage.target_rule",
+                "requirement_text": "启动时必须指定一座医疗站或医院。",
+                "care_home_allowed": False,
+                "care_home_requirement_text_id": (
+                    "medical.triage.care_home_forbidden"
+                ),
+                "care_home_requirement_text": "不能指定养护所。",
+            },
+        )
+
+        before = session.state
+        result = session.command("game.triage", {"confirm": True})
+        self.assertEqual(result.result.code, ErrorCode.INVALID_ARGUMENTS)
+        self.assertEqual(
+            result.result.data["requirement_text"],
+            "启动时必须指定一座医疗站或医院。",
+        )
+        self.assertEqual(session.state, before)
+
+        wrong_type = session.command(
+            "game.triage",
+            {"building_id": 3, "confirm": True},
+        )
+        self.assertEqual(wrong_type.result.code, ErrorCode.INVALID_ARGUMENTS)
+        self.assertEqual(
+            wrong_type.result.data["requirement_text_id"],
+            "medical.triage.target_rule",
+        )
+        self.assertEqual(session.state, before)
+
 
 class PlayCliTests(unittest.TestCase):
     def test_json_lines_exposes_status_specs_and_supported_envelopes(self) -> None:

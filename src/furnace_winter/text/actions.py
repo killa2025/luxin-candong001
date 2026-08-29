@@ -9,8 +9,11 @@ from furnace_winter.text.registry import TextEntry, TextRegistry, TextVisibility
 _PATCH034_SOURCE = (
     "docs/handoff/PATCH-034：高频操作提示文案收口实现记录.md"
 )
+_PATCH036_SOURCE = (
+    "docs/handoff/PATCH-036：分级救治条件反馈文案接线实现记录.md"
+)
 
-_RUNTIME_TEXT = {
+_PATCH034_RUNTIME_TEXT = {
     "confirm.action.overtime_day.body": (
         "确认让「{building_name}」执行加班日？本日不可取消；普通生产提高至两倍，"
         "医疗与研究进度提高至 1.5 倍，但信任 -2、恐慌 +3，并会新增患病者与事故风险。"
@@ -37,21 +40,30 @@ _RUNTIME_TEXT = {
     ),
 }
 
+_PATCH036_RUNTIME_TEXT = {
+    "medical.triage.target_rule": "启动时必须指定一座医疗站或医院。",
+    "medical.triage.care_home_forbidden": "不能指定养护所。",
+}
+
 
 def build_action_text_registry() -> TextRegistry:
-    """Register Patch 034 confirmed operation and requirement text."""
+    """Register confirmed operation and requirement text."""
 
     registry = TextRegistry()
-    for text_id, text in _RUNTIME_TEXT.items():
-        registry.register(
-            TextEntry(
-                text_id=text_id,
-                text=text,
-                status=ConfigStatus.FINAL,
-                visibility=TextVisibility.PLAYER_VISIBLE,
-                source=_PATCH034_SOURCE,
+    for source, entries in (
+        (_PATCH034_SOURCE, _PATCH034_RUNTIME_TEXT),
+        (_PATCH036_SOURCE, _PATCH036_RUNTIME_TEXT),
+    ):
+        for text_id, text in entries.items():
+            registry.register(
+                TextEntry(
+                    text_id=text_id,
+                    text=text,
+                    status=ConfigStatus.FINAL,
+                    visibility=TextVisibility.PLAYER_VISIBLE,
+                    source=source,
+                )
             )
-        )
     return registry
 
 

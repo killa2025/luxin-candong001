@@ -63,6 +63,20 @@ class LawPatchTests(unittest.TestCase):
     def law_system(self) -> LawSystem:
         return LawSystem(self.law_rules, self.building_rules, self.survival_rules)
 
+    def test_patch036_malformed_direct_requests_return_stable_errors(self) -> None:
+        system = self.law_system()
+        for request in (None, {"name": TRIAGE_COMMAND}):
+            with self.subTest(request=request):
+                state = self.make_state()
+                before = deepcopy(state)
+
+                result = system.execute(state, request)  # type: ignore[arg-type]
+
+                self.assertFalse(result.accepted)
+                self.assertEqual(result.code, ErrorCode.INVALID_COMMAND_FORMAT)
+                self.assertFalse(result.state_changed)
+                self.assertEqual(state, before)
+
     def building_system(self) -> BuildingSystem:
         return BuildingSystem(self.building_rules, self.survival_rules)
 
@@ -1175,13 +1189,52 @@ class LawPatchTests(unittest.TestCase):
         state.population.sick_population = 11
         state.medical.medical_pressure = 6
         before = deepcopy(state)
+
+        missing_target = self.execute_law(
+            state,
+            TRIAGE_COMMAND,
+            {"confirm": True},
+        )
+        self.assertEqual(missing_target.code, ErrorCode.INVALID_ARGUMENTS)
+        self.assertEqual(
+            missing_target.data["requirement_text_id"],
+            "medical.triage.target_rule",
+        )
+        self.assertEqual(
+            missing_target.data["requirement_text"],
+            "启动时必须指定一座医疗站或医院。",
+        )
+        self.assertEqual(state, before)
+
         invalid = self.execute_law(
             state,
             TRIAGE_COMMAND,
             {"building_id": "missing", "confirm": True},
         )
         self.assertEqual(invalid.data["reason"], "unknown_building")
+        self.assertEqual(
+            invalid.data["requirement_text"],
+            "启动时必须指定一座医疗站或医院。",
+        )
         self.assertEqual(state, before)
+
+        residence_id = next(
+            building_id
+            for building_id, building in state.buildings.items()
+            if building.building_type == "basic_residence"
+        )
+        invalid_type = self.execute_law(
+            state,
+            TRIAGE_COMMAND,
+            {"building_id": residence_id, "confirm": True},
+        )
+        self.assertEqual(invalid_type.data["reason"], "invalid_triage_target")
+        self.assertEqual(
+            invalid_type.data["requirement_text"],
+            "启动时必须指定一座医疗站或医院。",
+        )
+        self.assertEqual(state, before)
+
         result = self.execute_law(
             state,
             TRIAGE_COMMAND,
@@ -1189,6 +1242,33 @@ class LawPatchTests(unittest.TestCase):
         )
         self.assertEqual(result.data["reason"], "triage_balance_not_sealed")
         self.assertEqual(state, before)
+
+        triage_spec = next(
+            spec
+            for spec in self.law_system().command_specs()
+            if spec.name == TRIAGE_COMMAND
+        )
+        self.assertEqual(
+            triage_spec.pre_execution_text_id,
+            "medical.triage.target_rule",
+        )
+        self.assertEqual(
+            triage_spec.pre_execution_text_template,
+            "启动时必须指定一座医疗站或医院。",
+        )
+
+        contract = self.law_system().observe(state)[
+            "triage_target_contract"
+        ]
+        self.assertEqual(
+            contract["allowed_building_types"],
+            ["medical_station", "hospital"],
+        )
+        self.assertFalse(contract["care_home_allowed"])
+        self.assertEqual(
+            contract["care_home_requirement_text"],
+            "不能指定养护所。",
+        )
 
     def test_cemetery_processes_bodies_without_canceling_deaths(self) -> None:
         state = self.make_state()
