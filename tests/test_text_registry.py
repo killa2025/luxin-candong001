@@ -93,13 +93,42 @@ class TextRegistryTests(unittest.TestCase):
         }
 
         self.assertEqual(
-            {entry.text_id: entry.text for entry in registry.entries()},
+            {
+                entry.text_id: entry.text
+                for entry in registry.entries()
+                if "PATCH-034" in entry.source
+            },
             expected,
         )
         for entry in registry.entries():
+            if "PATCH-034" not in entry.source:
+                continue
             self.assertEqual(entry.status, ConfigStatus.FINAL)
             self.assertEqual(entry.visibility, TextVisibility.PLAYER_VISIBLE)
             self.assertIn("PATCH-034", entry.source)
+
+    def test_patch036_triage_requirement_text_is_exact_and_final(self) -> None:
+        registry = build_action_text_registry()
+        expected = {
+            "medical.triage.target_rule": (
+                "启动时必须指定一座医疗站或医院。"
+            ),
+            "medical.triage.care_home_forbidden": "不能指定养护所。",
+        }
+
+        for text_id, text in expected.items():
+            with self.subTest(text_id=text_id):
+                entry = registry.require(text_id)
+                self.assertEqual(entry.text, text)
+                self.assertEqual(entry.status, ConfigStatus.FINAL)
+                self.assertEqual(
+                    entry.visibility,
+                    TextVisibility.PLAYER_VISIBLE,
+                )
+                self.assertIn("PATCH-036", entry.source)
+
+        self.assertIsNone(registry.get("requirement.medical_building.target"))
+        self.assertIsNone(registry.get("requirement.care_home.not_target"))
 
     def test_event_text_is_registered_from_sealed_assets(self) -> None:
         registry = build_event_text_registry()

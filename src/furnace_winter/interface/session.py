@@ -1293,6 +1293,24 @@ class GameSession:
                     "state_will_change": False,
                 }
             )
+        if (
+            request.name == "game.triage"
+            and result.code is ErrorCode.INVALID_ARGUMENTS
+            and "building_id"
+            in {
+                *data.get("missing", []),
+                *data.get("wrong_types", []),
+            }
+        ):
+            contract = self.laws.triage_target_contract()
+            data.update(
+                {
+                    "requirement_text_id": contract[
+                        "requirement_text_id"
+                    ],
+                    "requirement_text": contract["requirement_text"],
+                }
+            )
         if data == dict(result.data):
             return result
         return replace(result, data=data)

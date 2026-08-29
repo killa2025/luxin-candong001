@@ -55,6 +55,7 @@ def build_law_catalog(
 ) -> CommandCatalog:
     registry = text_registry or build_action_text_registry()
     overtime_confirmation = registry.require("confirm.action.overtime_day.body")
+    triage_target_requirement = registry.require("medical.triage.target_rule")
     catalog = CommandCatalog()
     law_ids = tuple(sorted(rules.laws)) if rules else ()
     ration_ids = tuple(sorted(rules.rations)) if rules else (
@@ -100,6 +101,8 @@ def build_law_catalog(
         name=TRIAGE_COMMAND,
         required_arguments={"building_id": ArgumentKind.STRING, "confirm": ArgumentKind.BOOLEAN},
         related_rule_sections=("laws", "buildings"),
+        pre_execution_text_id=triage_target_requirement.text_id,
+        pre_execution_text_template=triage_target_requirement.text,
     ))
     catalog.register(
         CommandSpec(
@@ -137,6 +140,7 @@ class LawSystem:
         sequence = state.command_sequence if isinstance(state, GameState) and isinstance(state.command_sequence, int) and not isinstance(state.command_sequence, bool) else 0
         validation = self._validator.validate(request)
         if not validation.is_valid:
+            validation = self._with_triage_argument_feedback(request, validation)
             return self._rejected(command_id, sequence, validation)
         try:
             self.validate_state(state)
@@ -305,9 +309,14 @@ class LawSystem:
             return self._illegal("confirmation_required")
         building = state.buildings.get(str(request.arguments["building_id"]))
         if building is None:
-            return self._illegal("unknown_building")
+            return self._triage_target_illegal("unknown_building")
+        if building.building_type == "care_home":
+            return self._triage_target_illegal(
+                "invalid_triage_target",
+                text_id="medical.triage.care_home_forbidden",
+            )
         if building.building_type not in {"medical_station", "hospital"}:
-            return self._illegal("invalid_triage_target")
+            return self._triage_target_illegal("invalid_triage_target")
         if not self._is_expected_operational(state, building):
             return self._illegal("medical_building_not_operational")
         if state.medical.medical_pressure <= 0:
@@ -979,8 +988,73 @@ class LawSystem:
                 - self._current_medical_capacity(state),
                 0,
             ),
-            "action_next_available_days": {k: v for k, v in state.laws.cooldowns.items() if k != _LAW_COOLDOWN},
+            "triage_target_contract": self.triage_target_contract(),
+            "action_next_available_days": {
+                key: value
+                for key, value in state.laws.cooldowns.items()
+                if key != _LAW_COOLDOWN
+            },
         }
+
+    def triage_target_contract(self) -> dict[str, Any]:
+        return {
+            "allowed_building_types": ["medical_station", "hospital"],
+            "requirement_text_id": "medical.triage.target_rule",
+            "requirement_text": render_action_text(
+                self.text_registry,
+                "medical.triage.target_rule",
+            ),
+            "care_home_allowed": False,
+            "care_home_requirement_text_id": (
+                "medical.triage.care_home_forbidden"
+            ),
+            "care_home_requirement_text": render_action_text(
+                self.text_registry,
+                "medical.triage.care_home_forbidden",
+            ),
+        }
+
+    def _with_triage_argument_feedback(
+        self,
+        request: CommandRequest,
+        validation: CommandValidation,
+    ) -> CommandValidation:
+        if (
+            request.name != TRIAGE_COMMAND
+            or validation.code is not ErrorCode.INVALID_ARGUMENTS
+        ):
+            return validation
+        invalid_building_id = "building_id" in {
+            *validation.details.get("missing", []),
+            *validation.details.get("wrong_types", []),
+        }
+        if not invalid_building_id:
+            return validation
+        text_id = "medical.triage.target_rule"
+        return CommandValidation(
+            False,
+            validation.code,
+            {
+                **validation.details,
+                "requirement_text_id": text_id,
+                "requirement_text": render_action_text(
+                    self.text_registry,
+                    text_id,
+                ),
+            },
+        )
+
+    def _triage_target_illegal(
+        self,
+        reason: str,
+        *,
+        text_id: str = "medical.triage.target_rule",
+    ) -> CommandValidation:
+        return self._illegal(
+            reason,
+            requirement_text_id=text_id,
+            requirement_text=render_action_text(self.text_registry, text_id),
+        )
 
     def overtime_progress_multiplier(
         self, state: GameState, building_id: str

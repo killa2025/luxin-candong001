@@ -46,6 +46,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("Patch 033", readme)
         self.assertIn("Patch 034", readme)
         self.assertIn("Patch 035", readme)
+        self.assertIn("Patch 036", readme)
         self.assertIn("格式 5", readme)
         self.assertIn('{"type":"autosave"}', readme)
         self.assertIn("command_specs", readme)
@@ -57,6 +58,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("Patch 033", agents)
         self.assertIn("Patch 034", agents)
         self.assertIn("Patch 035", agents)
+        self.assertIn("Patch 036", agents)
         self.assertIn("TEST_NUMERIC", agents)
         self.assertIn("legacy_patch021", agents)
         self.assertIn("patch022", agents)
@@ -106,6 +108,14 @@ class RepositoryDocumentationTests(unittest.TestCase):
                 / "docs"
                 / "handoff"
                 / "PATCH-035：社会路线条件反馈文案接线实现记录.md"
+            ).is_file()
+        )
+        self.assertTrue(
+            (
+                REPOSITORY_ROOT
+                / "docs"
+                / "handoff"
+                / "PATCH-036：分级救治条件反馈文案接线实现记录.md"
             ).is_file()
         )
         self.assertTrue(
