@@ -1016,11 +1016,12 @@ class LawSystem:
 
     def _with_triage_argument_feedback(
         self,
-        request: CommandRequest,
+        request: Any,
         validation: CommandValidation,
     ) -> CommandValidation:
         if (
-            request.name != TRIAGE_COMMAND
+            not isinstance(request, CommandRequest)
+            or request.name != TRIAGE_COMMAND
             or validation.code is not ErrorCode.INVALID_ARGUMENTS
         ):
             return validation

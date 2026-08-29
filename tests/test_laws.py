@@ -63,6 +63,20 @@ class LawPatchTests(unittest.TestCase):
     def law_system(self) -> LawSystem:
         return LawSystem(self.law_rules, self.building_rules, self.survival_rules)
 
+    def test_patch036_malformed_direct_requests_return_stable_errors(self) -> None:
+        system = self.law_system()
+        for request in (None, {"name": TRIAGE_COMMAND}):
+            with self.subTest(request=request):
+                state = self.make_state()
+                before = deepcopy(state)
+
+                result = system.execute(state, request)  # type: ignore[arg-type]
+
+                self.assertFalse(result.accepted)
+                self.assertEqual(result.code, ErrorCode.INVALID_COMMAND_FORMAT)
+                self.assertFalse(result.state_changed)
+                self.assertEqual(state, before)
+
     def building_system(self) -> BuildingSystem:
         return BuildingSystem(self.building_rules, self.survival_rules)
 

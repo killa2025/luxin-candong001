@@ -54,4 +54,10 @@ Patch 035 已完成复审、合并 `main`，并通过第三十二次纯黑盒专
 - 所有失败状态不变；
 - 全量 unittest、9 份 JSON 配置校验、`compileall` 与 `git diff --check` 均须通过。
 
+## 6. 复审修正
+
+- `_with_triage_argument_feedback()` 先确认输入确实是 `CommandRequest`，再读取命令名和参数错误；
+- 直接向公开 `LawSystem.execute()` 传入 `None` 或普通映射时，稳定返回 `INVALID_COMMAND_FORMAT`，不抛异常且不改变状态；
+- 统一 `GameSession` 入口、正常命令、分级救治条件正文及所有既有合法性顺序不变。
+
 完成后停止，不开始 Patch 037。
