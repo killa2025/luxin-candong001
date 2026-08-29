@@ -49,8 +49,9 @@ class TextRegistryTests(unittest.TestCase):
             ),
             "requirement.old_city.active": "旧城派危机已激活时可用。",
             "requirement.cooked_food.enough": "需要拥有足够熟食。",
-            "requirement.death_recent": "仅在近期存在死亡事件时可用。",
         }
+
+        self.assertIsNone(registry.get("requirement.death_recent"))
 
         for text_id, text in expected.items():
             with self.subTest(text_id=text_id):

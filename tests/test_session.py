@@ -1266,9 +1266,15 @@ class GameSessionTests(unittest.TestCase):
             },
         )
         actions = {item["action_id"]: item for item in rules["action_rules"]}
-        self.assertEqual(
-            actions["mourning_bell"]["recorded_death_requirement_text"],
-            "仅在近期存在死亡事件时可用。",
+        self.assertTrue(actions["mourning_bell"]["requires_recorded_death"])
+        self.assertNotIn(
+            "recorded_death_requirement_text",
+            actions["mourning_bell"],
+        )
+        self.assertFalse(rules["law_cooldown_feedback"]["active"])
+        self.assertIsNone(rules["law_cooldown_feedback"]["text"])
+        self.assertIsNone(
+            rules["law_cooldown_feedback"]["next_available_text"]
         )
         self.assertEqual(
             actions["stay_persuasion"]["old_city_requirement_text"],

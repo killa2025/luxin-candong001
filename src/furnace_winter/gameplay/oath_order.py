@@ -372,12 +372,7 @@ class OathOrderSystem:
             state.population.population_dead <= 0
             and not state.events.deaths_today_by_cause
         ):
-            text_id = "requirement.death_recent"
-            return self._illegal(
-                "no_death_to_mourn",
-                requirement_text_id=text_id,
-                requirement_text=render_route_text(self.text_registry, text_id),
-            )
+            return self._illegal("no_death_to_mourn")
         if rule.old_city < 0 and (
             not state.old_city.is_unlocked
             or state.old_city.resolved
@@ -895,10 +890,17 @@ class OathOrderSystem:
 
     def route_view(self, state: GameState) -> dict[str, Any]:
         self.validate_state(state)
+        page_unlocked = state.oath_order.page_unlocked or self._is_page_available(state)
+        law_cooldown_active = (
+            page_unlocked
+            and state.calendar.current_day < state.oath_order.next_law_day
+        )
         route_confirmation_id = "confirm.route.warning_mutual_exclusive"
+        cooldown_feedback_id = "cooldown.route.not_ready.feedback"
+        cooldown_next_day_id = "cooldown.route.next_available_day"
         return {
             "balance_status": self.rules.config_status.value,
-            "page_unlocked": state.oath_order.page_unlocked or self._is_page_available(state),
+            "page_unlocked": page_unlocked,
             "selected_route": state.oath_order.selected_route,
             "signed_law_ids": list(state.oath_order.signed_law_ids),
             "next_law_day": state.oath_order.next_law_day,
@@ -912,17 +914,32 @@ class OathOrderSystem:
                 "argument": {"confirm": True},
             },
             "law_cooldown_feedback": {
-                "text_id": "cooldown.route.not_ready.feedback",
-                "text": render_route_text(
-                    self.text_registry,
-                    "cooldown.route.not_ready.feedback",
+                "active": law_cooldown_active,
+                "text_id": cooldown_feedback_id,
+                "text_template": self.text_registry.require(
+                    cooldown_feedback_id
+                ).text,
+                "text": (
+                    render_route_text(self.text_registry, cooldown_feedback_id)
+                    if law_cooldown_active
+                    else None
                 ),
-                "next_available_text_id": "cooldown.route.next_available_day",
-                "next_available_text": render_route_text(
-                    self.text_registry,
-                    "cooldown.route.next_available_day",
-                    next_available_day=state.oath_order.next_law_day,
+                "next_available_text_id": cooldown_next_day_id,
+                "next_available_text_template": self.text_registry.require(
+                    cooldown_next_day_id
+                ).text,
+                "next_available_text": (
+                    render_route_text(
+                        self.text_registry,
+                        cooldown_next_day_id,
+                        next_available_day=state.oath_order.next_law_day,
+                    )
+                    if law_cooldown_active
+                    else None
                 ),
+                "parameter_sources": {
+                    "next_available_day": "oath_order.next_law_day",
+                },
             },
             "law_rules": [
                 {
@@ -995,19 +1012,6 @@ class OathOrderSystem:
                         state, rule.route
                     ).is_running,
                     "requires_recorded_death": action_id == "mourning_bell",
-                    "recorded_death_requirement_text_id": (
-                        "requirement.death_recent"
-                        if action_id == "mourning_bell"
-                        else None
-                    ),
-                    "recorded_death_requirement_text": (
-                        render_route_text(
-                            self.text_registry,
-                            "requirement.death_recent",
-                        )
-                        if action_id == "mourning_bell"
-                        else None
-                    ),
                     "recorded_death_requirement_satisfied": (
                         state.population.population_dead > 0
                         or bool(state.events.deaths_today_by_cause)

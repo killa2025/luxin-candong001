@@ -23,6 +23,7 @@ from furnace_winter.gameplay import (
     OathOrderSystem,
     BuildingSystem,
     EndDayEngine,
+    FinalFrostSystem,
     create_initial_survival_state,
 )
 from furnace_winter.gameplay.end_day import (
@@ -30,6 +31,7 @@ from furnace_winter.gameplay.end_day import (
     EndDayStage,
     RiskWarningLevel,
 )
+from furnace_winter.gameplay.hunger import remove_non_hunger_deaths_or_departures
 from furnace_winter.interface import CommandRequest, ErrorCode, GameSession
 from furnace_winter.models import (
     BuildingState,
@@ -312,8 +314,32 @@ class OathOrderPatchTests(unittest.TestCase):
 
     def test_patch035_law_cooldown_feedback_includes_exact_next_day(self) -> None:
         system = self.system()
+        locked_view = system.route_view(self.make_state(day=1))[
+            "law_cooldown_feedback"
+        ]
+        self.assertFalse(locked_view["active"])
+        self.assertIsNone(locked_view["text"])
+        self.assertIsNone(locked_view["next_available_text"])
+        self.assertEqual(
+            locked_view["next_available_text_template"],
+            "下一条炉律可在第 {next_available_day} 天签署。",
+        )
+
+        available_view = system.route_view(self.make_state(day=35))[
+            "law_cooldown_feedback"
+        ]
+        self.assertFalse(available_view["active"])
+        self.assertIsNone(available_view["text"])
+        self.assertIsNone(available_view["next_available_text"])
+
         state = self.make_state(day=35)
         self.enter_oath_route(system, state)
+        active_view = system.route_view(state)["law_cooldown_feedback"]
+        self.assertTrue(active_view["active"])
+        self.assertEqual(
+            active_view["next_available_text"],
+            "下一条炉律可在第 37 天签署。",
+        )
         before = deepcopy(state)
 
         result = self.execute(
@@ -388,10 +414,8 @@ class OathOrderPatchTests(unittest.TestCase):
             "confirm.route.warning_mutual_exclusive",
         )
         self.assertEqual(view["route_confirmation"]["argument"], {"confirm": True})
-        self.assertEqual(
-            view["law_cooldown_feedback"]["next_available_text"],
-            "下一条炉律可在第 1 天签署。",
-        )
+        self.assertFalse(view["law_cooldown_feedback"]["active"])
+        self.assertIsNone(view["law_cooldown_feedback"]["next_available_text"])
         self.assertTrue(laws["city_patrol_order"]["confirmation_required"])
         self.assertEqual(
             laws["morning_roll_call"]["required_law_ids"],
@@ -443,9 +467,9 @@ class OathOrderPatchTests(unittest.TestCase):
             (6, -2),
         )
         self.assertTrue(actions["mourning_bell"]["requires_recorded_death"])
-        self.assertEqual(
-            actions["mourning_bell"]["recorded_death_requirement_text"],
-            "仅在近期存在死亡事件时可用。",
+        self.assertNotIn(
+            "recorded_death_requirement_text",
+            actions["mourning_bell"],
         )
         self.assertFalse(
             actions["mourning_bell"][
@@ -576,10 +600,20 @@ class OathOrderPatchTests(unittest.TestCase):
             action_id="mourning_bell",
         )
         self.assertEqual(death_block.data["reason"], "no_death_to_mourn")
-        self.assertEqual(
-            death_block.data["requirement_text"],
-            "仅在近期存在死亡事件时可用。",
+        self.assertNotIn("requirement_text_id", death_block.data)
+        self.assertNotIn("requirement_text", death_block.data)
+
+        FinalFrostSystem._apply_deaths(state, 1, "historical_test")
+        remove_non_hunger_deaths_or_departures(state, 1)
+        state.events.deaths_today_by_cause.clear()
+        historical_death_result = self.execute(
+            system,
+            state,
+            USE_OATH_ORDER_ACTION_COMMAND,
+            action_id="mourning_bell",
         )
+        self.assertEqual(historical_death_result.code, ErrorCode.OK)
+        state.oath_order.death_panic_aftershock_halved_day = None
 
         state.calendar.current_day = state.oath_order.next_law_day
         self.assertEqual(

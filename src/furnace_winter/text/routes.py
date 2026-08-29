@@ -24,7 +24,6 @@ _ROUTE_RUNTIME_TEXT = {
     ),
     "requirement.old_city.active": "旧城派危机已激活时可用。",
     "requirement.cooked_food.enough": "需要拥有足够熟食。",
-    "requirement.death_recent": "仅在近期存在死亡事件时可用。",
 }
 
 
