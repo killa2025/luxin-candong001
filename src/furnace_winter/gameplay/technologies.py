@@ -52,6 +52,7 @@ def build_technology_catalog(
 ) -> CommandCatalog:
     registry = text_registry or build_action_text_registry()
     research_notice = registry.require("research.confirm.body")
+    cancel_confirmation = registry.require("research.cancel.confirm")
     catalog = CommandCatalog()
     catalog.register(
         CommandSpec(
@@ -71,7 +72,15 @@ def build_technology_catalog(
     catalog.register(
         CommandSpec(
             name=CANCEL_RESEARCH_COMMAND,
+            optional_arguments={"confirm": ArgumentKind.BOOLEAN},
             related_rule_sections=("technologies",),
+            pre_execution_text_id=cancel_confirmation.text_id,
+            pre_execution_text_template=cancel_confirmation.text,
+            pre_execution_text_parameters={
+                "technology_name": (
+                    "technologies.<state.technologies.active_research_id>.display_name"
+                ),
+            },
         )
     )
     catalog.register(
@@ -167,6 +176,32 @@ class TechnologySystem:
         if request.name == CANCEL_RESEARCH_COMMAND:
             if state.technologies.active_research_id is None:
                 return self._illegal("no_active_research")
+            if request.arguments.get("confirm") is not True:
+                tech_id = state.technologies.active_research_id
+                rule = self.rules.technologies[tech_id]
+                text_id = "research.cancel.confirm"
+                return self._illegal(
+                    "confirmation_required",
+                    confirmation_text_id=text_id,
+                    confirmation_text=render_action_text(
+                        self.text_registry,
+                        text_id,
+                        technology_name=rule.display_name,
+                    ),
+                    active_research_id=tech_id,
+                    active_research_name=rule.display_name,
+                    paid_resources={
+                        "wood": rule.wood_cost,
+                        "steel": rule.steel_cost,
+                    },
+                    research_progress_units=(
+                        state.technologies.research_progress_units
+                    ),
+                    research_required_units=(
+                        state.technologies.research_required_units
+                    ),
+                    refund={"wood": 0, "steel": 0},
+                )
             return CommandValidation.valid()
         return self._overload_legality(state, request)
 

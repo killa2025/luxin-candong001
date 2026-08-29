@@ -123,6 +123,14 @@ class RepositoryDocumentationTests(unittest.TestCase):
                 REPOSITORY_ROOT
                 / "docs"
                 / "handoff"
+                / "PATCH-037：取消研究确认与损失反馈实现记录.md"
+            ).is_file()
+        )
+        self.assertTrue(
+            (
+                REPOSITORY_ROOT
+                / "docs"
+                / "handoff"
                 / "PATCH-030：终局路线与制度长文收口实现记录.md"
             ).is_file()
         )

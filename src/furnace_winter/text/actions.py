@@ -12,6 +12,9 @@ _PATCH034_SOURCE = (
 _PATCH036_SOURCE = (
     "docs/handoff/PATCH-036：分级救治条件反馈文案接线实现记录.md"
 )
+_PATCH037_SOURCE = (
+    "docs/handoff/PATCH-037：取消研究确认与损失反馈实现记录.md"
+)
 
 _PATCH034_RUNTIME_TEXT = {
     "confirm.action.overtime_day.body": (
@@ -45,21 +48,33 @@ _PATCH036_RUNTIME_TEXT = {
     "medical.triage.care_home_forbidden": "不能指定养护所。",
 }
 
+_PATCH037_RUNTIME_TEXT = {
+    "research.cancel.confirm": (
+        "确认取消正在进行的「{technology_name}」研究？"
+        "已经投入的木材与钢材不会返还，当前研究进度也会清零。"
+    ),
+}
+
 
 def build_action_text_registry() -> TextRegistry:
     """Register confirmed operation and requirement text."""
 
     registry = TextRegistry()
-    for source, entries in (
-        (_PATCH034_SOURCE, _PATCH034_RUNTIME_TEXT),
-        (_PATCH036_SOURCE, _PATCH036_RUNTIME_TEXT),
+    for source, status, entries in (
+        (_PATCH034_SOURCE, ConfigStatus.FINAL, _PATCH034_RUNTIME_TEXT),
+        (_PATCH036_SOURCE, ConfigStatus.FINAL, _PATCH036_RUNTIME_TEXT),
+        (
+            _PATCH037_SOURCE,
+            ConfigStatus.USER_OVERRIDE,
+            _PATCH037_RUNTIME_TEXT,
+        ),
     ):
         for text_id, text in entries.items():
             registry.register(
                 TextEntry(
                     text_id=text_id,
                     text=text,
-                    status=ConfigStatus.FINAL,
+                    status=status,
                     visibility=TextVisibility.PLAYER_VISIBLE,
                     source=source,
                 )
