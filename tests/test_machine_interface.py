@@ -184,6 +184,45 @@ class CommandInterfaceTests(unittest.TestCase):
                 )
             )
 
+    def test_command_schema_preserves_legacy_positional_arguments(self) -> None:
+        catalog = CommandCatalog()
+        catalog.register(
+            CommandSpec(
+                "test.legacy",
+                {"target": ArgumentKind.STRING},
+            )
+        )
+
+        spec = catalog.get("test.legacy")
+        self.assertEqual(
+            spec.required_arguments,
+            {"target": ArgumentKind.STRING},
+        )
+        missing = CommandValidator(catalog).validate(
+            CommandRequest("legacy-missing", "test.legacy")
+        )
+        self.assertEqual(missing.code, ErrorCode.INVALID_ARGUMENTS)
+        self.assertEqual(missing.details["missing"], ["target"])
+
+    def test_command_schema_rejects_non_boolean_capability_fields(self) -> None:
+        malformed = (
+            {"command_exists": 1},
+            {"command_exists": None},
+            {"command_exists": "true"},
+            {"executable": 1},
+            {"executable": None},
+            {"executable": "false"},
+        )
+        for index, fields in enumerate(malformed):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                catalog = CommandCatalog()
+                catalog.register(
+                    CommandSpec(
+                        name=f"test.malformed-{index}",
+                        **fields,  # type: ignore[arg-type]
+                    )
+                )
+
     def test_confirm_false_precedes_missing_fields_only_for_confirm_specs(self) -> None:
         confirm_catalog = CommandCatalog()
         confirm_catalog.register(

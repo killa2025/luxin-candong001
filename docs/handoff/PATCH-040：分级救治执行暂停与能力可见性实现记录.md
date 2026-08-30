@@ -67,4 +67,10 @@
 
 本 Patch 不修改 JSON 配置、平衡值、存档版本、研究、建筑、生产、事件、终霜、终局或社会路线；不实现 Patch 041、D56、AI 决策和图形 UI。
 
-施工完成时实际结果：509 项 unittest 全部通过；9 份 JSON 配置校验、`compileall` 与 `git diff --check` 全部通过。
+## 7. 首轮复审修正
+
+- `command_exists`、`executable`、`unavailable_reason` 均为仅限关键字参数，不改变已正式导出的 `CommandSpec(name, required_arguments, ...)` 旧位置参数顺序；
+- 命令目录严格要求 `command_exists` 与 `executable` 的类型为 `bool`，拒绝字符串、整数、`None` 等借真值语义混入正式机器合同；
+- 原有“可执行状态与不可用原因必须一致”的校验继续保留。
+
+修正完成时实际结果：511 项 unittest 全部通过；9 份 JSON 配置校验、`compileall` 与 `git diff --check` 全部通过。
