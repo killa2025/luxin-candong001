@@ -54,7 +54,7 @@
 
 | 分类 | 待确认内容 | 当前处理 |
 | --- | --- | --- |
-| 医疗 | 分诊的完整执行规则 | Patch 040 明确暂停实际执行：命令与 schema 保留，机器规格标记 `command_exists=true`、`executable=false`、`unavailable_reason=triage_rules_unsealed`，并从可执行行动中分离；直接调用兼容返回 `triage_balance_not_sealed` 且不改变状态。医疗站/医院为未来合法单一目标，养护所与其他非治疗建筑不可用。使用前置、目标状态、成本、冷却、处理人口、治疗、死亡、伤残、医疗压力、社会影响、跨系统结算顺序及存档/回放合同全部封存后才能恢复执行 |
+| 医疗 | 分诊的完整执行规则 | Patch 040 明确暂停实际执行；Patch 041 进一步暂停 `triage_law` 新签署，避免玩家消耗炉律机会后只得到不可执行动作。命令、炉律定义与 schema 保留；命令规格继续标记 `command_exists=true`、`executable=false`、`unavailable_reason=triage_rules_unsealed`，机器分别通过 `unavailable_commands`、`unavailable_laws` 和 `unavailable_actions` 分层报告。旧存档已签署炉律继续读取，但 `triage` 不进入 `unlocked_action_ids`；直接调用兼容返回 `triage_balance_not_sealed` 且不改变状态。医疗站/医院为未来合法单一目标，养护所与其他非治疗建筑不可用。使用前置、目标状态、成本、冷却、处理人口、治疗、死亡、伤残、医疗压力、社会影响、跨系统结算顺序及存档/回放合同全部封存后才能同时恢复炉律和动作 |
 | 医疗 | 疾病自然进入、恶化、康复与死亡的完整链条 | 只接入已封存的临时容量、医疗站容量、配给和过劳新增患病接口，不虚构完整疾病推进 |
 | 平衡 | 额外医疗配给 5 食物 / 人、最多 10 人、最多 50 食物、冷却 5 天 | Patch 013 已用负责人确认的 `TEST_NUMERIC` 覆盖旧试玩值；测试窗通过前不视为最终平衡值 |
 | 儿童 | 童工、儿童保护、学徒培养的具体产出与健康效果 | 只接入炉律路线、互斥与已明确建筑解锁，不添加未封存效果 |

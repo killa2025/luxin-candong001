@@ -1608,6 +1608,68 @@ class GameSessionTests(unittest.TestCase):
                 ).executable
             )
 
+    def test_patch041_triage_law_is_unavailable_atomic_and_legacy_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "patch041.json"
+            session = self.new_session(seed=1141, save_path=save_path)
+            before = deepcopy(session.state)
+            save_before = save_path.read_bytes()
+
+            law_view = session.observe().law_view
+            self.assertNotIn("triage_law", law_view["available_law_ids"])
+            self.assertNotIn("triage_law", law_view["locked_laws"])
+            self.assertEqual(
+                law_view["unavailable_laws"]["triage_law"][
+                    "unavailable_reason"
+                ],
+                "triage_rules_unsealed",
+            )
+
+            rejected = session.command(
+                "game.sign_law",
+                {"law_id": "triage_law", "confirm": True},
+            )
+            self.assertEqual(rejected.result.code, ErrorCode.ILLEGAL_COMMAND)
+            self.assertEqual(
+                rejected.result.data["reason"], "triage_rules_unsealed"
+            )
+            self.assertFalse(rejected.result.state_changed)
+            self.assertFalse(rejected.save_written)
+            self.assertEqual(session.state, before)
+            self.assertEqual(save_path.read_bytes(), save_before)
+            self.assertEqual(
+                session.replay_document().entries[-1].result.data[
+                    "unavailable_reason"
+                ],
+                "triage_rules_unsealed",
+            )
+
+            legacy_state = deepcopy(session.state)
+            legacy_state.laws.signed_law_ids = [
+                "basic_medical_law",
+                "expanded_admission_law",
+                "medical_ration_law",
+                "triage_law",
+            ]
+            save_path.write_text(
+                dumps(encode_game_state(legacy_state)),
+                encoding="utf-8",
+            )
+            legacy_loaded = GameSession.load(
+                save_path,
+                config_dir=ROOT / "data",
+            )
+            legacy_view = legacy_loaded.observe().law_view
+            self.assertIn("triage_law", legacy_view["signed_law_ids"])
+            self.assertIn("triage", legacy_view["declared_action_ids"])
+            self.assertNotIn("triage", legacy_view["unlocked_action_ids"])
+            self.assertEqual(
+                legacy_view["unavailable_actions"]["triage"][
+                    "unavailable_reason"
+                ],
+                "triage_rules_unsealed",
+            )
+
     def test_patch037_cancel_research_confirmation_is_atomic_and_persistent(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             save_path = Path(temp_dir) / "patch037.json"

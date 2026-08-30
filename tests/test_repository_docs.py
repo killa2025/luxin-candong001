@@ -99,6 +99,27 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("不提升存档版本", handoff)
         self.assertNotIn("不得实现 Patch 040", handoff)
 
+    def test_patch041_triage_law_pause_is_documented(self) -> None:
+        pending = (REPOSITORY_ROOT / "docs" / "PENDING.md").read_text(
+            encoding="utf-8"
+        )
+        index = (REPOSITORY_ROOT / "docs" / "INDEX.md").read_text(
+            encoding="utf-8"
+        )
+        handoff = (
+            REPOSITORY_ROOT
+            / "docs"
+            / "handoff"
+            / "PATCH-041：炉律动作可执行性审计实现记录.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("`unavailable_laws`", pending)
+        self.assertIn("`unavailable_actions`", pending)
+        self.assertIn("PATCH-041：炉律动作可执行性审计实现记录", index)
+        self.assertIn("共登记 27 个命令；26 个可执行", handoff)
+        self.assertIn("不提升存档版本", handoff)
+        self.assertNotIn("不得实现 Patch 041", handoff)
+
     def test_repository_status_text_matches_patch_033_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
