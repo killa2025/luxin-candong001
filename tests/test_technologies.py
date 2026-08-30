@@ -21,6 +21,7 @@ from furnace_winter.gameplay import (
     END_DAY_COMMAND,
     RESEARCH_COMMAND,
     SET_OVERLOAD_COMMAND,
+    UNASSIGN_COMMAND,
     BuildingSystem,
     EndDayEngine,
     LawSystem,
@@ -116,27 +117,23 @@ class TechnologyPatchTests(unittest.TestCase):
         d48 = self.make_state()
         d48.calendar.current_day = 48
         d48.resources.steel = 0
-        self._deplete_surface_resource(d48, "steel")
-        point = d48.surface_resource_points["surface-steel-1"]
-        point.remaining_amount = 5
-        point.is_depleted = False
+        d48.surface_resource_points["surface-steel-1"].assigned_workers = 4
 
-        d48_view = {
+        d48_lock = {
             item["tech_id"]: item for item in system.view(d48)
         }["tech_steel_screening"]["irreversible_resource_lock"]
-        self.assertIsNone(d48_view)
-        self.assertEqual(system.evaluate_risks(d48), ())
+        self.assertEqual(d48_lock["remaining_surface_steel"], 120)
+        self.assertEqual(d48_lock["recoverable_surface_steel"], 4)
+        self.assertEqual(d48_lock["recoverable_steel"], 4)
+        self.assertEqual(len(system.evaluate_risks(d48)), 1)
 
-        point.remaining_amount = 4
-        warning = system.evaluate_risks(d48)
-        self.assertEqual(len(warning), 1)
-        self.assertEqual(warning[0].details["recoverable_surface_steel"], 4)
-        self.assertEqual(warning[0].details["recoverable_steel"], 4)
+        d48.surface_resource_points["surface-steel-1"].assigned_workers = 5
+        self.assertEqual(system.evaluate_risks(d48), ())
 
         d49 = self.make_state()
         d49.calendar.current_day = 49
         d49.resources.steel = 0
-        d49.surface_resource_points["surface-steel-1"].assigned_workers = 0
+        d49.surface_resource_points["surface-steel-1"].assigned_workers = 5
         warning = system.evaluate_risks(d49)
         d49_lock = {
             item["tech_id"]: item for item in system.view(d49)
@@ -268,6 +265,85 @@ class TechnologyPatchTests(unittest.TestCase):
         self.assertEqual(warning.details["recoverable_surface_wood"], 0)
         self.assertEqual(warning.details["recoverable_wood"], 49)
 
+    def test_wood_supply_lock_excludes_overtime_locked_adults(self) -> None:
+        state = self.make_state()
+        state.calendar.current_day = 48
+        self._set_alive_workers(state, 5)
+        built = self.execute(
+            self.building_system(),
+            state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "middle_ring"},
+        )
+        self.assertEqual(built.code, ErrorCode.OK)
+        building_id = built.data["building_id"]
+        assigned = self.execute(
+            self.building_system(),
+            state,
+            ASSIGN_COMMAND,
+            {
+                "building_id": building_id,
+                "population_type": "workers",
+                "count": 5,
+            },
+        )
+        self.assertEqual(assigned.code, ErrorCode.OK)
+        state.laws.signed_law_ids.append("overtime_law")
+        state.social_policy.overtime_building_id = building_id
+        state.social_policy.overtime_output_numerator = (
+            self.law_rules.worktime.overtime_output_numerator
+        )
+        state.social_policy.overtime_output_denominator = (
+            self.law_rules.worktime.overtime_output_denominator
+        )
+        state.resources.wood = 39
+        self._deplete_surface_resource(state, "wood")
+        point = state.surface_resource_points["surface-wood-1"]
+        point.remaining_amount = 100
+        point.is_depleted = False
+
+        rejected = self.execute(
+            self.building_system(),
+            state,
+            UNASSIGN_COMMAND,
+            {
+                "building_id": building_id,
+                "population_type": "workers",
+            },
+        )
+        self.assertEqual(rejected.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(rejected.data["reason"], "overtime_staff_locked")
+
+        warning = next(
+            item
+            for item in self.technology_system().evaluate_risks(state)
+            if item.warning_id
+            == "technology.wood_supply_irreversibly_locked"
+        )
+        self.assertEqual(warning.details["recoverable_surface_wood"], 0)
+        self.assertEqual(warning.details["recoverable_wood"], 39)
+        self.assertEqual(warning.details["wood_shortfall"], 11)
+
+        preview = self.engine().execute(
+            state,
+            CommandRequest(
+                "overtime-wood-lock-preview",
+                END_DAY_COMMAND,
+                expected_state_sequence=state.command_sequence,
+            ),
+        )
+        self.assertEqual(
+            preview.result.code,
+            ErrorCode.END_DAY_CONFIRMATION_REQUIRED,
+        )
+        preview_warning = next(
+            item
+            for item in preview.warnings
+            if item.warning_id
+            == "technology.wood_supply_irreversibly_locked"
+        )
+        self.assertEqual(preview_warning.details, warning.details)
+
     def test_wood_supply_lock_is_exposed_in_formal_end_day_preview(self) -> None:
         state = self.make_state()
         state.resources.wood = 49
@@ -305,6 +381,29 @@ class TechnologyPatchTests(unittest.TestCase):
             point.is_depleted = True
             point.assigned_workers = 0
             point.assigned_engineers = 0
+
+    @staticmethod
+    def _set_alive_workers(state, alive: int) -> None:
+        population = state.population
+        population.population_total = alive
+        population.population_total_ever = alive
+        population.population_alive = alive
+        population.population_dead = 0
+        population.workers = alive
+        population.engineers = 0
+        population.children = 0
+        population.medical_apprentices = 0
+        population.engineering_apprentices = 0
+        population.disabled_population = 0
+        population.healthy_population = alive
+        population.sick_population = 0
+        population.critical_population = 0
+        population.housed_population = alive
+        population.homeless_population = 0
+        state.hunger.none_population = alive
+        state.hunger.light_population = 0
+        state.hunger.severe_population = 0
+        state.hunger.starving_population = 0
 
     @staticmethod
     def unlock_overload(state, level: int) -> None:

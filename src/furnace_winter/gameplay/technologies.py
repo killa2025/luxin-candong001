@@ -14,6 +14,7 @@ from furnace_winter.config import (
 from furnace_winter.config.technologies import validate_technology_building_links
 from furnace_winter.gameplay.buildings import (
     surface_resource_recoverable_before_final_frost,
+    surface_resource_recoverable_upper_bound_before_final_frost,
 )
 from furnace_winter.gameplay.end_day import (
     EndDayContext,
@@ -455,7 +456,7 @@ class TechnologySystem:
             remaining_technology_wood_cost + logging_camp_wood_cost
         )
         recoverable_surface_wood = (
-            surface_resource_recoverable_before_final_frost(
+            surface_resource_recoverable_upper_bound_before_final_frost(
                 state,
                 self.building_rules,
                 "wood",
