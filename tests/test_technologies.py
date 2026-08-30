@@ -277,7 +277,7 @@ class TechnologyPatchTests(unittest.TestCase):
             self.technology_system(),
             state,
             RESEARCH_COMMAND,
-            {"tech_id": "tech_drawing_board"},
+            {"tech_id": "tech_drawing_board", "confirm": True},
         )
         cancelled = self.execute(
             self.technology_system(),
@@ -293,6 +293,80 @@ class TechnologyPatchTests(unittest.TestCase):
         self.assertIsNone(state.technologies.active_research_id)
         self.assertEqual(cancelled.data["refund"], {"wood": 0, "steel": 0})
 
+    def test_patch038_start_research_requires_fact_complete_confirmation(self) -> None:
+        state = self.make_state()
+        self.add_research_institute(state)
+        system = self.technology_system()
+        before = deepcopy(state)
+
+        preview = self.execute(
+            system,
+            state,
+            RESEARCH_COMMAND,
+            {"tech_id": "tech_drawing_board"},
+        )
+
+        self.assertEqual(preview.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(preview.data["reason"], "confirmation_required")
+        self.assertEqual(
+            preview.data["confirmation_text_id"],
+            "research.confirm.body",
+        )
+        self.assertEqual(
+            preview.data["confirmation_text"],
+            "确认开始研究「绘图板」？本次研究将立即投入 10 木材与 0 钢材。"
+            "研究完成前，这些资源不会返还；若中途取消，"
+            "已经投入的资源与研究进度都将损失。",
+        )
+        self.assertEqual(preview.data["technology_id"], "tech_drawing_board")
+        self.assertEqual(preview.data["technology_name"], "绘图板")
+        self.assertEqual(preview.data["resource_cost"], {"wood": 10, "steel": 0})
+        self.assertEqual(preview.data["research_days"], 1)
+        self.assertEqual(preview.data["research_required_units"], 4)
+        self.assertEqual(preview.data["payment_timing"], "on_start")
+        self.assertEqual(
+            preview.data["cancellation_refund"],
+            {"wood": 0, "steel": 0},
+        )
+        self.assertFalse(preview.data["cancellation_progress_retained"])
+        self.assertEqual(state, before)
+
+        explicit_false = self.execute(
+            system,
+            state,
+            RESEARCH_COMMAND,
+            {"tech_id": "tech_drawing_board", "confirm": False},
+        )
+        self.assertEqual(explicit_false.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(
+            explicit_false.data["reason"],
+            "confirm_false_is_not_preview",
+        )
+        self.assertEqual(state, before)
+
+        spec = next(
+            item for item in system.command_specs() if item.name == RESEARCH_COMMAND
+        )
+        self.assertEqual(spec.optional_arguments["confirm"].value, "BOOLEAN")
+        self.assertEqual(
+            spec.argument_semantics["confirm"],
+            "explicit_true_only_never_preview",
+        )
+
+        accepted = self.execute(
+            system,
+            state,
+            RESEARCH_COMMAND,
+            {"tech_id": "tech_drawing_board", "confirm": True},
+        )
+        self.assertEqual(accepted.code, ErrorCode.OK)
+        self.assertEqual(
+            state.technologies.active_research_id,
+            "tech_drawing_board",
+        )
+        self.assertEqual(state.resources.wood, before.resources.wood - 10)
+        self.assertEqual(state.resources.steel, before.resources.steel)
+
     def test_patch037_cancel_research_requires_fact_complete_confirmation(self) -> None:
         state = self.make_state()
         self.add_research_institute(state)
@@ -301,7 +375,7 @@ class TechnologyPatchTests(unittest.TestCase):
             system,
             state,
             RESEARCH_COMMAND,
-            {"tech_id": "tech_drawing_board"},
+            {"tech_id": "tech_drawing_board", "confirm": True},
         )
         self.assertEqual(started.code, ErrorCode.OK)
         state.technologies.research_progress_units = 2
@@ -410,14 +484,17 @@ class TechnologyPatchTests(unittest.TestCase):
             if spec.name == RESEARCH_COMMAND
         )
         self.assertNotIn("confirm", research_spec.required_arguments)
-        self.assertNotIn("confirm", research_spec.optional_arguments)
+        self.assertEqual(
+            research_spec.optional_arguments["confirm"].value,
+            "BOOLEAN",
+        )
         self.assertEqual(
             research_spec.pre_execution_text_id,
             "research.confirm.body",
         )
         self.assertEqual(
             system.research_start_notice()["confirmation_required"],
-            False,
+            True,
         )
 
     def test_one_queue_tiers_and_prerequisites_are_strict(self) -> None:
@@ -436,7 +513,7 @@ class TechnologyPatchTests(unittest.TestCase):
             self.technology_system(),
             state,
             RESEARCH_COMMAND,
-            {"tech_id": "tech_drawing_board"},
+            {"tech_id": "tech_drawing_board", "confirm": True},
         )
         occupied = self.execute(
             self.technology_system(),
@@ -454,7 +531,7 @@ class TechnologyPatchTests(unittest.TestCase):
             self.technology_system(),
             state,
             RESEARCH_COMMAND,
-            {"tech_id": "tech_drawing_board"},
+            {"tech_id": "tech_drawing_board", "confirm": True},
         )
         self.assertEqual(started.code, ErrorCode.OK)
         self.assertNotIn(
@@ -479,7 +556,7 @@ class TechnologyPatchTests(unittest.TestCase):
             self.technology_system(),
             state,
             RESEARCH_COMMAND,
-            {"tech_id": "tech_drafting_instrument"},
+            {"tech_id": "tech_drafting_instrument", "confirm": True},
         )
         self.assertEqual(started.code, ErrorCode.OK)
 
@@ -499,7 +576,7 @@ class TechnologyPatchTests(unittest.TestCase):
             self.technology_system(),
             state,
             RESEARCH_COMMAND,
-            {"tech_id": "tech_drawing_board"},
+            {"tech_id": "tech_drawing_board", "confirm": True},
         )
         state.technologies.research_required_units = 999
         before = deepcopy(state)

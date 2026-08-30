@@ -58,6 +58,7 @@ def build_technology_catalog(
         CommandSpec(
             name=RESEARCH_COMMAND,
             required_arguments={"tech_id": ArgumentKind.STRING},
+            optional_arguments={"confirm": ArgumentKind.BOOLEAN},
             argument_options={"tech_id": tuple(sorted(rules.technologies))},
             related_rule_sections=("technologies",),
             pre_execution_text_id=research_notice.text_id,
@@ -248,6 +249,34 @@ class TechnologySystem:
                     "research.resource.not_enough",
                     missing_resources=missing_resources_text,
                 ),
+            )
+        if request.arguments.get("confirm") is not True:
+            required_units = (
+                rule.research_days
+                * self.rules.research.progress_units_per_day
+            )
+            text_id = "research.confirm.body"
+            return self._illegal(
+                "confirmation_required",
+                confirmation_text_id=text_id,
+                confirmation_text=render_action_text(
+                    self.text_registry,
+                    text_id,
+                    technology_name=rule.display_name,
+                    wood_cost=rule.wood_cost,
+                    steel_cost=rule.steel_cost,
+                ),
+                technology_id=tech_id,
+                technology_name=rule.display_name,
+                resource_cost={
+                    "wood": rule.wood_cost,
+                    "steel": rule.steel_cost,
+                },
+                research_days=rule.research_days,
+                research_required_units=required_units,
+                payment_timing="on_start",
+                cancellation_refund={"wood": 0, "steel": 0},
+                cancellation_progress_retained=False,
             )
         return CommandValidation.valid()
 
@@ -517,14 +546,18 @@ class TechnologySystem:
         return tuple(result)
 
     def research_start_notice(self) -> dict[str, Any]:
-        """Return the non-confirming research payment notice for machine rules."""
+        """Return the confirmed research payment contract for machine rules."""
 
         entry = self.text_registry.require("research.confirm.body")
         return {
             "text_id": entry.text_id,
             "text_template": entry.text,
-            "confirmation_required": False,
+            "confirmation_required": True,
+            "required_confirmation_value": True,
+            "confirm_false_is_preview": False,
             "payment_timing": "on_start",
+            "cancellation_refund": {"wood": 0, "steel": 0},
+            "cancellation_progress_retained": False,
             "parameter_sources": {
                 "technology_name": "technologies.<tech_id>.display_name",
                 "wood_cost": "technologies.<tech_id>.wood_cost",
