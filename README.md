@@ -2,13 +2,13 @@
 
 《炉心残冬》项目仓库。
 
-代码 Patch 026～040 及各自复审修正均已并入 `main`；Patch 030、Patch 032～040 已分别完成对应黑盒验收，Patch 031 已完成事件正文接线。Patch 040 按用户确认暂停 `game.triage` 的实际执行；Patch 041 继续消除其上游假入口：`triage_law` 不再出现在可签署或普通锁定炉律中，而以 `unavailable_laws` 明确报告 `triage_rules_unsealed`，直接签署稳定拒绝且不消耗炉律冷却。旧存档中已经签署的 `triage_law` 继续有效读取，但其声明动作 `triage` 只出现在 `declared_action_ids` 与 `unavailable_actions`，不会混入 `unlocked_action_ids`。命令和目标 schema 仍保留，机器规格继续返回 `command_exists=true`、`executable=false`、`unavailable_reason=triage_rules_unsealed`；格式合法的直接命令兼容返回 `triage_balance_not_sealed` 且不改变状态。医疗站、医院为未来合法单一目标，养护所与其他非治疗建筑仍不可用。分级救治的成本、冷却、治疗、死亡、伤残、医疗压力、社会影响和结算顺序未全部封存前不得恢复炉律和动作。Patch 039 的 37 项科技说明与 `DEFERRED` 研究门禁继续有效；开始研究仍须 `confirm=true`，取消研究仍为零返还与进度清零。悼亡钟继续公开结构化累计死亡条件，不输出与机制不符的“近期死亡”正文。旧城实际离开或资源损失不符合现有终局正文时只登记 PENDING；`sedation_city` 正式触发公式尚未封存，其正文暂不进入运行选择。
+代码 Patch 026～041 及各自复审修正均已并入 `main`，并已完成对应黑盒验收。Patch 042 补齐不改变平衡的资源链风险反馈：当“当前木材 + D49 前按当前正式规则最多还能采到的地表木材”严格少于尚未支付的木材加工 I 成本与一座伐木场成本之和，且尚无伐木场时，科技视图与日结预览返回 `technology.wood_supply_irreversibly_locked` 强警告；既有钢材链锁死警告保持不变。该警告只陈述由配置和状态可证明的资源缺口，不推荐行动、不改变成本、产量、资源或终霜结论。Patch 040～041 的分诊命令、炉律和动作暂停合同继续有效。Patch 039 的 37 项科技说明与 `DEFERRED` 研究门禁继续有效；开始研究仍须 `confirm=true`，取消研究仍为零返还与进度清零。悼亡钟继续公开结构化累计死亡条件，不输出与机制不符的“近期死亡”正文。旧城实际离开或资源损失不符合现有终局正文时只登记 PENDING；`sedation_city` 正式触发公式尚未封存，其正文暂不进入运行选择。
 
 游戏的实际玩家是运行在沙盒中的 AI，人类用户负责旁观。这个产品定位不产生 AI 专属规则：游戏仍通过通用结构化命令和状态接口运行，不提供决策评分、推荐行动或自动策略。
 
 ## 目录概览
 
-Patch 030、Patch 031、Patch 032、Patch 033、Patch 034、Patch 035、Patch 036、Patch 037、Patch 038、Patch 039、Patch 040 与 Patch 041 的既有合同继续有效。
+Patch 030、Patch 031、Patch 032、Patch 033、Patch 034、Patch 035、Patch 036、Patch 037、Patch 038、Patch 039、Patch 040、Patch 041 与 Patch 042 的既有合同继续有效。
 
 - `docs/`：项目文档
 - `data/`：数据文件
@@ -40,7 +40,7 @@ Patch 030、Patch 031、Patch 032、Patch 033、Patch 034、Patch 035、Patch 03
 - `data/buildings.json` 保存建筑、地表资源点、升级、区域槽位、`heat` 和测试态 `woodfuel` 数值；其中 `TEST_NUMERIC` 项必须经测试窗复核后才能视为最终平衡值。
 - `data/maps.json` 保存三张 V1 地图、共享小型资源点/猎区/森林数量、33/34/33 随机权重与大型煤钢矿点差异；地图差异不修改天气、人口、开局资源或其他生存规则。
 - `data/laws.json` 保存 006A 炉律关系、配给、工时、医疗与社会行动规则，包括已登记为 `TEST_NUMERIC` 的过劳患病公式、事故风险点、Patch 013 额外医疗配给 5 食物/人、最多 10 人、冷却 5 天，以及 Patch 019 火盆集会每日被动恐慌下限 20；未封存的分诊结果及事故结果不进入运行配置。Patch 040 暂停分诊命令，Patch 041 同步暂停会解锁该动作的 `triage_law`，均不补造任何数值。
-- `data/technologies.json` 保存 37 项 006B 科技、单队列研究规则、第二研究所精确倍率与过载压力规则；Patch 039 为每项科技提供稳定说明，普通 `DEFERRED` 项禁止新开研究且不伪造运行效果，炉心功率稳定 I 仅作为可研究的结构前置保留。
+- `data/technologies.json` 保存 37 项 006B 科技、单队列研究规则、第二研究所精确倍率与过载压力规则；Patch 039 为每项科技提供稳定说明，普通 `DEFERRED` 项禁止新开研究且不伪造运行效果，炉心功率稳定 I 仅作为可研究的结构前置保留。科技视图同时公开钢材与木材供应链中已经不可逆的资源缺口；Patch 042 的木材判断只使用已验证配置成本、当前库存和 D49 前可回收地表木材。
 - `data/events.json` 保存 Patch 007 事件阈值、承诺期限与奖惩、固定增员预设和第七霜落预警日；这些试玩数值保持 `TEST_NUMERIC`。
 - `data/oath_order.json` 保存代码 Patch 008 的旧城派阈值、006C 解锁、炉律关系、行动成本与冷却；Patch 019 只继续覆盖誓言路线的暂行测试值，铁腕值保持不变，全部继续标记为 `TEST_NUMERIC`。
 - `data/final_frost.json` 保存代码 Patch 009 的终霜规则、Patch 013 的寒冷/饥饿/木材断链，以及 Patch 022 的准备与终局分档测试阈值；这些平衡数值保持 `TEST_NUMERIC`。

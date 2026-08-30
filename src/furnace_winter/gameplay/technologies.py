@@ -369,16 +369,26 @@ class TechnologySystem:
         )
 
     def evaluate_risks(self, state: GameState) -> tuple[RiskWarning, ...]:
-        details = self._steel_supply_lock_details(state)
-        if details is None:
-            return ()
-        return (
-            RiskWarning(
+        warnings: list[RiskWarning] = []
+        for warning_id, details in (
+            (
                 "technology.steel_supply_irreversibly_locked",
-                RiskWarningLevel.B_STRONG,
-                details,
+                self._steel_supply_lock_details(state),
             ),
-        )
+            (
+                "technology.wood_supply_irreversibly_locked",
+                self._wood_supply_lock_details(state),
+            ),
+        ):
+            if details is not None:
+                warnings.append(
+                    RiskWarning(
+                        warning_id,
+                        RiskWarningLevel.B_STRONG,
+                        details,
+                    )
+                )
+        return tuple(warnings)
 
     def _steel_supply_lock_details(
         self, state: GameState
@@ -417,6 +427,60 @@ class TechnologySystem:
             "recoverable_steel": recoverable_steel,
             "steel_shortfall": required_steel - recoverable_steel,
             "small_steel_miner_unlocked": False,
+        }
+
+    def _wood_supply_lock_details(
+        self, state: GameState
+    ) -> dict[str, Any] | None:
+        tech_id = "tech_wood_processing_1"
+        building_type = "logging_camp"
+        if any(
+            building.building_type == building_type
+            for building in state.buildings.values()
+        ):
+            return None
+        technology_cost_paid = (
+            tech_id in state.technologies.researched_tech_ids
+            or state.technologies.active_research_id == tech_id
+        )
+        remaining_technology_wood_cost = (
+            0
+            if technology_cost_paid
+            else self.rules.technologies[tech_id].wood_cost
+        )
+        logging_camp_wood_cost = self.building_rules.buildings[
+            building_type
+        ].wood_cost
+        required_wood = (
+            remaining_technology_wood_cost + logging_camp_wood_cost
+        )
+        recoverable_surface_wood = (
+            surface_resource_recoverable_before_final_frost(
+                state,
+                self.building_rules,
+                "wood",
+            )
+        )
+        recoverable_wood = state.resources.wood + recoverable_surface_wood
+        if recoverable_wood >= required_wood:
+            return None
+        return {
+            "required_technology_id": tech_id,
+            "required_building_type": building_type,
+            "technology_cost_paid": technology_cost_paid,
+            "remaining_technology_wood_cost": remaining_technology_wood_cost,
+            "logging_camp_wood_cost": logging_camp_wood_cost,
+            "required_wood": required_wood,
+            "current_wood": state.resources.wood,
+            "remaining_surface_wood": sum(
+                point.remaining_amount
+                for point in state.surface_resource_points.values()
+                if point.resource_type == "wood"
+            ),
+            "recoverable_surface_wood": recoverable_surface_wood,
+            "recoverable_wood": recoverable_wood,
+            "wood_shortfall": required_wood - recoverable_wood,
+            "logging_camp_exists": False,
         }
 
     def validate_state(self, state: GameState) -> None:
@@ -526,7 +590,10 @@ class TechnologySystem:
 
     def view(self, state: GameState) -> tuple[dict[str, Any], ...]:
         completed = set(state.technologies.researched_tech_ids)
-        steel_lock = self._steel_supply_lock_details(state)
+        irreversible_resource_locks = {
+            "tech_steel_screening": self._steel_supply_lock_details(state),
+            "tech_wood_processing_1": self._wood_supply_lock_details(state),
+        }
         result: list[dict[str, Any]] = []
         for tech_id, rule in sorted(self.rules.technologies.items()):
             description_id = technology_description_text_id(tech_id)
@@ -568,7 +635,7 @@ class TechnologySystem:
                         if value > 0
                     },
                     "irreversible_resource_lock": (
-                        steel_lock if tech_id == "tech_steel_screening" else None
+                        irreversible_resource_locks.get(tech_id)
                     ),
                     "research_days": rule.research_days,
                     "description_text_id": description.text_id,

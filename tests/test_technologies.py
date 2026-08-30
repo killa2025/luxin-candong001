@@ -143,6 +143,162 @@ class TechnologyPatchTests(unittest.TestCase):
         self.assertEqual(d49_lock["recoverable_surface_steel"], 0)
         self.assertEqual(d49_lock["recoverable_steel"], 0)
 
+    def test_irreversible_wood_supply_lock_uses_remaining_chain_costs(self) -> None:
+        system = self.technology_system()
+        state = self.make_state()
+        state.resources.wood = 49
+        self._deplete_surface_resource(state, "wood")
+
+        warning = next(
+            item
+            for item in system.evaluate_risks(state)
+            if item.warning_id
+            == "technology.wood_supply_irreversibly_locked"
+        )
+        view = {
+            item["tech_id"]: item for item in system.view(state)
+        }["tech_wood_processing_1"]
+
+        self.assertEqual(warning.level.value, "B_STRONG")
+        self.assertEqual(warning.details["remaining_technology_wood_cost"], 15)
+        self.assertEqual(warning.details["logging_camp_wood_cost"], 35)
+        self.assertEqual(warning.details["required_wood"], 50)
+        self.assertEqual(warning.details["recoverable_wood"], 49)
+        self.assertEqual(warning.details["wood_shortfall"], 1)
+        self.assertFalse(warning.details["technology_cost_paid"])
+        self.assertEqual(view["irreversible_resource_lock"], warning.details)
+
+        state.technologies.active_research_id = "tech_wood_processing_1"
+        state.resources.wood = 34
+        active_warning = next(
+            item
+            for item in system.evaluate_risks(state)
+            if item.warning_id
+            == "technology.wood_supply_irreversibly_locked"
+        )
+        self.assertTrue(active_warning.details["technology_cost_paid"])
+        self.assertEqual(
+            active_warning.details["remaining_technology_wood_cost"], 0
+        )
+        self.assertEqual(active_warning.details["required_wood"], 35)
+
+    def test_wood_supply_lock_respects_recoverable_surface_wood_and_existing_camp(self) -> None:
+        system = self.technology_system()
+        recoverable = self.make_state()
+        recoverable.resources.wood = 49
+        self._deplete_surface_resource(recoverable, "wood")
+        point = recoverable.surface_resource_points["surface-wood-1"]
+        point.remaining_amount = 1
+        point.is_depleted = False
+        self.assertFalse(
+            any(
+                item.warning_id
+                == "technology.wood_supply_irreversibly_locked"
+                for item in system.evaluate_risks(recoverable)
+            )
+        )
+
+        established = self.make_state()
+        established.technologies.researched_tech_ids.append(
+            "tech_wood_processing_1"
+        )
+        built = self.execute(
+            self.building_system(),
+            established,
+            BUILD_COMMAND,
+            {
+                "building_type": "logging_camp",
+                "zone": "outer_ring",
+                "binding_id": "forest-zone-1",
+            },
+        )
+        self.assertTrue(built.accepted)
+        established.resources.wood = 0
+        self._deplete_surface_resource(established, "wood")
+        self.assertFalse(
+            any(
+                item.warning_id
+                == "technology.wood_supply_irreversibly_locked"
+                for item in system.evaluate_risks(established)
+            )
+        )
+
+    def test_final_frost_boundary_excludes_uncollectable_surface_wood(self) -> None:
+        system = self.technology_system()
+        state = self.make_state()
+        state.calendar.current_day = 48
+        state.resources.wood = 49
+        self._deplete_surface_resource(state, "wood")
+        point = state.surface_resource_points["surface-wood-1"]
+        point.remaining_amount = 100
+        point.is_depleted = False
+
+        self.assertTrue(
+            any(
+                item.warning_id
+                == "technology.wood_supply_irreversibly_locked"
+                for item in system.evaluate_risks(state)
+            )
+        )
+
+        point.assigned_workers = 1
+        self.assertFalse(
+            any(
+                item.warning_id
+                == "technology.wood_supply_irreversibly_locked"
+                for item in system.evaluate_risks(state)
+            )
+        )
+
+        state.calendar.current_day = 49
+        warning = next(
+            item
+            for item in system.evaluate_risks(state)
+            if item.warning_id
+            == "technology.wood_supply_irreversibly_locked"
+        )
+        self.assertEqual(warning.details["remaining_surface_wood"], 100)
+        self.assertEqual(warning.details["recoverable_surface_wood"], 0)
+        self.assertEqual(warning.details["recoverable_wood"], 49)
+
+    def test_wood_supply_lock_is_exposed_in_formal_end_day_preview(self) -> None:
+        state = self.make_state()
+        state.resources.wood = 49
+        self._deplete_surface_resource(state, "wood")
+
+        execution = self.engine().execute(
+            state,
+            CommandRequest(
+                "wood-lock-preview",
+                END_DAY_COMMAND,
+                expected_state_sequence=state.command_sequence,
+            ),
+        )
+
+        self.assertEqual(
+            execution.result.code,
+            ErrorCode.END_DAY_CONFIRMATION_REQUIRED,
+        )
+        warning = next(
+            item
+            for item in execution.warnings
+            if item.warning_id
+            == "technology.wood_supply_irreversibly_locked"
+        )
+        self.assertEqual(warning.details["required_wood"], 50)
+        self.assertEqual(warning.details["recoverable_wood"], 49)
+        self.assertEqual(state.command_sequence, 0)
+
+    @staticmethod
+    def _deplete_surface_resource(state, resource_type: str) -> None:
+        for point in state.surface_resource_points.values():
+            if point.resource_type != resource_type:
+                continue
+            point.remaining_amount = 0
+            point.is_depleted = True
+            point.assigned_workers = 0
+            point.assigned_engineers = 0
+
     @staticmethod
     def unlock_overload(state, level: int) -> None:
         completed = [

@@ -120,6 +120,26 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("不提升存档版本", handoff)
         self.assertNotIn("不得实现 Patch 041", handoff)
 
+    def test_patch042_resource_lock_feedback_is_documented(self) -> None:
+        pending = (REPOSITORY_ROOT / "docs" / "PENDING.md").read_text(
+            encoding="utf-8"
+        )
+        index = (REPOSITORY_ROOT / "docs" / "INDEX.md").read_text(
+            encoding="utf-8"
+        )
+        handoff = (
+            REPOSITORY_ROOT
+            / "docs"
+            / "handoff"
+            / "PATCH-042：资源供应链不可逆风险反馈实现记录.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("`technology.wood_supply_irreversibly_locked`", pending)
+        self.assertIn("PATCH-042：资源供应链不可逆风险反馈实现记录", index)
+        self.assertIn("恰好能够支付时不报警", handoff)
+        self.assertIn("不提升存档版本", handoff)
+        self.assertNotIn("不得实现 Patch 042", handoff)
+
     def test_repository_status_text_matches_patch_033_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
