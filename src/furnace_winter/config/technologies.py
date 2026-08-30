@@ -56,6 +56,10 @@ PATCH_006_TECH_IDS = frozenset(
     }
 )
 
+RESEARCHABLE_STRUCTURAL_DEFERRED_TECH_IDS = frozenset(
+    {"tech_furnace_power_stability_1"}
+)
+
 PATCH_006_TECH_STRUCTURE = {
     "tech_drawing_board": (0, (), "unlock_tier", ("T1",), "ACTIVE"),
     "tech_drafting_instrument": (1, (), "unlock_tier", ("T2",), "ACTIVE"),
@@ -68,7 +72,7 @@ PATCH_006_TECH_STRUCTURE = {
     "tech_emergency_heating_device": (1, (), "upgrade_command", ("game.heat",), "ACTIVE"),
     "tech_furnace_coal_saving_2": (2, ("tech_furnace_coal_saving_1",), "passive", ("furnace_coal_cost",), "ACTIVE"),
     "tech_building_insulation_2": (2, ("tech_building_insulation_1",), "passive", ("building_temperature",), "ACTIVE"),
-    "tech_field_cold_weather_equipment": (2, ("tech_building_insulation_1",), "passive", ("outdoor_exposure_risk",), "ACTIVE"),
+    "tech_field_cold_weather_equipment": (2, ("tech_building_insulation_1",), "deferred", ("outdoor_exposure_risk",), "DEFERRED"),
     "tech_overload_tuning": (3, ("tech_furnace_power_stability_1",), "unlock_command", ("game.set_overload:1",), "ACTIVE"),
     "tech_overload_stability": (4, ("tech_overload_tuning",), "upgrade_command", ("game.set_overload:2", "overload_pressure"), "ACTIVE"),
     "tech_final_furnace_stability": (5, ("tech_furnace_coal_saving_2", "tech_building_insulation_2", "tech_overload_stability"), "passive", ("final_frost_furnace",), "ACTIVE"),
@@ -483,6 +487,8 @@ def load_technology_rules(path: Path) -> TechnologyRules:
         )
     if set(PATCH_006_TECH_STRUCTURE) != PATCH_006_TECH_IDS:
         raise TechnologyConfigError("internal Patch 006 technology contract mismatch")
+    if not RESEARCHABLE_STRUCTURAL_DEFERRED_TECH_IDS <= PATCH_006_TECH_IDS:
+        raise TechnologyConfigError("structural deferred technology contract is unknown")
     for tech_id, rule in technologies.items():
         actual_structure = (
             rule.tier,
@@ -494,6 +500,11 @@ def load_technology_rules(path: Path) -> TechnologyRules:
         if actual_structure != PATCH_006_TECH_STRUCTURE[tech_id]:
             raise TechnologyConfigError(
                 f"{tech_id} does not match the Patch 006 structural contract"
+            )
+    for tech_id in RESEARCHABLE_STRUCTURAL_DEFERRED_TECH_IDS:
+        if technologies[tech_id].effect_status != "DEFERRED":
+            raise TechnologyConfigError(
+                "structural deferred technology must remain DEFERRED"
             )
     display_names = [rule.display_name for rule in technologies.values()]
     if len(set(display_names)) != len(display_names):

@@ -28,6 +28,12 @@ from furnace_winter.gameplay import (
     TechnologySystem,
     create_initial_survival_state,
 )
+from furnace_winter.gameplay.survival import (
+    furnace_coal_cost,
+    projected_building_insulation_bonus,
+    projected_heat_bonus,
+    projected_overload_pressure_growth,
+)
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
     CURRENT_SAVE_DATA_VERSION,
@@ -547,6 +553,167 @@ class TechnologyPatchTests(unittest.TestCase):
             any(item.building_type != "research_institute" for item in state.buildings.values() if item.building_id.startswith("building-"))
         )
 
+    def test_patch039_structural_deferred_research_unlocks_overload_without_own_effect(self) -> None:
+        state = self.make_state()
+        self.add_research_institute(state)
+        state.technologies.researched_tech_ids.append("tech_drawing_board")
+        system = self.technology_system()
+        before = deepcopy(state)
+        sample_building = next(iter(state.buildings.values()))
+
+        started = self.execute(
+            system,
+            state,
+            RESEARCH_COMMAND,
+            {"tech_id": "tech_furnace_power_stability_1", "confirm": True},
+        )
+
+        self.assertEqual(started.code, ErrorCode.OK)
+        view = {
+            item["tech_id"]: item for item in system.view(state)
+        }["tech_furnace_power_stability_1"]
+        self.assertEqual(view["status"], "researching")
+        self.assertEqual(view["technology_class"], "structural_prerequisite")
+        self.assertTrue(view["new_research_allowed"])
+        self.assertEqual(view["effect_status"], "DEFERRED")
+
+        state.technologies.research_progress_units = (
+            state.technologies.research_required_units
+            - self.technology_rules.research.progress_units_per_day
+        )
+        completed = self.settle(self.engine(), state)
+
+        self.assertEqual(completed.result.code, ErrorCode.OK)
+        self.assertIn(
+            "tech_furnace_power_stability_1",
+            state.technologies.researched_tech_ids,
+        )
+        state.technologies.researched_tech_ids.extend(
+            ["tech_drafting_instrument", "tech_mechanical_calculator"]
+        )
+        state.resources.wood = max(state.resources.wood, 100)
+        state.resources.steel = max(state.resources.steel, 100)
+        reachable = self.execute(
+            system,
+            state,
+            RESEARCH_COMMAND,
+            {"tech_id": "tech_overload_tuning"},
+        )
+        self.assertEqual(reachable.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(reachable.data["reason"], "confirmation_required")
+
+        after = deepcopy(before)
+        after.technologies.researched_tech_ids.append(
+            "tech_furnace_power_stability_1"
+        )
+        self.assertEqual(
+            furnace_coal_cost(before, self.survival_rules, 2),
+            furnace_coal_cost(after, self.survival_rules, 2),
+        )
+        self.assertEqual(
+            projected_building_insulation_bonus(before, sample_building),
+            projected_building_insulation_bonus(after, sample_building),
+        )
+        self.assertEqual(
+            projected_heat_bonus(before, self.building_rules),
+            projected_heat_bonus(after, self.building_rules),
+        )
+        self.assertEqual(
+            projected_overload_pressure_growth(
+                before, self.technology_rules, 1, 20
+            ),
+            projected_overload_pressure_growth(
+                after, self.technology_rules, 1, 20
+            ),
+        )
+
+    def test_patch039_ordinary_deferred_technologies_cannot_start(self) -> None:
+        deferred_ids = {
+            "tech_scattered_gathering_tools",
+            "tech_sheltered_gathering_shed_improvement",
+            "tech_deep_well_mine_frame",
+            "tech_deep_coal_seam_extraction",
+            "tech_deep_steel_seam_extraction",
+            "tech_hunting_equipment",
+            "tech_field_cold_weather_equipment",
+        }
+        system = self.technology_system()
+
+        for tech_id in sorted(deferred_ids):
+            with self.subTest(tech_id=tech_id):
+                state = self.make_state()
+                before = deepcopy(state)
+                result = self.execute(
+                    system,
+                    state,
+                    RESEARCH_COMMAND,
+                    {"tech_id": tech_id, "confirm": True},
+                )
+                view = {
+                    item["tech_id"]: item for item in system.view(state)
+                }[tech_id]
+
+                self.assertEqual(result.code, ErrorCode.ILLEGAL_COMMAND)
+                self.assertEqual(
+                    result.data["reason"],
+                    "technology_not_available_for_application",
+                )
+                self.assertEqual(
+                    result.data["feedback_text"],
+                    "该研究目前尚无法投入实际应用。",
+                )
+                self.assertEqual(result.data["availability"], "unavailable")
+                self.assertEqual(state, before)
+                self.assertEqual(view["status"], "unavailable")
+                self.assertEqual(view["effect_status"], "DEFERRED")
+                self.assertEqual(
+                    view["technology_class"], "unavailable_application"
+                )
+                self.assertFalse(view["new_research_allowed"])
+                self.assertEqual(
+                    view["description_text"],
+                    "该研究目前尚无法投入实际应用。",
+                )
+
+    def test_patch039_legacy_completed_and_active_deferred_research_are_preserved(self) -> None:
+        system = self.technology_system()
+        completed_state = self.make_state()
+        completed_state.technologies.researched_tech_ids.append(
+            "tech_hunting_equipment"
+        )
+
+        restored = decode_game_state(encode_game_state(completed_state))
+        system.validate_state(restored)
+        completed_view = {
+            item["tech_id"]: item for item in system.view(restored)
+        }["tech_hunting_equipment"]
+        self.assertEqual(completed_view["status"], "completed")
+        self.assertFalse(completed_view["new_research_allowed"])
+
+        active_state = self.make_state()
+        self.add_research_institute(active_state)
+        rule = self.technology_rules.technologies["tech_hunting_equipment"]
+        active_state.technologies.active_research_id = rule.tech_id
+        active_state.technologies.research_required_units = (
+            rule.research_days
+            * self.technology_rules.research.progress_units_per_day
+        )
+        active_state.technologies.research_progress_units = (
+            active_state.technologies.research_required_units
+            - self.technology_rules.research.progress_units_per_day
+        )
+        active_state = decode_game_state(encode_game_state(active_state))
+        active_view = {
+            item["tech_id"]: item for item in system.view(active_state)
+        }[rule.tech_id]
+        self.assertEqual(active_view["status"], "researching")
+
+        settled = self.settle(self.engine(), active_state)
+
+        self.assertEqual(settled.result.code, ErrorCode.OK)
+        self.assertIn(rule.tech_id, active_state.technologies.researched_tech_ids)
+        self.assertIsNone(active_state.technologies.active_research_id)
+
     def test_second_institute_is_speed_only_and_uses_exact_one_point_five(self) -> None:
         state = self.make_state()
         self.add_research_institute(state)
@@ -909,6 +1076,12 @@ class TechnologyPatchTests(unittest.TestCase):
             lambda data: data["technologies"]["tech_hunting_equipment"].update(
                 {"effect_kind": "passive", "effect_status": "ACTIVE"}
             ),
+            lambda data: data["technologies"][
+                "tech_field_cold_weather_equipment"
+            ].update({"effect_kind": "passive", "effect_status": "ACTIVE"}),
+            lambda data: data["technologies"][
+                "tech_furnace_power_stability_1"
+            ].update({"effect_kind": "passive", "effect_status": "ACTIVE"}),
             lambda data: data["technologies"]["tech_furnace_coal_saving_1"].update(
                 {"tier": 1}
             ),

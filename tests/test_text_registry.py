@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
-from furnace_winter.config import ConfigStatus
+from furnace_winter.config import ConfigStatus, load_technology_rules
 from furnace_winter.text import (
     DeprecatedEntry,
     DeprecatedRegistry,
@@ -16,7 +17,12 @@ from furnace_winter.text import (
     build_action_text_registry,
     build_event_text_registry,
     build_oath_order_text_registry,
+    build_technology_text_registry,
+    technology_description_text_id,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def confirmed_entry(text_id: str = "test.confirmed") -> TextEntry:
@@ -30,6 +36,61 @@ def confirmed_entry(text_id: str = "test.confirmed") -> TextEntry:
 
 
 class TextRegistryTests(unittest.TestCase):
+    def test_patch039_technology_descriptions_cover_the_catalog_with_stable_ids(self) -> None:
+        rules = load_technology_rules(ROOT / "data" / "technologies.json")
+        registry = build_technology_text_registry()
+
+        self.assertEqual(len(registry.entries()), len(rules.technologies))
+        self.assertEqual(
+            {entry.text_id for entry in registry.entries()},
+            {
+                technology_description_text_id(tech_id)
+                for tech_id in rules.technologies
+            },
+        )
+        self.assertEqual(
+            technology_description_text_id("tech_overload_tuning"),
+            "tech.overload_tuning.desc",
+        )
+        self.assertNotIn(
+            "tech.xxx.desc", {entry.text_id for entry in registry.entries()}
+        )
+        for entry in registry.entries():
+            self.assertEqual(entry.status, ConfigStatus.USER_OVERRIDE)
+            self.assertEqual(entry.visibility, TextVisibility.PLAYER_VISIBLE)
+            self.assertEqual(
+                entry.source,
+                "docs/handoff/PATCH-039：科技说明与延后研究门禁实现记录.md",
+            )
+
+    def test_patch039_deferred_feedback_and_structural_exception_are_exact(self) -> None:
+        registry = build_technology_text_registry()
+        ordinary_deferred_ids = {
+            "tech_scattered_gathering_tools",
+            "tech_sheltered_gathering_shed_improvement",
+            "tech_deep_well_mine_frame",
+            "tech_deep_coal_seam_extraction",
+            "tech_deep_steel_seam_extraction",
+            "tech_hunting_equipment",
+            "tech_field_cold_weather_equipment",
+        }
+
+        for tech_id in ordinary_deferred_ids:
+            with self.subTest(tech_id=tech_id):
+                self.assertEqual(
+                    registry.require(
+                        technology_description_text_id(tech_id)
+                    ).text,
+                    "该研究目前尚无法投入实际应用。",
+                )
+        self.assertEqual(
+            registry.require(
+                "tech.furnace_power_stability_1.desc"
+            ).text,
+            "建立炉心高功率运行的稳定基础，并开放后续过载调校研究；"
+            "本身不提供独立运行加成。",
+        )
+
     def test_patch035_route_feedback_is_exact_and_user_confirmed(self) -> None:
         registry = build_oath_order_text_registry()
         expected = {

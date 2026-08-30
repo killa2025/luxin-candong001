@@ -23,6 +23,12 @@ from furnace_winter.text.routes import (
     build_oath_order_text_registry,
     render_route_text,
 )
+from furnace_winter.text.technologies import (
+    TECHNOLOGY_DESCRIPTIONS,
+    UNAVAILABLE_RESEARCH_TEXT,
+    build_technology_text_registry,
+    technology_description_text_id,
+)
 
 __all__ = [
     "DeprecatedEntry",
@@ -42,4 +48,8 @@ __all__ = [
     "render_action_text",
     "build_oath_order_text_registry",
     "render_route_text",
+    "TECHNOLOGY_DESCRIPTIONS",
+    "UNAVAILABLE_RESEARCH_TEXT",
+    "build_technology_text_registry",
+    "technology_description_text_id",
 ]
