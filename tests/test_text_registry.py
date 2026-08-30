@@ -83,10 +83,6 @@ class TextRegistryTests(unittest.TestCase):
             "building.house.upgrade_missing_requirement_hint": (
                 "这座住宅还不能升级。需要先完成「{required_tech_name}」研究。"
             ),
-            "research.confirm.body": (
-                "开始研究「{technology_name}」时，木材 {wood_cost}、钢材 {steel_cost} 将立即扣除；"
-                "同一时间不能进行其他研究。"
-            ),
             "research.resource.not_enough": (
                 "当前资源不足，无法开始这项研究。还缺少：{missing_resources}。"
             ),
@@ -143,6 +139,22 @@ class TextRegistryTests(unittest.TestCase):
         self.assertEqual(
             entry.source,
             "docs/handoff/PATCH-037：取消研究确认与损失反馈实现记录.md",
+        )
+
+    def test_patch038_start_research_confirmation_is_user_confirmed(self) -> None:
+        entry = build_action_text_registry().require("research.confirm.body")
+
+        self.assertEqual(
+            entry.text,
+            "确认开始研究「{technology_name}」？本次研究将立即投入 {wood_cost} 木材与 "
+            "{steel_cost} 钢材。研究完成前，这些资源不会返还；若中途取消，"
+            "已经投入的资源与研究进度都将损失。",
+        )
+        self.assertEqual(entry.status, ConfigStatus.USER_OVERRIDE)
+        self.assertEqual(entry.visibility, TextVisibility.PLAYER_VISIBLE)
+        self.assertEqual(
+            entry.source,
+            "docs/handoff/PATCH-038：开始研究确认与投入反馈实现记录.md",
         )
 
     def test_event_text_is_registered_from_sealed_assets(self) -> None:

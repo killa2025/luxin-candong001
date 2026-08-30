@@ -1227,7 +1227,7 @@ class GameSessionTests(unittest.TestCase):
                     self.assertEqual(path.read_bytes(), malformed_bytes)
 
 
-    def test_patch034_research_notice_is_discoverable_without_new_confirmation(self) -> None:
+    def test_patch038_research_confirmation_is_formally_discoverable(self) -> None:
         session = self.new_session(seed=1134)
         research = next(
             spec
@@ -1236,19 +1236,123 @@ class GameSessionTests(unittest.TestCase):
         )
 
         self.assertNotIn("confirm", research.required_arguments)
-        self.assertNotIn("confirm", research.optional_arguments)
+        self.assertEqual(research.optional_arguments["confirm"].value, "BOOLEAN")
+        self.assertEqual(
+            research.argument_semantics["confirm"],
+            "explicit_true_only_never_preview",
+        )
         self.assertEqual(research.pre_execution_text_id, "research.confirm.body")
         self.assertEqual(
             research.pre_execution_text_template,
-            "开始研究「{technology_name}」时，木材 {wood_cost}、钢材 {steel_cost} 将立即扣除；"
-            "同一时间不能进行其他研究。",
+            "确认开始研究「{technology_name}」？本次研究将立即投入 {wood_cost} 木材与 "
+            "{steel_cost} 钢材。研究完成前，这些资源不会返还；若中途取消，"
+            "已经投入的资源与研究进度都将损失。",
         )
         rules_notice = session.rules_view("technologies")["interface_text"][
             "research_start"
         ]
         self.assertEqual(rules_notice["text_id"], "research.confirm.body")
-        self.assertFalse(rules_notice["confirmation_required"])
+        self.assertTrue(rules_notice["confirmation_required"])
+        self.assertEqual(rules_notice["required_confirmation_value"], True)
+        self.assertFalse(rules_notice["confirm_false_is_preview"])
         self.assertEqual(rules_notice["payment_timing"], "on_start")
+        self.assertEqual(
+            rules_notice["cancellation_refund"],
+            {"wood": 0, "steel": 0},
+        )
+        self.assertFalse(rules_notice["cancellation_progress_retained"])
+
+    def test_patch038_start_research_confirmation_is_atomic_and_persistent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "patch038.json"
+            session = self.new_session(seed=1138, save_path=save_path)
+            built = session.command(
+                "game.build",
+                {
+                    "building_type": "research_institute",
+                    "zone": "middle_ring",
+                },
+            )
+            self.assertTrue(built.result.accepted)
+            assigned = session.command(
+                "game.assign",
+                {
+                    "building_id": built.result.data["building_id"],
+                    "population_type": "engineers",
+                    "count": 1,
+                },
+            )
+            self.assertTrue(assigned.result.accepted)
+
+            before = session.state
+            save_before = save_path.read_bytes()
+            state_sequence = before.command_sequence
+            preview = session.command(
+                "game.research",
+                {"tech_id": "tech_drawing_board"},
+            )
+
+            self.assertEqual(preview.result.code, ErrorCode.ILLEGAL_COMMAND)
+            self.assertEqual(preview.result.data["reason"], "confirmation_required")
+            self.assertEqual(
+                preview.result.data["confirmation_text"],
+                "确认开始研究「绘图板」？本次研究将立即投入 10 木材与 0 钢材。"
+                "研究完成前，这些资源不会返还；若中途取消，"
+                "已经投入的资源与研究进度都将损失。",
+            )
+            self.assertEqual(
+                preview.result.data["resource_cost"],
+                {"wood": 10, "steel": 0},
+            )
+            self.assertFalse(preview.save_written)
+            self.assertEqual(session.state, before)
+            self.assertEqual(session.state.command_sequence, state_sequence)
+            self.assertEqual(save_path.read_bytes(), save_before)
+
+            explicit_false = session.command(
+                "game.research",
+                {"tech_id": "tech_drawing_board", "confirm": False},
+            )
+            self.assertEqual(
+                explicit_false.result.data["reason"],
+                "confirm_false_is_not_preview",
+            )
+            self.assertFalse(explicit_false.save_written)
+            self.assertEqual(session.state, before)
+            self.assertEqual(save_path.read_bytes(), save_before)
+
+            accepted = session.command(
+                "game.research",
+                {"tech_id": "tech_drawing_board", "confirm": True},
+            )
+            self.assertTrue(accepted.result.accepted)
+            self.assertTrue(accepted.save_written)
+            self.assertEqual(
+                session.state.technologies.active_research_id,
+                "tech_drawing_board",
+            )
+            self.assertEqual(
+                session.state.resources.wood,
+                before.resources.wood - 10,
+            )
+            self.assertEqual(session.state.resources.steel, before.resources.steel)
+
+            loaded = GameSession.load(save_path, config_dir=ROOT / "data")
+            self.assertEqual(
+                loaded.state.technologies.active_research_id,
+                "tech_drawing_board",
+            )
+            self.assertEqual(loaded.state.resources.wood, before.resources.wood - 10)
+            attempts = [
+                entry
+                for entry in session.replay_document().entries
+                if entry.request.name == "game.research"
+            ]
+            self.assertEqual(len(attempts), 3)
+            self.assertEqual(
+                [entry.result.accepted for entry in attempts],
+                [False, False, True],
+            )
 
     def test_patch035_route_feedback_is_discoverable_from_formal_rules(self) -> None:
         session = self.new_session(seed=1135)
@@ -1358,7 +1462,7 @@ class GameSessionTests(unittest.TestCase):
             self.assertTrue(assigned.result.accepted)
             started = session.command(
                 "game.research",
-                {"tech_id": "tech_drawing_board"},
+                {"tech_id": "tech_drawing_board", "confirm": True},
             )
             self.assertTrue(started.result.accepted)
 

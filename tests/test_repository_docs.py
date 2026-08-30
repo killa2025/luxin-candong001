@@ -19,6 +19,21 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("`docs/PENDING.md`", index)
         self.assertNotIn("handoff/PENDING 登记.md", index)
 
+    def test_pending_uses_patch038_research_confirmation_contract(self) -> None:
+        pending = (REPOSITORY_ROOT / "docs" / "PENDING.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn(
+            "`game.research` 继续无需 `confirm`",
+            pending,
+        )
+        self.assertIn(
+            "Patch 034 的非确认口径已被 Patch 038 用户覆盖；"
+            "当前 `game.research` 仅在 `confirm=true` 时执行",
+            pending,
+        )
+
     def test_repository_status_text_matches_patch_033_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")

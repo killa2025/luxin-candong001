@@ -15,6 +15,9 @@ _PATCH036_SOURCE = (
 _PATCH037_SOURCE = (
     "docs/handoff/PATCH-037：取消研究确认与损失反馈实现记录.md"
 )
+_PATCH038_SOURCE = (
+    "docs/handoff/PATCH-038：开始研究确认与投入反馈实现记录.md"
+)
 
 _PATCH034_RUNTIME_TEXT = {
     "confirm.action.overtime_day.body": (
@@ -34,10 +37,6 @@ _PATCH034_RUNTIME_TEXT = {
     "building.house.upgrade_missing_requirement_hint": (
         "这座住宅还不能升级。需要先完成「{required_tech_name}」研究。"
     ),
-    "research.confirm.body": (
-        "开始研究「{technology_name}」时，木材 {wood_cost}、钢材 {steel_cost} 将立即扣除；"
-        "同一时间不能进行其他研究。"
-    ),
     "research.resource.not_enough": (
         "当前资源不足，无法开始这项研究。还缺少：{missing_resources}。"
     ),
@@ -55,6 +54,14 @@ _PATCH037_RUNTIME_TEXT = {
     ),
 }
 
+_PATCH038_RUNTIME_TEXT = {
+    "research.confirm.body": (
+        "确认开始研究「{technology_name}」？本次研究将立即投入 {wood_cost} 木材与 "
+        "{steel_cost} 钢材。研究完成前，这些资源不会返还；若中途取消，"
+        "已经投入的资源与研究进度都将损失。"
+    ),
+}
+
 
 def build_action_text_registry() -> TextRegistry:
     """Register confirmed operation and requirement text."""
@@ -67,6 +74,11 @@ def build_action_text_registry() -> TextRegistry:
             _PATCH037_SOURCE,
             ConfigStatus.USER_OVERRIDE,
             _PATCH037_RUNTIME_TEXT,
+        ),
+        (
+            _PATCH038_SOURCE,
+            ConfigStatus.USER_OVERRIDE,
+            _PATCH038_RUNTIME_TEXT,
         ),
     ):
         for text_id, text in entries.items():

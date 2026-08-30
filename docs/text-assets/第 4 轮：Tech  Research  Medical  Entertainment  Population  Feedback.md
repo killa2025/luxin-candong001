@@ -160,7 +160,7 @@
 | ---------------------------- | ------------------ | ------ | --------- | ------------------ | ----------- | --------- | ---- | ------------------------------------ |
 | tech.xxx.desc | Tech | 科技完整说明 | TODO_TEXT | Patch 006B / 第三批补表 | 科技描述待补 | TODO_TEXT | 待判定 | 代码窗需按单项科技保留 text_id，占位待补正文；不能作为正式文案。 |
 | tech.xxx.cost_hint | Tech | 科技成本提示 | TODO_TEXT | 第三批补表 | 科技成本 / 研究天数 | TODO_TEXT | 系统内部 | 不补数值；具体成本和研究天数按第三批补表。 |
-| research.confirm.body | Research / Confirm | 研究确认正文 | TODO_TEXT | Patch 006B | 研究确认框 | TODO_TEXT | 待判定 | 代码窗需保留 text_id，占位待补正文；不能作为正式文案。 |
+| research.confirm.body | Research / Confirm | 研究确认正文 | 确认开始研究「{technology_name}」？本次研究将立即投入 {wood_cost} 木材与 {steel_cost} 钢材。研究完成前，这些资源不会返还；若中途取消，已经投入的资源与研究进度都将损失。 | 用户 Patch 038 明确确认 | 研究确认框 | USER_OVERRIDE | 玩家可见 | 取代 Patch 034 非确认说明；只使用已验证科技配置中的名称与成本。 |
 | research.resource.not_enough | Research / Failure | 资源不足提示 | TODO_TEXT | Patch 006B | 研究失败提示 | TODO_TEXT | 待判定 | 可复用同类资源不足模板；正文未封存。 |
   
    
