@@ -34,6 +34,7 @@ SET_WORKTIME_COMMAND = "game.set_worktime"
 OVERTIME_COMMAND = "game.overtime"
 MEDICAL_RATION_COMMAND = "game.medical_ration"
 TRIAGE_COMMAND = "game.triage"
+TRIAGE_UNAVAILABLE_REASON = "triage_rules_unsealed"
 MEMORIAL_COMMAND = "game.memorial"
 
 _LAW_COOLDOWN = "ordinary_law"
@@ -99,6 +100,8 @@ def build_law_catalog(
     ))
     catalog.register(CommandSpec(
         name=TRIAGE_COMMAND,
+        executable=False,
+        unavailable_reason=TRIAGE_UNAVAILABLE_REASON,
         required_arguments={"building_id": ArgumentKind.STRING, "confirm": ArgumentKind.BOOLEAN},
         related_rule_sections=("laws", "buildings"),
         pre_execution_text_id=triage_target_requirement.text_id,
@@ -174,6 +177,8 @@ class LawSystem:
         )
 
     def _legality(self, state: GameState, request: CommandRequest) -> CommandValidation:
+        if request.name == TRIAGE_COMMAND:
+            return self._triage_legality(state, request)
         if state.calendar.is_day_locked or state.final_result.is_finalized:
             return self._illegal("day_not_open_for_planning")
         checks = {
@@ -182,7 +187,6 @@ class LawSystem:
             SET_WORKTIME_COMMAND: self._worktime_legality,
             OVERTIME_COMMAND: self._overtime_legality,
             MEDICAL_RATION_COMMAND: self._medical_ration_legality,
-            TRIAGE_COMMAND: self._triage_legality,
             MEMORIAL_COMMAND: self._memorial_legality,
         }
         return checks[request.name](state, request)
@@ -303,6 +307,24 @@ class LawSystem:
         return CommandValidation.valid()
 
     def _triage_legality(self, state: GameState, request: CommandRequest) -> CommandValidation:
+        # Patch 040: the interface remains discoverable, but execution is paused
+        # until every formal triage rule is sealed.  Keep the legacy reason for
+        # clients and replays that already recognize it.
+        return self._illegal(
+            "triage_balance_not_sealed",
+            command_exists=True,
+            executable=False,
+            unavailable_reason=TRIAGE_UNAVAILABLE_REASON,
+            triage_target_contract=self.triage_target_contract(),
+        )
+
+    def _future_triage_legality(
+        self,
+        state: GameState,
+        request: CommandRequest,
+    ) -> CommandValidation:
+        """Retain the known target boundary for a future sealed implementation."""
+
         if "triage_law" not in state.laws.signed_law_ids:
             return self._illegal("law_prerequisite_missing", missing_law_ids=["triage_law"])
         if request.arguments.get("confirm") is not True:
@@ -998,6 +1020,10 @@ class LawSystem:
 
     def triage_target_contract(self) -> dict[str, Any]:
         return {
+            "command_exists": True,
+            "executable": False,
+            "unavailable_reason": TRIAGE_UNAVAILABLE_REASON,
+            "one_target_per_execution": True,
             "allowed_building_types": ["medical_station", "hospital"],
             "requirement_text_id": "medical.triage.target_rule",
             "requirement_text": render_action_text(

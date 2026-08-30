@@ -71,6 +71,34 @@ class RepositoryDocumentationTests(unittest.TestCase):
             pending,
         )
 
+    def test_patch040_triage_is_documented_as_existing_but_unavailable(self) -> None:
+        pending = (REPOSITORY_ROOT / "docs" / "PENDING.md").read_text(
+            encoding="utf-8"
+        )
+        index = (REPOSITORY_ROOT / "docs" / "INDEX.md").read_text(
+            encoding="utf-8"
+        )
+        handoff = (
+            REPOSITORY_ROOT
+            / "docs"
+            / "handoff"
+            / "PATCH-040：分级救治执行暂停与能力可见性实现记录.md"
+        ).read_text(encoding="utf-8")
+
+        for field in (
+            "`command_exists=true`",
+            "`executable=false`",
+            "`unavailable_reason=triage_rules_unsealed`",
+        ):
+            self.assertIn(field, pending)
+        self.assertIn(
+            "PATCH-040：分级救治执行暂停与能力可见性实现记录",
+            index,
+        )
+        self.assertIn("以下 12 项必须全部获得正式口径", handoff)
+        self.assertIn("不提升存档版本", handoff)
+        self.assertNotIn("不得实现 Patch 040", handoff)
+
     def test_repository_status_text_matches_patch_033_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")

@@ -2,11 +2,13 @@
 
 《炉心残冬》项目仓库。
 
-代码 Patch 026～038 及各自复审修正均已并入 `main`；Patch 030、Patch 032、Patch 033、Patch 034、Patch 035、Patch 036、Patch 037、Patch 038 已分别完成对应黑盒验收，Patch 031 已完成事件正文接线。Patch 039 为现有 37 项科技登记稳定说明并接入机器查询：普通 `DEFERRED` 科技不得新开研究，既有已完成或进行中状态保持兼容；炉心功率稳定 I 是唯一可研究的结构前置，本身不提供独立运行加成。开始研究仍须 `confirm=true`，取消研究仍为零返还与进度清零；科技成本、天数、速度和已实现效果不变。分级救治结果、冷却、死亡、伤残与社会影响仍不实现。悼亡钟继续公开结构化累计死亡条件，不输出与机制不符的“近期死亡”正文。旧城实际离开或资源损失不符合现有终局正文时只登记 PENDING；`sedation_city` 正式触发公式尚未封存，其正文暂不进入运行选择。
+代码 Patch 026～039 及各自复审修正均已并入 `main`；Patch 030、Patch 032～039 已分别完成对应黑盒验收，Patch 031 已完成事件正文接线。Patch 040 按用户确认暂停 `game.triage` 的实际执行：命令和目标 schema 继续存在，但机器规格明确返回 `command_exists=true`、`executable=false`、`unavailable_reason=triage_rules_unsealed`；观察中的可执行行动不再包含该命令，直接调用继续兼容返回 `triage_balance_not_sealed` 且不改变状态。医疗站、医院为未来合法单一目标，养护所与其他非治疗建筑仍不可用。分级救治的成本、冷却、治疗、死亡、伤残、医疗压力、社会影响和结算顺序未全部封存前不得恢复执行。Patch 039 的 37 项科技说明与 `DEFERRED` 研究门禁继续有效；开始研究仍须 `confirm=true`，取消研究仍为零返还与进度清零。悼亡钟继续公开结构化累计死亡条件，不输出与机制不符的“近期死亡”正文。旧城实际离开或资源损失不符合现有终局正文时只登记 PENDING；`sedation_city` 正式触发公式尚未封存，其正文暂不进入运行选择。
 
 游戏的实际玩家是运行在沙盒中的 AI，人类用户负责旁观。这个产品定位不产生 AI 专属规则：游戏仍通过通用结构化命令和状态接口运行，不提供决策评分、推荐行动或自动策略。
 
 ## 目录概览
+
+Patch 030、Patch 031、Patch 032、Patch 033、Patch 034、Patch 035、Patch 036、Patch 037、Patch 038 与 Patch 039 的既有合同继续有效。
 
 - `docs/`：项目文档
 - `data/`：数据文件
@@ -30,14 +32,14 @@
 - `game.resolve_event` 处理当前可执行事件选项；重大事件未处理时硬阻塞日结，普通事件允许忽略且不会在后台偷偷结算。
 - `game.end_run` 只允许在 D55 完整结算、评分和报告已经生成后以 `confirm=true` 主动封存本局；它保留原 `ending_id`、评分和标签，只另记 `run_state=ended` 与 `termination_reason=player_ended`。
 - 终局报告保存实际选中的 `text_id` 和报告格式版本；Patch 020 使用本局种子对符合状态的封存候选文案作稳定选择，Patch 021 再用同日服务快照证明医疗与食堂经历。Patch 027 的格式 3 报告以 D55 服务事实和终局实际库存过滤主报告句，Patch 029 的格式 4 报告为这些事实分支接入用户确认正文，Patch 030 的格式 5 再按已签炉律、已建/运行设施、旧城结算与承诺事实接入路线和制度长文。既有格式 1 / 2 / 3 / 4 报告均按各自合同原样严格读取，不在加载时重抽，也不能用其他格式形状绕过校验。
-- `GameSession` 是供沙盒 AI 使用的统一运行入口：新建或读取存档后，可通过同一对象调用全部 27 个现有游戏命令；成功修改状态的命令会原子保存，保存失败则回滚本次命令。
-- `GameSession.status()` 每次只返回当前生存与规划所需的紧凑事实；`observe()` 返回完整机器观察，并列出全部 `available_rule_sections`、正式 `play_envelopes`、规则查询协议、持久化文件角色、日结确认生命周期和序列语义；`rules_view(section)` 按模块返回已验证的原始配置及其 `FINAL` / `TEST_NUMERIC` 状态，不提供策略建议。命令规格通过 `related_rule_sections` 指向建筑、科技、炉律、事件、路线、生存与终局规则来源，并通过 `related_protocol_contracts` 指向日结确认等非游戏规则协议，不必先提交失败命令才能发现合法结构。
+- `GameSession` 是供沙盒 AI 使用的统一运行入口：新建或读取存档后，同一对象登记 27 个现有游戏命令，其中 26 个属于当前可执行能力，`game.triage` 作为暂停能力保留；成功修改状态的命令会原子保存，保存失败则回滚本次命令。
+- `GameSession.status()` 每次只返回当前生存与规划所需的紧凑事实；`observe()` 返回完整机器观察，分别列出 `available_commands` 与 `unavailable_commands`，并提供全部 `available_rule_sections`、正式 `play_envelopes`、规则查询协议、持久化文件角色、日结确认生命周期和序列语义；`command_specs` 查询保留全部命令及其 `command_exists`、`executable`、`unavailable_reason`。`rules_view(section)` 按模块返回已验证的原始配置及其 `FINAL` / `TEST_NUMERIC` 状态，不提供策略建议。命令规格通过 `related_rule_sections` 指向建筑、科技、炉律、事件、路线、生存与终局规则来源，并通过 `related_protocol_contracts` 指向日结确认等非游戏规则协议，不必先提交失败命令才能发现合法结构。
 - `GameSession.replay_document()` 与 `write_replay()` 导出本次进程从打开存档开始的确定性命令记录；它不伪装成此前整局历史。`replay_sequence` 只编号当前会话中实际记录的命令尝试，包含拒绝命令并在重开会话时重置；`state_sequence` 保存于游戏状态，只在状态成功提交时递增，并由请求字段 `expected_state_sequence` 用于并发校验。
 - `game.set_furnace` 在白天设置最终炉心档位 `0～3`；炉心关闭或燃料不足会在 `end_day` 前产生结构化强警告。若日结实际有效炉级为 0，当日至少发生 1 例自然死亡；疾病、饥饿优先结算，只有两者均未造成死亡时，既有寒冷系统才保证至少 1 人冻死。警告会分别返回无条件的自然死亡下限与有条件的寒冷死亡下限，不预先断言具体死因。
 - `data/survival.json` 保存已封存的开局值、炉心档位、食物基础规则、固定天气与区域修正。
 - `data/buildings.json` 保存建筑、地表资源点、升级、区域槽位、`heat` 和测试态 `woodfuel` 数值；其中 `TEST_NUMERIC` 项必须经测试窗复核后才能视为最终平衡值。
 - `data/maps.json` 保存三张 V1 地图、共享小型资源点/猎区/森林数量、33/34/33 随机权重与大型煤钢矿点差异；地图差异不修改天气、人口、开局资源或其他生存规则。
-- `data/laws.json` 保存 006A 炉律关系、配给、工时、医疗与社会行动规则，包括已登记为 `TEST_NUMERIC` 的过劳患病公式、事故风险点、Patch 013 额外医疗配给 5 食物/人、最多 10 人、冷却 5 天，以及 Patch 019 火盆集会每日被动恐慌下限 20；未封存的分诊结果及事故结果不进入运行配置。
+- `data/laws.json` 保存 006A 炉律关系、配给、工时、医疗与社会行动规则，包括已登记为 `TEST_NUMERIC` 的过劳患病公式、事故风险点、Patch 013 额外医疗配给 5 食物/人、最多 10 人、冷却 5 天，以及 Patch 019 火盆集会每日被动恐慌下限 20；未封存的分诊结果及事故结果不进入运行配置，Patch 040 也不为暂停的分诊命令补造任何数值。
 - `data/technologies.json` 保存 37 项 006B 科技、单队列研究规则、第二研究所精确倍率与过载压力规则；Patch 039 为每项科技提供稳定说明，普通 `DEFERRED` 项禁止新开研究且不伪造运行效果，炉心功率稳定 I 仅作为可研究的结构前置保留。
 - `data/events.json` 保存 Patch 007 事件阈值、承诺期限与奖惩、固定增员预设和第七霜落预警日；这些试玩数值保持 `TEST_NUMERIC`。
 - `data/oath_order.json` 保存代码 Patch 008 的旧城派阈值、006C 解锁、炉律关系、行动成本与冷却；Patch 019 只继续覆盖誓言路线的暂行测试值，铁腕值保持不变，全部继续标记为 `TEST_NUMERIC`。

@@ -1120,17 +1120,14 @@ class LawPatchTests(unittest.TestCase):
                     MEDICAL_RATION_COMMAND,
                     {"confirm": True},
                 )
+                self.assertEqual(
+                    triage.data["reason"], "triage_balance_not_sealed"
+                )
+                self.assertFalse(triage.data["executable"])
                 if expected_to_run:
-                    self.assertEqual(
-                        triage.data["reason"], "triage_balance_not_sealed"
-                    )
                     self.assertTrue(medical_ration.accepted)
                     self.assertEqual(state.medical.effective_capacity, 10)
                 else:
-                    self.assertEqual(
-                        triage.data["reason"],
-                        "medical_building_not_operational",
-                    )
                     self.assertEqual(
                         medical_ration.data["reason"],
                         "no_operational_medical_system",
@@ -1211,11 +1208,8 @@ class LawPatchTests(unittest.TestCase):
             TRIAGE_COMMAND,
             {"building_id": "missing", "confirm": True},
         )
-        self.assertEqual(invalid.data["reason"], "unknown_building")
-        self.assertEqual(
-            invalid.data["requirement_text"],
-            "启动时必须指定一座医疗站或医院。",
-        )
+        self.assertEqual(invalid.data["reason"], "triage_balance_not_sealed")
+        self.assertEqual(invalid.data["unavailable_reason"], "triage_rules_unsealed")
         self.assertEqual(state, before)
 
         residence_id = next(
@@ -1228,10 +1222,8 @@ class LawPatchTests(unittest.TestCase):
             TRIAGE_COMMAND,
             {"building_id": residence_id, "confirm": True},
         )
-        self.assertEqual(invalid_type.data["reason"], "invalid_triage_target")
         self.assertEqual(
-            invalid_type.data["requirement_text"],
-            "启动时必须指定一座医疗站或医院。",
+            invalid_type.data["reason"], "triage_balance_not_sealed"
         )
         self.assertEqual(state, before)
 
@@ -1256,6 +1248,12 @@ class LawPatchTests(unittest.TestCase):
             triage_spec.pre_execution_text_template,
             "启动时必须指定一座医疗站或医院。",
         )
+        self.assertTrue(triage_spec.command_exists)
+        self.assertFalse(triage_spec.executable)
+        self.assertEqual(
+            triage_spec.unavailable_reason,
+            "triage_rules_unsealed",
+        )
 
         contract = self.law_system().observe(state)[
             "triage_target_contract"
@@ -1264,6 +1262,12 @@ class LawPatchTests(unittest.TestCase):
             contract["allowed_building_types"],
             ["medical_station", "hospital"],
         )
+        self.assertTrue(contract["command_exists"])
+        self.assertFalse(contract["executable"])
+        self.assertEqual(
+            contract["unavailable_reason"], "triage_rules_unsealed"
+        )
+        self.assertTrue(contract["one_target_per_execution"])
         self.assertFalse(contract["care_home_allowed"])
         self.assertEqual(
             contract["care_home_requirement_text"],

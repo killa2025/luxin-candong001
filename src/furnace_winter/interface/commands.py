@@ -110,6 +110,9 @@ class CommandRequest:
 @dataclass(frozen=True, slots=True)
 class CommandSpec:
     name: str
+    command_exists: bool = field(default=True, kw_only=True)
+    executable: bool = field(default=True, kw_only=True)
+    unavailable_reason: str | None = field(default=None, kw_only=True)
     required_arguments: Mapping[str, ArgumentKind] = field(default_factory=dict)
     optional_arguments: Mapping[str, ArgumentKind] = field(default_factory=dict)
     argument_options: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
@@ -147,6 +150,21 @@ class CommandCatalog:
             raise ValueError(f"invalid command name: {spec.name!r}")
         if spec.name in self._specs:
             raise ValueError(f"duplicate command spec: {spec.name}")
+        if type(spec.command_exists) is not bool:
+            raise ValueError("command exists must be a boolean")
+        if type(spec.executable) is not bool:
+            raise ValueError("command executable state must be a boolean")
+        if not spec.command_exists:
+            raise ValueError("registered command specs must exist")
+        if spec.executable and spec.unavailable_reason is not None:
+            raise ValueError("executable commands cannot have an unavailable reason")
+        if not spec.executable and (
+            not isinstance(spec.unavailable_reason, str)
+            or not COMMAND_NAME_PATTERN.fullmatch(spec.unavailable_reason)
+        ):
+            raise ValueError(
+                "unavailable commands require a stable unavailable reason"
+            )
         overlap = set(spec.required_arguments) & set(spec.optional_arguments)
         if overlap:
             raise ValueError(f"arguments cannot be both required and optional: {overlap}")
