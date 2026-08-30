@@ -158,6 +158,32 @@ class CommandInterfaceTests(unittest.TestCase):
                     )
                 )
 
+    def test_command_schema_distinguishes_paused_capabilities(self) -> None:
+        catalog = CommandCatalog()
+        catalog.register(
+            CommandSpec(
+                name="test.future-action",
+                executable=False,
+                unavailable_reason="rules_unsealed",
+            )
+        )
+
+        paused = catalog.get("test.future-action")
+        self.assertTrue(paused.command_exists)
+        self.assertFalse(paused.executable)
+        self.assertEqual(paused.unavailable_reason, "rules_unsealed")
+        with self.assertRaises(ValueError):
+            catalog.register(
+                CommandSpec(name="test.missing-reason", executable=False)
+            )
+        with self.assertRaises(ValueError):
+            catalog.register(
+                CommandSpec(
+                    name="test.contradictory",
+                    unavailable_reason="rules_unsealed",
+                )
+            )
+
     def test_confirm_false_precedes_missing_fields_only_for_confirm_specs(self) -> None:
         confirm_catalog = CommandCatalog()
         confirm_catalog.register(
@@ -397,7 +423,6 @@ class MachineStartupTests(unittest.TestCase):
                 "game.set_ration",
                 "game.set_worktime",
                 "game.sign_law",
-                "game.triage",
                 "game.cancel_research",
                 "game.research",
                 "game.set_overload",
@@ -408,6 +433,16 @@ class MachineStartupTests(unittest.TestCase):
                 "game.use_oath_order_action",
                 "game.end_run",
             ],
+        )
+        self.assertEqual(
+            [item["name"] for item in document["unavailable_commands"]],
+            ["game.triage"],
+        )
+        triage = document["unavailable_commands"][0]
+        self.assertTrue(triage["command_exists"])
+        self.assertFalse(triage["executable"])
+        self.assertEqual(
+            triage["unavailable_reason"], "triage_rules_unsealed"
         )
         self.assertEqual(document["state"]["events"]["generated_for_day"], 1)
         self.assertIsInstance(document["event_views"], list)

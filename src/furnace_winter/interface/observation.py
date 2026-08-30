@@ -17,6 +17,7 @@ class Observation:
     protocol_version: int
     state: GameState
     available_commands: tuple[CommandSpec, ...] = ()
+    unavailable_commands: tuple[CommandSpec, ...] = ()
     available_rule_sections: tuple[str, ...] = ()
     protocol_contract: dict[str, Any] | None = None
     event_views: tuple[dict[str, Any], ...] = ()
@@ -50,7 +51,12 @@ class Observation:
         return cls(
             protocol_version=PROTOCOL_VERSION,
             state=state,
-            available_commands=available_commands,
+            available_commands=tuple(
+                spec for spec in available_commands if spec.executable
+            ),
+            unavailable_commands=tuple(
+                spec for spec in available_commands if not spec.executable
+            ),
             available_rule_sections=available_rule_sections,
             protocol_contract=protocol_contract,
             event_views=event_views,

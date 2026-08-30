@@ -1476,6 +1476,10 @@ class GameSessionTests(unittest.TestCase):
         self.assertEqual(
             contract,
             {
+                "command_exists": True,
+                "executable": False,
+                "unavailable_reason": "triage_rules_unsealed",
+                "one_target_per_execution": True,
                 "allowed_building_types": ["medical_station", "hospital"],
                 "requirement_text_id": "medical.triage.target_rule",
                 "requirement_text": "启动时必须指定一座医疗站或医院。",
@@ -1506,6 +1510,103 @@ class GameSessionTests(unittest.TestCase):
             "medical.triage.target_rule",
         )
         self.assertEqual(session.state, before)
+
+    def test_patch040_triage_is_visible_but_unavailable_and_atomic(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "patch040.json"
+            session = self.new_session(seed=1140, save_path=save_path)
+            before = session.state
+            save_before = save_path.read_bytes()
+
+            observation = session.observe()
+            self.assertNotIn(
+                "game.triage",
+                {item.name for item in observation.available_commands},
+            )
+            triage = next(
+                item
+                for item in observation.unavailable_commands
+                if item.name == "game.triage"
+            )
+            self.assertTrue(triage.command_exists)
+            self.assertFalse(triage.executable)
+            self.assertEqual(
+                triage.unavailable_reason,
+                "triage_rules_unsealed",
+            )
+
+            rejected = session.command(
+                "game.triage",
+                {"building_id": "future-medical-target", "confirm": True},
+            )
+            self.assertEqual(rejected.result.code, ErrorCode.ILLEGAL_COMMAND)
+            self.assertEqual(
+                rejected.result.data["reason"],
+                "triage_balance_not_sealed",
+            )
+            self.assertEqual(
+                rejected.result.data["unavailable_reason"],
+                "triage_rules_unsealed",
+            )
+            self.assertFalse(rejected.result.state_changed)
+            self.assertFalse(rejected.save_written)
+            self.assertEqual(session.state, before)
+            self.assertEqual(save_path.read_bytes(), save_before)
+
+            repeated = session.command(
+                "game.triage",
+                {"building_id": "future-medical-target", "confirm": True},
+            )
+            self.assertEqual(repeated.result.data, rejected.result.data)
+            self.assertEqual(session.state, before)
+            self.assertEqual(save_path.read_bytes(), save_before)
+
+            replay_entry = session.replay_document().entries[-1]
+            self.assertFalse(replay_entry.result.accepted)
+            self.assertEqual(
+                replay_entry.result.data["reason"],
+                "triage_balance_not_sealed",
+            )
+
+            loaded = GameSession.load(save_path, config_dir=ROOT / "data")
+            self.assertEqual(loaded.state, before)
+            loaded_triage = next(
+                item
+                for item in loaded.observe().unavailable_commands
+                if item.name == "game.triage"
+            )
+            self.assertEqual(
+                loaded_triage.unavailable_reason,
+                "triage_rules_unsealed",
+            )
+
+            legacy_state = loaded.state
+            legacy_state.social_policy.triage_used_ever = True
+            legacy_state.social_policy.ending_tag_candidates.append(
+                "triage_used"
+            )
+            save_path.write_text(
+                dumps(encode_game_state(legacy_state)),
+                encoding="utf-8",
+            )
+            legacy_loaded = GameSession.load(
+                save_path,
+                config_dir=ROOT / "data",
+            )
+            self.assertTrue(
+                legacy_loaded.state.social_policy.triage_used_ever
+            )
+            self.assertIn(
+                "triage_used",
+                legacy_loaded.state.social_policy.ending_tag_candidates,
+            )
+            self.assertFalse(
+                next(
+                    item
+                    for item in legacy_loaded.command_specs()
+                    if item.name == "game.triage"
+                ).executable
+            )
 
     def test_patch037_cancel_research_confirmation_is_atomic_and_persistent(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
