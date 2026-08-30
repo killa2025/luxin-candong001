@@ -28,6 +28,43 @@ class RepositoryDocumentationTests(unittest.TestCase):
             "`game.research` 继续无需 `confirm`",
             pending,
         )
+
+    def test_patch039_deferred_research_contract_is_the_only_current_navigation(self) -> None:
+        pending = (REPOSITORY_ROOT / "docs" / "PENDING.md").read_text(
+            encoding="utf-8"
+        )
+        index = (REPOSITORY_ROOT / "docs" / "INDEX.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn(
+            "科技可研究并保留 `DEFERRED` 元数据",
+            pending,
+        )
+        self.assertIn(
+            "唯一可研究的 `DEFERRED` 结构前置",
+            pending,
+        )
+        self.assertIn(
+            "普通 `DEFERRED` 科技不得新开研究",
+            pending,
+        )
+        self.assertIn(
+            "PATCH-039：科技说明与延后研究门禁实现记录",
+            index,
+        )
+        self.assertIn(
+            "PATCH-038：开始研究确认与投入反馈实现记录 | Patch 038 交付记录 | 当前施工记录 | 已完成复审、已合并 main、第三十五次黑盒验收通过",
+            index,
+        )
+        self.assertTrue(
+            (
+                REPOSITORY_ROOT
+                / "docs"
+                / "handoff"
+                / "PATCH-039：科技说明与延后研究门禁实现记录.md"
+            ).is_file()
+        )
         self.assertIn(
             "Patch 034 的非确认口径已被 Patch 038 用户覆盖；"
             "当前 `game.research` 仅在 `confirm=true` 时执行",

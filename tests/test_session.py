@@ -1354,6 +1354,77 @@ class GameSessionTests(unittest.TestCase):
                 [False, False, True],
             )
 
+    def test_patch039_deferred_research_view_rejection_save_and_replay_are_consistent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "patch039.json"
+            session = self.new_session(seed=1139, save_path=save_path)
+            before = session.state
+            save_before = save_path.read_bytes()
+            catalog = {
+                item["tech_id"]: item
+                for item in session.rules_view("technologies")[
+                    "interface_text"
+                ]["descriptions"]
+            }
+
+            self.assertEqual(len(catalog), 37)
+            self.assertEqual(
+                catalog["tech_field_cold_weather_equipment"]["text_id"],
+                "tech.field_cold_weather_equipment.desc",
+            )
+            self.assertFalse(
+                catalog["tech_field_cold_weather_equipment"][
+                    "new_research_allowed"
+                ]
+            )
+            self.assertEqual(
+                catalog["tech_furnace_power_stability_1"][
+                    "technology_class"
+                ],
+                "structural_prerequisite",
+            )
+            self.assertTrue(
+                catalog["tech_furnace_power_stability_1"][
+                    "new_research_allowed"
+                ]
+            )
+
+            rejected = session.command(
+                "game.research",
+                {
+                    "tech_id": "tech_field_cold_weather_equipment",
+                    "confirm": True,
+                },
+            )
+
+            self.assertEqual(rejected.result.code, ErrorCode.ILLEGAL_COMMAND)
+            self.assertEqual(
+                rejected.result.data["reason"],
+                "technology_not_available_for_application",
+            )
+            self.assertEqual(
+                rejected.result.data["feedback_text"],
+                "该研究目前尚无法投入实际应用。",
+            )
+            self.assertFalse(rejected.result.state_changed)
+            self.assertFalse(rejected.save_written)
+            self.assertEqual(session.state, before)
+            self.assertEqual(save_path.read_bytes(), save_before)
+
+            loaded = GameSession.load(save_path, config_dir=ROOT / "data")
+            self.assertEqual(loaded.state, before)
+            replay_entry = session.replay_document().entries[-1]
+            self.assertEqual(replay_entry.request.name, "game.research")
+            self.assertFalse(replay_entry.result.accepted)
+            self.assertEqual(
+                replay_entry.result.data["reason"],
+                "technology_not_available_for_application",
+            )
+            self.assertEqual(
+                replay_entry.result.state_sequence,
+                before.command_sequence,
+            )
+
     def test_patch035_route_feedback_is_discoverable_from_formal_rules(self) -> None:
         session = self.new_session(seed=1135)
         rules = session.rules_view("oath_order")["interface_text"]

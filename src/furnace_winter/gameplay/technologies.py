@@ -7,6 +7,7 @@ from typing import Any
 from furnace_winter.config import (
     BuildingRules,
     LawRules,
+    RESEARCHABLE_STRUCTURAL_DEFERRED_TECH_IDS,
     SurvivalRules,
     TechnologyRules,
 )
@@ -37,7 +38,9 @@ from furnace_winter.models import GameState, SaveDataError, validate_game_state
 from furnace_winter.text import (
     TextRegistry,
     build_action_text_registry,
+    build_technology_text_registry,
     render_action_text,
+    technology_description_text_id,
 )
 
 
@@ -110,6 +113,18 @@ class TechnologySystem:
         self.survival_rules = survival_rules
         self.law_rules = law_rules
         self.text_registry = text_registry or build_action_text_registry()
+        self.technology_text_registry = build_technology_text_registry()
+        description_tech_ids = {
+            text_id.removeprefix("tech.").removesuffix(".desc")
+            for text_id in (
+                entry.text_id for entry in self.technology_text_registry.entries()
+            )
+        }
+        expected_description_ids = {
+            tech_id.removeprefix("tech_") for tech_id in rules.technologies
+        }
+        if description_tech_ids != expected_description_ids:
+            raise ValueError("technology description catalog must cover every technology")
         validate_technology_building_links(rules, building_rules)
         self._catalog = build_technology_catalog(rules, self.text_registry)
         self._validator = CommandValidator(self._catalog)
@@ -219,6 +234,17 @@ class TechnologySystem:
             )
         if tech_id in completed:
             return self._illegal("technology_already_researched")
+        if not self._new_research_allowed(rule):
+            text_id = technology_description_text_id(tech_id)
+            return self._illegal(
+                "technology_not_available_for_application",
+                technology_id=tech_id,
+                technology_name=rule.display_name,
+                effect_status=rule.effect_status,
+                availability="unavailable",
+                feedback_text_id=text_id,
+                feedback_text=self.technology_text_registry.require(text_id).text,
+            )
         missing = sorted(set(rule.prerequisite_tech_ids) - completed)
         tier_unlock = self.rules.tier_unlock_tech_id(rule.tier)
         if tier_unlock is not None and tier_unlock not in completed:
@@ -503,6 +529,9 @@ class TechnologySystem:
         steel_lock = self._steel_supply_lock_details(state)
         result: list[dict[str, Any]] = []
         for tech_id, rule in sorted(self.rules.technologies.items()):
+            description_id = technology_description_text_id(tech_id)
+            description = self.technology_text_registry.require(description_id)
+            new_research_allowed = self._new_research_allowed(rule)
             missing = sorted(set(rule.prerequisite_tech_ids) - completed)
             tier_unlock = self.rules.tier_unlock_tech_id(rule.tier)
             if tier_unlock is not None and tier_unlock not in completed:
@@ -511,6 +540,8 @@ class TechnologySystem:
                 status = "completed"
             elif tech_id == state.technologies.active_research_id:
                 status = "researching"
+            elif not new_research_allowed:
+                status = "unavailable"
             elif missing:
                 status = "locked"
             else:
@@ -540,10 +571,40 @@ class TechnologySystem:
                         steel_lock if tech_id == "tech_steel_screening" else None
                     ),
                     "research_days": rule.research_days,
+                    "description_text_id": description.text_id,
+                    "description_text": description.text,
+                    "description_status": description.status.value,
+                    "effect_kind": rule.effect_kind,
+                    "effect_targets": list(rule.effect_targets),
                     "effect_status": rule.effect_status,
+                    "technology_class": self._technology_class(rule),
+                    "new_research_allowed": new_research_allowed,
+                    "unavailable_reason": (
+                        None
+                        if new_research_allowed
+                        else "technology_not_available_for_application"
+                    ),
                 }
             )
         return tuple(result)
+
+    def description_catalog(self) -> tuple[dict[str, Any], ...]:
+        return tuple(
+            {
+                "tech_id": tech_id,
+                "text_id": entry.text_id,
+                "text": entry.text,
+                "status": entry.status.value,
+                "technology_class": self._technology_class(rule),
+                "new_research_allowed": self._new_research_allowed(rule),
+            }
+            for tech_id, rule in sorted(self.rules.technologies.items())
+            for entry in (
+                self.technology_text_registry.require(
+                    technology_description_text_id(tech_id)
+                ),
+            )
+        )
 
     def research_start_notice(self) -> dict[str, Any]:
         """Return the confirmed research payment contract for machine rules."""
@@ -564,6 +625,21 @@ class TechnologySystem:
                 "steel_cost": "technologies.<tech_id>.steel_cost",
             },
         }
+
+    @staticmethod
+    def _new_research_allowed(rule: Any) -> bool:
+        return (
+            rule.effect_status != "DEFERRED"
+            or rule.tech_id in RESEARCHABLE_STRUCTURAL_DEFERRED_TECH_IDS
+        )
+
+    @staticmethod
+    def _technology_class(rule: Any) -> str:
+        if rule.tech_id in RESEARCHABLE_STRUCTURAL_DEFERRED_TECH_IDS:
+            return "structural_prerequisite"
+        if rule.effect_status == "DEFERRED":
+            return "unavailable_application"
+        return "active_effect"
 
     @staticmethod
     def _staffed_research_institutes(

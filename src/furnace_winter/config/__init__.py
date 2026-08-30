@@ -63,6 +63,7 @@ from furnace_winter.config.events import (
 from furnace_winter.config.technologies import (
     OverloadLevelRule,
     OverloadRules,
+    RESEARCHABLE_STRUCTURAL_DEFERRED_TECH_IDS,
     ResearchRules,
     TechnologyConfigError,
     TechnologyRule,
@@ -118,6 +119,7 @@ __all__ = [
     "PromiseRules",
     "QueueRules",
     "ResearchRules",
+    "RESEARCHABLE_STRUCTURAL_DEFERRED_TECH_IDS",
     "RouteActionRule",
     "RouteLawRule",
     "MedicalActionRules",
