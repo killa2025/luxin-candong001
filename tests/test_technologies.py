@@ -29,6 +29,9 @@ from furnace_winter.gameplay import (
     TechnologySystem,
     create_initial_survival_state,
 )
+from furnace_winter.gameplay.buildings import (
+    surface_resource_recoverable_upper_bound_before_final_frost,
+)
 from furnace_winter.gameplay.survival import (
     furnace_coal_cost,
     projected_building_insulation_bonus,
@@ -343,6 +346,54 @@ class TechnologyPatchTests(unittest.TestCase):
             == "technology.wood_supply_irreversibly_locked"
         )
         self.assertEqual(preview_warning.details, warning.details)
+
+    def test_wood_supply_upper_bound_never_loses_fractional_future_output(self) -> None:
+        state = self.make_state()
+        state.calendar.current_day = 46
+        self._set_alive_workers(state, 1)
+        state.resources.wood = 43
+        self._deplete_surface_resource(state, "wood")
+        point = state.surface_resource_points["surface-wood-1"]
+        point.remaining_amount = 100
+        point.is_depleted = False
+        point.assigned_workers = 1
+
+        recoverable = surface_resource_recoverable_upper_bound_before_final_frost(
+            state,
+            self.building_rules,
+            "wood",
+        )
+
+        self.assertGreaterEqual(recoverable, 7)
+        self.assertFalse(
+            any(
+                item.warning_id
+                == "technology.wood_supply_irreversibly_locked"
+                for item in self.technology_system().evaluate_risks(state)
+            )
+        )
+
+    def test_wood_supply_upper_bound_allows_future_fixed_arrival_capacity(self) -> None:
+        system = self.technology_system()
+        for day in (5, 6, 18, 19, 36, 37):
+            with self.subTest(day=day):
+                state = self.make_state()
+                state.calendar.current_day = day
+                state.population.workers = 0
+                state.population.engineers = 0
+                state.resources.wood = 49
+                self._deplete_surface_resource(state, "wood")
+                point = state.surface_resource_points["surface-wood-1"]
+                point.remaining_amount = 1
+                point.is_depleted = False
+
+                self.assertFalse(
+                    any(
+                        item.warning_id
+                        == "technology.wood_supply_irreversibly_locked"
+                        for item in system.evaluate_risks(state)
+                    )
+                )
 
     def test_wood_supply_lock_is_exposed_in_formal_end_day_preview(self) -> None:
         state = self.make_state()

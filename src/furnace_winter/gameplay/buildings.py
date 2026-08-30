@@ -117,10 +117,11 @@ def surface_resource_recoverable_upper_bound_before_final_frost(
     """Return a staffing-aware upper bound for collection before D49.
 
     Current-day staff excludes workers and engineers locked to an overtime
-    target.  Each later day uses the same adult pool after the one-day lock has
-    reset.  Per-day maximization respects every point's staffing capacity; the
-    multi-day sum remains deliberately conservative so a strong irreversible
-    warning is never caused by a merely suboptimal current assignment.
+    target.  Every later day uses full point output as a deliberately generous
+    upper bound: this covers saved fractional remainders and any workers or
+    engineers who may join through a future fixed arrival.  A strong warning
+    can therefore be omitted, but cannot be caused by a merely suboptimal
+    current assignment or an unresolved future arrival.
     """
 
     day = state.calendar.current_day
@@ -147,11 +148,13 @@ def surface_resource_recoverable_upper_bound_before_final_frost(
     current_staff = max(total_adults - locked_adults, 0)
     maximum_today = _maximum_surface_output_for_one_day(points, current_staff)
     future_days = max(FINAL_FROST_COLLECTION_START_DAY - day - 1, 0)
-    maximum_future_day = _maximum_surface_output_for_one_day(points, total_adults)
+    optimistic_future = sum(
+        rule.output_per_day * future_days for _point, rule in points
+    )
     total_remaining = sum(point.remaining_amount for point, _rule in points)
     return min(
         total_remaining,
-        maximum_today + maximum_future_day * future_days,
+        maximum_today + optimistic_future,
     )
 
 
