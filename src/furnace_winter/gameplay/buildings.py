@@ -8,6 +8,7 @@ from typing import Any
 from furnace_winter.config import (
     BuildingRule,
     BuildingRules,
+    SurfaceResourcePointRule,
     SurvivalRules,
     TechnologyRules,
 )
@@ -52,7 +53,13 @@ from furnace_winter.interface import (
     FeedbackItem,
     FeedbackLevel,
 )
-from furnace_winter.models import BuildingState, GameState, SaveDataError, validate_game_state
+from furnace_winter.models import (
+    BuildingState,
+    GameState,
+    SaveDataError,
+    SurfaceResourcePointState,
+    validate_game_state,
+)
 from furnace_winter.text import (
     TextRegistry,
     build_action_text_registry,
@@ -74,7 +81,7 @@ def surface_resource_recoverable_before_final_frost(
     rules: BuildingRules,
     resource_type: str,
 ) -> int:
-    """Return resource still collectable under the current plan before D49."""
+    """Return resource collectable under the current assignment before D49."""
 
     day = state.calendar.current_day
     if is_final_frost_collection_shutdown(day):
@@ -100,6 +107,93 @@ def surface_resource_recoverable_before_final_frost(
             rule.output_per_day * future_full_days,
         )
     return recoverable
+
+
+def surface_resource_recoverable_upper_bound_before_final_frost(
+    state: GameState,
+    rules: BuildingRules,
+    resource_type: str,
+) -> int:
+    """Return a staffing-aware upper bound for collection before D49.
+
+    Current-day staff excludes workers and engineers locked to an overtime
+    target.  Every later day uses full point output as a deliberately generous
+    upper bound: this covers saved fractional remainders and any workers or
+    engineers who may join through a future fixed arrival.  A strong warning
+    can therefore be omitted, but cannot be caused by a merely suboptimal
+    current assignment or an unresolved future arrival.
+    """
+
+    day = state.calendar.current_day
+    if is_final_frost_collection_shutdown(day):
+        return 0
+    points: list[tuple[SurfaceResourcePointState, SurfaceResourcePointRule]] = []
+    for point_id, point in state.surface_resource_points.items():
+        if point.resource_type != resource_type or point.is_depleted:
+            continue
+        points.append((point, rules.surface_resource_points[point_id]))
+    if not points:
+        return 0
+
+    total_adults = state.population.workers + state.population.engineers
+    locked_adults = 0
+    overtime_id = state.social_policy.overtime_building_id
+    if overtime_id is not None:
+        overtime_target = state.buildings.get(overtime_id)
+        if overtime_target is not None:
+            locked_adults = (
+                overtime_target.assigned_workers
+                + overtime_target.assigned_engineers
+            )
+    current_staff = max(total_adults - locked_adults, 0)
+    maximum_today = _maximum_surface_output_for_one_day(points, current_staff)
+    future_days = max(FINAL_FROST_COLLECTION_START_DAY - day - 1, 0)
+    optimistic_future = sum(
+        rule.output_per_day * future_days for _point, rule in points
+    )
+    total_remaining = sum(point.remaining_amount for point, _rule in points)
+    return min(
+        total_remaining,
+        maximum_today + optimistic_future,
+    )
+
+
+def _maximum_surface_output_for_one_day(
+    points: list[tuple[SurfaceResourcePointState, SurfaceResourcePointRule]],
+    available_staff: int,
+) -> int:
+    total_capacity = sum(rule.staff_capacity for _point, rule in points)
+    assignable = min(available_staff, total_capacity)
+    best_output_by_staff = [-1] * (assignable + 1)
+    best_output_by_staff[0] = 0
+    for point, rule in points:
+        next_best = [-1] * (assignable + 1)
+        maximum_point_staff = min(rule.staff_capacity, assignable)
+        point_outputs = [
+            min(
+                (
+                    point.production_remainder_numerator
+                    + rule.output_per_day * staff
+                )
+                // rule.staff_capacity,
+                point.remaining_amount,
+            )
+            for staff in range(maximum_point_staff + 1)
+        ]
+        for used_staff, existing_output in enumerate(best_output_by_staff):
+            if existing_output < 0:
+                continue
+            for point_staff, point_output in enumerate(point_outputs):
+                combined_staff = used_staff + point_staff
+                if combined_staff > assignable:
+                    break
+                next_best[combined_staff] = max(
+                    next_best[combined_staff],
+                    existing_output + point_output,
+                )
+        best_output_by_staff = next_best
+    return max(best_output_by_staff)
+
 
 _STAFF_FIELDS = {
     "workers": "assigned_workers",
