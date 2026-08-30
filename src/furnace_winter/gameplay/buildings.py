@@ -8,6 +8,7 @@ from typing import Any
 from furnace_winter.config import (
     BuildingRule,
     BuildingRules,
+    SurfaceResourcePointRule,
     SurvivalRules,
     TechnologyRules,
 )
@@ -52,7 +53,13 @@ from furnace_winter.interface import (
     FeedbackItem,
     FeedbackLevel,
 )
-from furnace_winter.models import BuildingState, GameState, SaveDataError, validate_game_state
+from furnace_winter.models import (
+    BuildingState,
+    GameState,
+    SaveDataError,
+    SurfaceResourcePointState,
+    validate_game_state,
+)
 from furnace_winter.text import (
     TextRegistry,
     build_action_text_registry,
@@ -74,32 +81,67 @@ def surface_resource_recoverable_before_final_frost(
     rules: BuildingRules,
     resource_type: str,
 ) -> int:
-    """Return resource still collectable under the current plan before D49."""
+    """Return a conservative upper bound for resource collectable before D49.
+
+    The current planning day uses the best legal reassignment of every worker
+    and engineer across matching surface points.  Later days deliberately use
+    the more optimistic full-point output bound, so an irreversible-lock
+    warning can be omitted but can never be caused by the current assignment
+    alone.
+    """
 
     day = state.calendar.current_day
     if is_final_frost_collection_shutdown(day):
         return 0
     future_full_days = max(FINAL_FROST_COLLECTION_START_DAY - day - 1, 0)
-    recoverable = 0
+    points: list[tuple[SurfaceResourcePointState, SurfaceResourcePointRule]] = []
     for point_id, point in state.surface_resource_points.items():
         if point.resource_type != resource_type or point.is_depleted:
             continue
         rule = rules.surface_resource_points[point_id]
-        assigned = point.assigned_workers + point.assigned_engineers
-        output_today = min(
-            (
-                point.production_remainder_numerator
-                + rule.output_per_day * assigned
+        points.append((point, rule))
+    if not points:
+        return 0
+
+    total_remaining = sum(point.remaining_amount for point, _rule in points)
+    total_capacity = sum(rule.staff_capacity for _point, rule in points)
+    assignable = min(
+        state.population.workers + state.population.engineers,
+        total_capacity,
+    )
+    best_output_by_staff = [-1] * (assignable + 1)
+    best_output_by_staff[0] = 0
+    for point, rule in points:
+        next_best = [-1] * (assignable + 1)
+        maximum_point_staff = min(rule.staff_capacity, assignable)
+        point_outputs = [
+            min(
+                (
+                    point.production_remainder_numerator
+                    + rule.output_per_day * staff
+                )
+                // rule.staff_capacity,
+                point.remaining_amount,
             )
-            // rule.staff_capacity,
-            point.remaining_amount,
-        )
-        remaining_after_today = point.remaining_amount - output_today
-        recoverable += output_today + min(
-            remaining_after_today,
-            rule.output_per_day * future_full_days,
-        )
-    return recoverable
+            for staff in range(maximum_point_staff + 1)
+        ]
+        for used_staff, existing_output in enumerate(best_output_by_staff):
+            if existing_output < 0:
+                continue
+            for point_staff, point_output in enumerate(point_outputs):
+                combined_staff = used_staff + point_staff
+                if combined_staff > assignable:
+                    break
+                next_best[combined_staff] = max(
+                    next_best[combined_staff],
+                    existing_output + point_output,
+                )
+        best_output_by_staff = next_best
+    maximum_today = max(best_output_by_staff)
+    optimistic_future = sum(
+        rule.output_per_day * future_full_days for _point, rule in points
+    )
+    return min(total_remaining, maximum_today + optimistic_future)
 
 _STAFF_FIELDS = {
     "workers": "assigned_workers",

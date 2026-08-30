@@ -116,23 +116,27 @@ class TechnologyPatchTests(unittest.TestCase):
         d48 = self.make_state()
         d48.calendar.current_day = 48
         d48.resources.steel = 0
-        d48.surface_resource_points["surface-steel-1"].assigned_workers = 4
+        self._deplete_surface_resource(d48, "steel")
+        point = d48.surface_resource_points["surface-steel-1"]
+        point.remaining_amount = 5
+        point.is_depleted = False
 
-        d48_lock = {
+        d48_view = {
             item["tech_id"]: item for item in system.view(d48)
         }["tech_steel_screening"]["irreversible_resource_lock"]
-        self.assertEqual(d48_lock["remaining_surface_steel"], 120)
-        self.assertEqual(d48_lock["recoverable_surface_steel"], 4)
-        self.assertEqual(d48_lock["recoverable_steel"], 4)
-        self.assertEqual(len(system.evaluate_risks(d48)), 1)
-
-        d48.surface_resource_points["surface-steel-1"].assigned_workers = 5
+        self.assertIsNone(d48_view)
         self.assertEqual(system.evaluate_risks(d48), ())
+
+        point.remaining_amount = 4
+        warning = system.evaluate_risks(d48)
+        self.assertEqual(len(warning), 1)
+        self.assertEqual(warning[0].details["recoverable_surface_steel"], 4)
+        self.assertEqual(warning[0].details["recoverable_steel"], 4)
 
         d49 = self.make_state()
         d49.calendar.current_day = 49
         d49.resources.steel = 0
-        d49.surface_resource_points["surface-steel-1"].assigned_workers = 5
+        d49.surface_resource_points["surface-steel-1"].assigned_workers = 0
         warning = system.evaluate_risks(d49)
         d49_lock = {
             item["tech_id"]: item for item in system.view(d49)
@@ -233,15 +237,6 @@ class TechnologyPatchTests(unittest.TestCase):
         point.remaining_amount = 100
         point.is_depleted = False
 
-        self.assertTrue(
-            any(
-                item.warning_id
-                == "technology.wood_supply_irreversibly_locked"
-                for item in system.evaluate_risks(state)
-            )
-        )
-
-        point.assigned_workers = 1
         self.assertFalse(
             any(
                 item.warning_id
@@ -250,7 +245,19 @@ class TechnologyPatchTests(unittest.TestCase):
             )
         )
 
+        point.remaining_amount = 0
+        point.is_depleted = True
+        self.assertTrue(
+            any(
+                item.warning_id
+                == "technology.wood_supply_irreversibly_locked"
+                for item in system.evaluate_risks(state)
+            )
+        )
+
         state.calendar.current_day = 49
+        point.remaining_amount = 100
+        point.is_depleted = False
         warning = next(
             item
             for item in system.evaluate_risks(state)
