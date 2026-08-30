@@ -167,8 +167,13 @@ class TechnologyPatchTests(unittest.TestCase):
         self.assertEqual(warning.details["remaining_technology_wood_cost"], 15)
         self.assertEqual(warning.details["logging_camp_wood_cost"], 35)
         self.assertEqual(warning.details["required_wood"], 50)
-        self.assertEqual(warning.details["recoverable_wood"], 49)
-        self.assertEqual(warning.details["wood_shortfall"], 1)
+        self.assertEqual(
+            warning.details["recoverable_wood_upper_bound"], 49
+        )
+        self.assertEqual(warning.details["minimum_wood_shortfall"], 1)
+        self.assertEqual(
+            warning.details["estimate_kind"], "conservative_upper_bound"
+        )
         self.assertFalse(warning.details["technology_cost_paid"])
         self.assertEqual(view["irreversible_resource_lock"], warning.details)
 
@@ -265,8 +270,12 @@ class TechnologyPatchTests(unittest.TestCase):
             == "technology.wood_supply_irreversibly_locked"
         )
         self.assertEqual(warning.details["remaining_surface_wood"], 100)
-        self.assertEqual(warning.details["recoverable_surface_wood"], 0)
-        self.assertEqual(warning.details["recoverable_wood"], 49)
+        self.assertEqual(
+            warning.details["recoverable_surface_wood_upper_bound"], 0
+        )
+        self.assertEqual(
+            warning.details["recoverable_wood_upper_bound"], 49
+        )
 
     def test_wood_supply_lock_excludes_overtime_locked_adults(self) -> None:
         state = self.make_state()
@@ -323,9 +332,13 @@ class TechnologyPatchTests(unittest.TestCase):
             if item.warning_id
             == "technology.wood_supply_irreversibly_locked"
         )
-        self.assertEqual(warning.details["recoverable_surface_wood"], 0)
-        self.assertEqual(warning.details["recoverable_wood"], 39)
-        self.assertEqual(warning.details["wood_shortfall"], 11)
+        self.assertEqual(
+            warning.details["recoverable_surface_wood_upper_bound"], 0
+        )
+        self.assertEqual(
+            warning.details["recoverable_wood_upper_bound"], 39
+        )
+        self.assertEqual(warning.details["minimum_wood_shortfall"], 11)
 
         preview = self.engine().execute(
             state,
@@ -395,6 +408,42 @@ class TechnologyPatchTests(unittest.TestCase):
                     )
                 )
 
+    def test_wood_supply_warning_labels_optimistic_bounds_explicitly(self) -> None:
+        state = self.make_state()
+        state.calendar.current_day = 47
+        state.population.workers = 0
+        state.population.engineers = 0
+        state.population.children = state.population.population_alive
+        state.resources.wood = 0
+        self._deplete_surface_resource(state, "wood")
+        point = state.surface_resource_points["surface-wood-1"]
+        point.remaining_amount = 100
+        point.is_depleted = False
+
+        warning = next(
+            item
+            for item in self.technology_system().evaluate_risks(state)
+            if item.warning_id
+            == "technology.wood_supply_irreversibly_locked"
+        )
+
+        self.assertEqual(
+            warning.details["estimate_kind"], "conservative_upper_bound"
+        )
+        self.assertEqual(
+            warning.details["recoverable_surface_wood_upper_bound"], 35
+        )
+        self.assertEqual(
+            warning.details["recoverable_wood_upper_bound"], 35
+        )
+        self.assertEqual(warning.details["minimum_wood_shortfall"], 15)
+        for ambiguous_field in (
+            "recoverable_surface_wood",
+            "recoverable_wood",
+            "wood_shortfall",
+        ):
+            self.assertNotIn(ambiguous_field, warning.details)
+
     def test_wood_supply_lock_is_exposed_in_formal_end_day_preview(self) -> None:
         state = self.make_state()
         state.resources.wood = 49
@@ -420,7 +469,9 @@ class TechnologyPatchTests(unittest.TestCase):
             == "technology.wood_supply_irreversibly_locked"
         )
         self.assertEqual(warning.details["required_wood"], 50)
-        self.assertEqual(warning.details["recoverable_wood"], 49)
+        self.assertEqual(
+            warning.details["recoverable_wood_upper_bound"], 49
+        )
         self.assertEqual(state.command_sequence, 0)
 
     @staticmethod

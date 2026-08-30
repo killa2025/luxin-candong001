@@ -455,17 +455,20 @@ class TechnologySystem:
         required_wood = (
             remaining_technology_wood_cost + logging_camp_wood_cost
         )
-        recoverable_surface_wood = (
+        recoverable_surface_wood_upper_bound = (
             surface_resource_recoverable_upper_bound_before_final_frost(
                 state,
                 self.building_rules,
                 "wood",
             )
         )
-        recoverable_wood = state.resources.wood + recoverable_surface_wood
-        if recoverable_wood >= required_wood:
+        recoverable_wood_upper_bound = (
+            state.resources.wood + recoverable_surface_wood_upper_bound
+        )
+        if recoverable_wood_upper_bound >= required_wood:
             return None
         return {
+            "estimate_kind": "conservative_upper_bound",
             "required_technology_id": tech_id,
             "required_building_type": building_type,
             "technology_cost_paid": technology_cost_paid,
@@ -478,9 +481,13 @@ class TechnologySystem:
                 for point in state.surface_resource_points.values()
                 if point.resource_type == "wood"
             ),
-            "recoverable_surface_wood": recoverable_surface_wood,
-            "recoverable_wood": recoverable_wood,
-            "wood_shortfall": required_wood - recoverable_wood,
+            "recoverable_surface_wood_upper_bound": (
+                recoverable_surface_wood_upper_bound
+            ),
+            "recoverable_wood_upper_bound": recoverable_wood_upper_bound,
+            "minimum_wood_shortfall": (
+                required_wood - recoverable_wood_upper_bound
+            ),
             "logging_camp_exists": False,
         }
 
