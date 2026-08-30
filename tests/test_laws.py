@@ -1181,7 +1181,10 @@ class LawPatchTests(unittest.TestCase):
         self.advance_to_law_day(state)
         self.assertTrue(self.sign(state, "medical_ration_law").accepted)
         self.advance_to_law_day(state)
-        self.assertTrue(self.sign(state, "triage_law", confirm=True).accepted)
+        # A pre-Patch 041 save may already contain the sealed law even though
+        # the action's complete rules were never available.  Preserve that
+        # state for compatibility while exercising the unavailable command.
+        state.laws.signed_law_ids.append("triage_law")
         state.population.healthy_population = 69
         state.population.sick_population = 11
         state.medical.medical_pressure = 6
@@ -1721,6 +1724,66 @@ class LawPatchTests(unittest.TestCase):
         self.assertIn("medical_station", observation["unlocked_building_ids"])
         self.assertIn("stable_therapy_law", observation["available_law_ids"])
         self.assertIn("child_school_law", observation["locked_laws"])
+
+    def test_patch041_triage_law_is_reported_as_unavailable(self) -> None:
+        state = self.make_state()
+
+        observation = self.law_system().observe(state)
+
+        self.assertNotIn("triage_law", observation["available_law_ids"])
+        self.assertNotIn("triage_law", observation["locked_laws"])
+        self.assertEqual(
+            observation["unavailable_laws"]["triage_law"],
+            {
+                "unavailable_reason": "triage_rules_unsealed",
+                "declared_action_ids": ["triage"],
+                "command_name": "game.triage",
+                "command_exists": True,
+                "executable": False,
+            },
+        )
+
+    def test_patch041_triage_law_signing_is_rejected_atomically(self) -> None:
+        state = self.make_state()
+        before = deepcopy(state)
+
+        result = self.sign(state, "triage_law", confirm=True)
+
+        self.assertFalse(result.accepted)
+        self.assertEqual(result.code, ErrorCode.ILLEGAL_COMMAND)
+        self.assertEqual(result.data["reason"], "triage_rules_unsealed")
+        self.assertEqual(result.data["unavailable_reason"], "triage_rules_unsealed")
+        self.assertEqual(result.data["law_id"], "triage_law")
+        self.assertEqual(result.data["declared_action_ids"], ["triage"])
+        self.assertEqual(result.data["command_name"], "game.triage")
+        self.assertTrue(result.data["command_exists"])
+        self.assertFalse(result.data["executable"])
+        self.assertEqual(state, before)
+
+    def test_patch041_legacy_signed_triage_law_preserves_save_but_not_unlock(self) -> None:
+        state = self.make_state()
+        state.laws.signed_law_ids = [
+            "basic_medical_law",
+            "expanded_admission_law",
+            "medical_ration_law",
+            "triage_law",
+        ]
+
+        restored = decode_game_state(encode_game_state(state))
+        observation = self.law_system().observe(restored)
+
+        self.assertIn("triage_law", observation["signed_law_ids"])
+        self.assertIn("triage", observation["declared_action_ids"])
+        self.assertNotIn("triage", observation["unlocked_action_ids"])
+        self.assertEqual(
+            observation["unavailable_actions"]["triage"],
+            {
+                "unavailable_reason": "triage_rules_unsealed",
+                "command_name": "game.triage",
+                "command_exists": True,
+                "executable": False,
+            },
+        )
 
     def test_apprentice_mode_reports_unsealed_population_generation(self) -> None:
         state = self.make_state()

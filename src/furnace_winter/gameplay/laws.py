@@ -37,6 +37,10 @@ TRIAGE_COMMAND = "game.triage"
 TRIAGE_UNAVAILABLE_REASON = "triage_rules_unsealed"
 MEMORIAL_COMMAND = "game.memorial"
 
+_UNAVAILABLE_LAW_ACTIONS = {
+    "triage_law": ("triage", TRIAGE_COMMAND, TRIAGE_UNAVAILABLE_REASON),
+}
+
 _LAW_COOLDOWN = "ordinary_law"
 _EMERGENCY_COOLDOWN = "emergency_ration"
 _MEDICAL_COOLDOWN = "medical_ration"
@@ -197,6 +201,18 @@ class LawSystem:
         signed = set(state.laws.signed_law_ids)
         if law_id in signed:
             return self._illegal("law_already_signed")
+        unavailable = _UNAVAILABLE_LAW_ACTIONS.get(law_id)
+        if unavailable is not None:
+            action_id, command_name, unavailable_reason = unavailable
+            return self._illegal(
+                unavailable_reason,
+                unavailable_reason=unavailable_reason,
+                law_id=law_id,
+                declared_action_ids=[action_id],
+                command_name=command_name,
+                command_exists=True,
+                executable=False,
+            )
         next_day = state.laws.cooldowns.get(_LAW_COOLDOWN, 1)
         if state.calendar.current_day < next_day:
             return self._illegal("law_cooldown_active", next_available_day=next_day)
@@ -933,8 +949,20 @@ class LawSystem:
         signed = set(state.laws.signed_law_ids)
         available: list[str] = []
         locked: dict[str, Any] = {}
+        unavailable_laws: dict[str, Any] = {}
         for law_id, rule in self.rules.laws.items():
             if law_id in signed:
+                continue
+            unavailable = _UNAVAILABLE_LAW_ACTIONS.get(law_id)
+            if unavailable is not None:
+                action_id, command_name, unavailable_reason = unavailable
+                unavailable_laws[law_id] = {
+                    "unavailable_reason": unavailable_reason,
+                    "declared_action_ids": [action_id],
+                    "command_name": command_name,
+                    "command_exists": True,
+                    "executable": False,
+                }
                 continue
             missing_all = sorted(set(rule.required_all) - signed)
             missing_any = bool(rule.required_any) and not (set(rule.required_any) & signed)
@@ -952,7 +980,30 @@ class LawSystem:
         deferred_buildings = sorted(
             item for item in all_building_unlocks if item not in self.building_rules.buildings
         )
-        unlocked_actions = sorted({item for law_id in signed for item in self.rules.laws[law_id].unlock_actions})
+        declared_actions = sorted(
+            {
+                item
+                for law_id in signed
+                for item in self.rules.laws[law_id].unlock_actions
+            }
+        )
+        unavailable_actions = {
+            action_id: {
+                "unavailable_reason": unavailable_reason,
+                "command_name": command_name,
+                "command_exists": True,
+                "executable": False,
+            }
+            for _law_id, (
+                action_id,
+                command_name,
+                unavailable_reason,
+            ) in _UNAVAILABLE_LAW_ACTIONS.items()
+            if action_id in declared_actions
+        }
+        unlocked_actions = sorted(
+            set(declared_actions) - set(unavailable_actions)
+        )
         unlocked_modes = sorted(
             {
                 item
@@ -975,10 +1026,13 @@ class LawSystem:
         return {
             "signed_law_ids": list(state.laws.signed_law_ids),
             "available_law_ids": sorted(available), "locked_laws": locked,
+            "unavailable_laws": unavailable_laws,
             "next_ordinary_law_day": state.laws.cooldowns.get(_LAW_COOLDOWN, 1),
             "unlocked_building_ids": unlocked_buildings,
             "deferred_building_ids": deferred_buildings,
+            "declared_action_ids": declared_actions,
             "unlocked_action_ids": unlocked_actions,
+            "unavailable_actions": unavailable_actions,
             "unlocked_mode_ids": unlocked_modes,
             "pending_mode_effect_ids": pending_mode_effect_ids,
             "ration_mode": state.social_policy.current_ration_mode,
