@@ -141,6 +141,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertNotIn("不得实现 Patch 042", handoff)
 
     def test_patch043_steel_chain_feedback_is_documented(self) -> None:
+        agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
         pending = (REPOSITORY_ROOT / "docs" / "PENDING.md").read_text(
             encoding="utf-8"
         )
@@ -159,6 +160,15 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("恰好能够支付时不报警", handoff)
         self.assertIn("不修改钢材筛选或小型采钢机成本", handoff)
         self.assertIn("不开始 Patch 044", handoff)
+        for preserved_rule in (
+            "不得借本轮审计停用仍有其他正式效果的炉律",
+            "旧城终局正文不适用于零实际离开或零实际资源损失时只登记 PENDING",
+            "死亡处理继续使用已确认的动态死亡记录句",
+            "其他 `TODO_TEXT` 仍不得自行补写",
+            "不得把推进前自动存档改造成主存档",
+            "Patch 021 的逐日服务事实与 Patch 020 的确定性终局文案边界继续有效",
+        ):
+            self.assertIn(preserved_rule, agents)
 
     def test_repository_status_text_matches_patch_033_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")

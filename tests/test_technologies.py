@@ -40,7 +40,6 @@ from furnace_winter.gameplay.survival import (
 )
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
-    BuildingState,
     CURRENT_SAVE_DATA_VERSION,
     HardFailType,
     SaveDataError,
@@ -151,6 +150,19 @@ class TechnologyPatchTests(unittest.TestCase):
         self.assertEqual(cancelled_warning.details["required_steel"], 30)
         self.assertEqual(cancelled_warning.details["steel_shortfall"], 5)
 
+        state.resources.steel = 20
+        lower_cancelled_warning = next(
+            item
+            for item in system.evaluate_risks(state)
+            if item.warning_id
+            == "technology.steel_supply_irreversibly_locked"
+        )
+        self.assertEqual(lower_cancelled_warning.details["required_steel"], 30)
+        self.assertEqual(
+            lower_cancelled_warning.details["recoverable_steel"], 20
+        )
+        self.assertEqual(lower_cancelled_warning.details["steel_shortfall"], 10)
+
         state.technologies.researched_tech_ids.append("tech_steel_screening")
         state.resources.steel = 24
         completed_warning = next(
@@ -169,14 +181,28 @@ class TechnologyPatchTests(unittest.TestCase):
         self.assertEqual(completed_warning.details["required_steel"], 25)
         self.assertEqual(completed_warning.details["steel_shortfall"], 1)
 
-        state.buildings["small-steel-miner-test"] = BuildingState(
-            building_id="small-steel-miner-test",
-            building_type="small_steel_miner",
-            zone="outer_ring",
-            slot_size=2,
-            is_built=True,
+        established = self.make_state()
+        established.technologies.researched_tech_ids.extend(
+            ["tech_drawing_board", "tech_steel_screening"]
         )
-        self.assertEqual(system.evaluate_risks(state), ())
+        established.resources.steel = 25
+        built = self.execute(
+            self.building_system(),
+            established,
+            BUILD_COMMAND,
+            {
+                "building_type": "small_steel_miner",
+                "zone": "outer_ring",
+            },
+        )
+        self.assertTrue(built.accepted)
+        validate_game_state(
+            established,
+            self.building_rules,
+            self.survival_rules,
+            self.technology_rules,
+        )
+        self.assertEqual(system.evaluate_risks(established), ())
 
     def test_steel_chain_lock_is_exposed_in_formal_end_day_preview(self) -> None:
         state = self.make_state()
