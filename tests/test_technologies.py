@@ -40,6 +40,7 @@ from furnace_winter.gameplay.survival import (
 )
 from furnace_winter.interface import CommandRequest, ErrorCode
 from furnace_winter.models import (
+    BuildingState,
     CURRENT_SAVE_DATA_VERSION,
     HardFailType,
     SaveDataError,
@@ -98,28 +99,119 @@ class TechnologyPatchTests(unittest.TestCase):
             "technology.steel_supply_irreversibly_locked",
         )
         self.assertEqual(warning[0].level.value, "B_STRONG")
-        self.assertEqual(warning[0].details["required_steel"], 5)
+        self.assertEqual(warning[0].details["required_steel"], 30)
+        self.assertEqual(
+            warning[0].details["remaining_technology_steel_cost"], 5
+        )
+        self.assertEqual(
+            warning[0].details["small_steel_miner_steel_cost"], 25
+        )
         self.assertEqual(warning[0].details["recoverable_steel"], 2)
-        self.assertEqual(warning[0].details["steel_shortfall"], 3)
+        self.assertEqual(warning[0].details["steel_shortfall"], 28)
         self.assertEqual(
             view["irreversible_resource_lock"], warning[0].details
         )
 
         recoverable = self.make_state()
+        self._deplete_surface_resource(recoverable, "steel")
         recoverable.resources.steel = 2
         steel_point = next(
             point
             for point in recoverable.surface_resource_points.values()
             if point.resource_type == "steel"
         )
-        steel_point.remaining_amount = 3
+        steel_point.remaining_amount = 28
+        steel_point.is_depleted = False
+        steel_point.assigned_workers = 10
         self.assertEqual(system.evaluate_risks(recoverable), ())
+
+    def test_irreversible_steel_supply_lock_uses_remaining_chain_costs(self) -> None:
+        system = self.technology_system()
+        state = self.make_state()
+        self._deplete_surface_resource(state, "steel")
+
+        state.resources.steel = 30
+        self.assertEqual(system.evaluate_risks(state), ())
+
+        state.technologies.active_research_id = "tech_steel_screening"
+        state.resources.steel = 25
+        self.assertEqual(system.evaluate_risks(state), ())
+
+        state.technologies.active_research_id = None
+        cancelled_warning = next(
+            item
+            for item in system.evaluate_risks(state)
+            if item.warning_id
+            == "technology.steel_supply_irreversibly_locked"
+        )
+        self.assertFalse(cancelled_warning.details["technology_cost_paid"])
+        self.assertEqual(
+            cancelled_warning.details["remaining_technology_steel_cost"], 5
+        )
+        self.assertEqual(cancelled_warning.details["required_steel"], 30)
+        self.assertEqual(cancelled_warning.details["steel_shortfall"], 5)
+
+        state.technologies.researched_tech_ids.append("tech_steel_screening")
+        state.resources.steel = 24
+        completed_warning = next(
+            item
+            for item in system.evaluate_risks(state)
+            if item.warning_id
+            == "technology.steel_supply_irreversibly_locked"
+        )
+        self.assertTrue(completed_warning.details["technology_cost_paid"])
+        self.assertTrue(
+            completed_warning.details["small_steel_miner_unlocked"]
+        )
+        self.assertEqual(
+            completed_warning.details["remaining_technology_steel_cost"], 0
+        )
+        self.assertEqual(completed_warning.details["required_steel"], 25)
+        self.assertEqual(completed_warning.details["steel_shortfall"], 1)
+
+        state.buildings["small-steel-miner-test"] = BuildingState(
+            building_id="small-steel-miner-test",
+            building_type="small_steel_miner",
+            zone="outer_ring",
+            slot_size=2,
+            is_built=True,
+        )
+        self.assertEqual(system.evaluate_risks(state), ())
+
+    def test_steel_chain_lock_is_exposed_in_formal_end_day_preview(self) -> None:
+        state = self.make_state()
+        self._deplete_surface_resource(state, "steel")
+        state.resources.steel = 25
+
+        execution = self.engine().execute(
+            state,
+            CommandRequest(
+                "steel-chain-lock-preview",
+                END_DAY_COMMAND,
+                expected_state_sequence=state.command_sequence,
+            ),
+        )
+
+        self.assertEqual(
+            execution.result.code,
+            ErrorCode.END_DAY_CONFIRMATION_REQUIRED,
+        )
+        warning = next(
+            item
+            for item in execution.warnings
+            if item.warning_id
+            == "technology.steel_supply_irreversibly_locked"
+        )
+        self.assertEqual(warning.details["required_steel"], 30)
+        self.assertEqual(warning.details["recoverable_steel"], 25)
+        self.assertEqual(warning.details["steel_shortfall"], 5)
+        self.assertEqual(state.command_sequence, 0)
 
     def test_final_frost_excludes_uncollectable_surface_steel(self) -> None:
         system = self.technology_system()
         d48 = self.make_state()
         d48.calendar.current_day = 48
-        d48.resources.steel = 0
+        d48.resources.steel = 24
         d48.surface_resource_points["surface-steel-1"].assigned_workers = 4
 
         d48_lock = {
@@ -127,7 +219,7 @@ class TechnologyPatchTests(unittest.TestCase):
         }["tech_steel_screening"]["irreversible_resource_lock"]
         self.assertEqual(d48_lock["remaining_surface_steel"], 120)
         self.assertEqual(d48_lock["recoverable_surface_steel"], 4)
-        self.assertEqual(d48_lock["recoverable_steel"], 4)
+        self.assertEqual(d48_lock["recoverable_steel"], 28)
         self.assertEqual(len(system.evaluate_risks(d48)), 1)
 
         d48.surface_resource_points["surface-steel-1"].assigned_workers = 5
@@ -135,7 +227,7 @@ class TechnologyPatchTests(unittest.TestCase):
 
         d49 = self.make_state()
         d49.calendar.current_day = 49
-        d49.resources.steel = 0
+        d49.resources.steel = 24
         d49.surface_resource_points["surface-steel-1"].assigned_workers = 5
         warning = system.evaluate_risks(d49)
         d49_lock = {
@@ -145,7 +237,7 @@ class TechnologyPatchTests(unittest.TestCase):
         self.assertEqual(len(warning), 1)
         self.assertEqual(d49_lock["remaining_surface_steel"], 120)
         self.assertEqual(d49_lock["recoverable_surface_steel"], 0)
-        self.assertEqual(d49_lock["recoverable_steel"], 0)
+        self.assertEqual(d49_lock["recoverable_steel"], 24)
 
     def test_irreversible_wood_supply_lock_uses_remaining_chain_costs(self) -> None:
         system = self.technology_system()

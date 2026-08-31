@@ -395,16 +395,27 @@ class TechnologySystem:
         self, state: GameState
     ) -> dict[str, Any] | None:
         tech_id = "tech_steel_screening"
-        if (
-            tech_id in state.technologies.researched_tech_ids
-            or state.technologies.active_research_id == tech_id
-            or any(
-                building.building_type == "small_steel_miner"
-                for building in state.buildings.values()
-            )
+        building_type = "small_steel_miner"
+        if any(
+            building.building_type == building_type
+            for building in state.buildings.values()
         ):
             return None
-        required_steel = self.rules.technologies[tech_id].steel_cost
+        technology_cost_paid = (
+            tech_id in state.technologies.researched_tech_ids
+            or state.technologies.active_research_id == tech_id
+        )
+        remaining_technology_steel_cost = (
+            0
+            if technology_cost_paid
+            else self.rules.technologies[tech_id].steel_cost
+        )
+        small_steel_miner_steel_cost = self.building_rules.buildings[
+            building_type
+        ].steel_cost
+        required_steel = (
+            remaining_technology_steel_cost + small_steel_miner_steel_cost
+        )
         recoverable_surface_steel = (
             surface_resource_recoverable_before_final_frost(
                 state,
@@ -417,6 +428,12 @@ class TechnologySystem:
             return None
         return {
             "required_technology_id": tech_id,
+            "required_building_type": building_type,
+            "technology_cost_paid": technology_cost_paid,
+            "remaining_technology_steel_cost": (
+                remaining_technology_steel_cost
+            ),
+            "small_steel_miner_steel_cost": small_steel_miner_steel_cost,
             "required_steel": required_steel,
             "current_steel": state.resources.steel,
             "remaining_surface_steel": sum(
@@ -427,7 +444,10 @@ class TechnologySystem:
             "recoverable_surface_steel": recoverable_surface_steel,
             "recoverable_steel": recoverable_steel,
             "steel_shortfall": required_steel - recoverable_steel,
-            "small_steel_miner_unlocked": False,
+            "small_steel_miner_unlocked": (
+                tech_id in state.technologies.researched_tech_ids
+            ),
+            "small_steel_miner_exists": False,
         }
 
     def _wood_supply_lock_details(
