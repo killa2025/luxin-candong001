@@ -151,6 +151,8 @@ _PREPARATION_FIELDS = {
 _SCORING_FIELDS = {
     "result_score_minimums",
     "high_victory_death_ratio_percent",
+    "society_score_four_trust_minimum",
+    "society_score_four_panic_maximum",
     "grave_city_death_ratio_percent",
     "mass_death_frost_ratio_percent",
     "city_continuity_minimum",
@@ -525,14 +527,22 @@ def load_final_frost_rules(path: Path) -> FinalFrostRules:
         for key in _RESULT_IDS
     }
     if normalized_scoring["result_score_minimums"] != {
-        "high_victory": 22,
+        "high_victory": 24,
         "standard_victory": 18,
         "bitter_victory": 12,
         "collapse_survival": 7,
         "ember_survival": 0,
     }:
         raise FinalFrostConfigError(
-            "the Patch 022 result score bands changed"
+            "the Patch 045 result score bands changed"
+        )
+    if normalized_scoring["society_score_four_trust_minimum"] != 85:
+        raise FinalFrostConfigError(
+            "the Patch 045 perfect-society trust threshold changed"
+        )
+    if normalized_scoring["society_score_four_panic_maximum"] != 15:
+        raise FinalFrostConfigError(
+            "the Patch 045 perfect-society panic threshold changed"
         )
     if normalized_scoring["high_victory_death_ratio_percent"] != 5:
         raise FinalFrostConfigError(
