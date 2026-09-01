@@ -445,6 +445,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "code": "INVALID_RULES_QUERY",
                             "reason": "unknown_rules_section",
                             "submitted_section": section,
+                            "unexpected_fields": [],
                             "request_shape": contract["request_shape"],
                             "available_sections": contract[
                                 "available_sections"

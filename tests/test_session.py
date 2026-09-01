@@ -1905,6 +1905,7 @@ class PlayCliTests(unittest.TestCase):
         self.assertEqual(unknown["code"], "INVALID_RULES_QUERY")
         self.assertEqual(unknown["reason"], "unknown_rules_section")
         self.assertEqual(unknown["submitted_section"], "not_a_section")
+        self.assertEqual(unknown["unexpected_fields"], [])
         self.assertIn("final_frost", unknown["available_sections"])
         self.assertFalse(unknown["state_changed"])
 
