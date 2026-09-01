@@ -39,6 +39,15 @@ from furnace_winter.interface import (
 from furnace_winter.models import decode_game_state, dumps
 
 
+def _configure_utf8_stdio() -> None:
+    """Keep the JSON-lines protocol UTF-8 regardless of Windows locale."""
+
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="strict")
+
+
 def _protocol_value_kind(value: object) -> str:
     if value is None:
         return "NULL"
@@ -198,6 +207,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    _configure_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
 

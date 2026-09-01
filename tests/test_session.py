@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -1799,6 +1802,40 @@ class GameSessionTests(unittest.TestCase):
             )
 
 class PlayCliTests(unittest.TestCase):
+    def test_machine_protocol_forces_utf8_under_a_legacy_windows_codepage(
+        self,
+    ) -> None:
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(ROOT / "src")
+        environment["PYTHONIOENCODING"] = "cp936"
+        environment.pop("PYTHONUTF8", None)
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "furnace_winter",
+                "state",
+                "--seed",
+                "45045",
+                "--map-mode",
+                "manual",
+                "--map-key",
+                "rustbone_tundra",
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            check=False,
+        )
+
+        output = completed.stdout.decode("utf-8")
+        payload = json.loads(output)
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(completed.stderr.decode("utf-8"), "")
+        self.assertIn("锈骨冻原", output)
+        self.assertEqual(payload["state"]["map"]["map_key"], "rustbone_tundra")
+
     def test_json_lines_exposes_status_specs_and_supported_envelopes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             save_path = Path(temp_dir) / "cli-queries.json"

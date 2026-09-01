@@ -200,6 +200,36 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("Patch 045", agents)
         self.assertNotIn("D56、Patch 044", agents)
 
+    def test_patch045_new_balance_and_historical_profiles_are_documented(
+        self,
+    ) -> None:
+        agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+        pending = (REPOSITORY_ROOT / "docs" / "PENDING.md").read_text(
+            encoding="utf-8"
+        )
+        index = (REPOSITORY_ROOT / "docs" / "INDEX.md").read_text(
+            encoding="utf-8"
+        )
+        handoff = (
+            REPOSITORY_ROOT
+            / "docs"
+            / "handoff"
+            / "PATCH-045：偏难地图高胜门槛与机器编码修正实现记录.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("PATCH-045：偏难地图高胜门槛与机器编码修正实现记录", index)
+        self.assertIn("当前存档数据版本为 v18", readme)
+        self.assertIn("同等级、同住房状态的人口会先汇总", readme)
+        self.assertIn("高胜最低总分为 24", readme)
+        self.assertIn("信任至少 85、恐慌至多 15", readme)
+        self.assertIn("标准输入、标准输出和标准错误流统一重配置为 UTF-8", handoff)
+        self.assertIn("D55 完整结算后 `run_state=active`", handoff)
+        self.assertIn("`patch022` 继续使用逐暴露小组取整", handoff)
+        self.assertIn("数值继续标记为 `TEST_NUMERIC`", pending)
+        self.assertIn("Patch 046", agents)
+        self.assertNotIn("D56、Patch 045", agents)
+
     def test_repository_status_text_matches_patch_033_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -210,7 +240,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("data/oath_order.json", readme)
         self.assertIn("data/final_frost.json", readme)
         self.assertIn("data/maps.json", readme)
-        self.assertIn("当前存档数据版本为 v17", readme)
+        self.assertIn("当前存档数据版本为 v18", readme)
         self.assertIn("PATCH-011", readme)
         self.assertIn("PATCH-012", readme)
         self.assertIn("Patch 013", readme)
@@ -244,6 +274,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("TEST_NUMERIC", agents)
         self.assertIn("legacy_patch021", agents)
         self.assertIn("patch022", agents)
+        self.assertIn("patch045", agents)
         self.assertTrue(
             (
                 REPOSITORY_ROOT

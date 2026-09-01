@@ -233,6 +233,14 @@ class SaveMigrationRegistry:
                 raise SaveDataError(
                     "pre-v17 save cannot contain a balance profile"
                 )
+        if version == 17 and isinstance(
+            migrated.get("final_frost"), Mapping
+        ):
+            raw_final_frost = dict(migrated["final_frost"])
+            if raw_final_frost.get("balance_profile_id") == "patch045":
+                raise SaveDataError(
+                    "pre-v18 save cannot contain the Patch 045 balance profile"
+                )
         if version < 16 and isinstance(migrated.get("final_frost"), Mapping):
             raw_final_frost = dict(migrated["final_frost"])
             raw_daily_records = raw_final_frost.get("daily_records")
@@ -2205,6 +2213,7 @@ def _decode_game_state(
         migrations.register(14, _migrate_v14_to_v15)
         migrations.register(15, _migrate_v15_to_v16)
         migrations.register(16, _migrate_v16_to_v17)
+        migrations.register(17, _migrate_v17_to_v18)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -3609,6 +3618,27 @@ def _migrate_v16_to_v17(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v17_to_v18(document: dict[str, Any]) -> dict[str, Any]:
+    """Keep v17 runs on their saved balance; new runs use Patch 045."""
+
+    legacy = _object(document, "$", _field_names(GameState))
+    migrated = deepcopy(legacy)
+    final_frost = _object(
+        migrated["final_frost"],
+        "final_frost",
+        _field_names(FinalFrostState),
+    )
+    if final_frost["balance_profile_id"] not in {
+        "legacy_patch021",
+        "patch022",
+    }:
+        raise SaveDataError(
+            "v17 save must retain a historical final-frost balance profile"
+        )
+    migrated["save_data_version"] = 18
+    return migrated
+
+
 def _validate_state_invariants(
     state: GameState, *, strict_event_timeline: bool = True
 ) -> None:
@@ -4772,7 +4802,11 @@ def _validate_state_invariants(
             raise SaveDataError("depleted surface resource points cannot retain staff")
 
     frost = state.final_frost
-    if frost.balance_profile_id not in {"legacy_patch021", "patch022"}:
+    if frost.balance_profile_id not in {
+        "legacy_patch021",
+        "patch022",
+        "patch045",
+    }:
         raise SaveDataError("unsupported final-frost balance profile")
     all_record_days = sorted(int(key) for key in frost.daily_records)
     legacy_record_days = frost.legacy_hunger_record_days

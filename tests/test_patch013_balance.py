@@ -1108,6 +1108,7 @@ class Patch013BalanceTests(unittest.TestCase):
 
     def test_v13_completed_starvation_history_keeps_legacy_score(self) -> None:
         state = self.state(day=49)
+        state.final_frost.balance_profile_id = "legacy_patch021"
         system = self.system()
         system.prepare_new_day(state)
         state.final_frost.wood_supply_legacy_exempt = True

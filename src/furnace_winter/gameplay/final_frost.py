@@ -49,6 +49,15 @@ _LEGACY_PATCH_021_RESULT_SCORE_MINIMUMS = {
     "ember_survival": 0,
 }
 _LEGACY_PATCH_021_HIGH_VICTORY_DEATH_RATIO_PERCENT = 20
+_PATCH_022_RESULT_SCORE_MINIMUMS = {
+    "high_victory": 22,
+    "standard_victory": 18,
+    "bitter_victory": 12,
+    "collapse_survival": 7,
+    "ember_survival": 0,
+}
+_PATCH_022_SOCIETY_SCORE_FOUR_TRUST_MINIMUM = 70
+_PATCH_022_SOCIETY_SCORE_FOUR_PANIC_MAXIMUM = 30
 _BROKEN_SURVIVAL_MIN_ZERO_SCORE_SYSTEMS = 2
 _BROKEN_SURVIVAL_MAX_TOTAL_SCORE = 9
 _BROKEN_SURVIVAL_MIN_LOW_SCORE_SYSTEMS_WITH_MASS_DEATH = 2
@@ -345,7 +354,20 @@ class FinalFrostSystem:
 
         requested_housed_sick = 0
         requested_homeless_sick = 0
-        for level, people, homeless in exposure:
+        illness_exposure = exposure
+        if state.final_frost.balance_profile_id == "patch045":
+            aggregated_exposure: dict[tuple[int, bool], int] = {}
+            for level, people, homeless in exposure:
+                aggregated_exposure[(level, homeless)] = (
+                    aggregated_exposure.get((level, homeless), 0) + people
+                )
+            illness_exposure = [
+                (level, people, homeless)
+                for (level, homeless), people in sorted(
+                    aggregated_exposure.items()
+                )
+            ]
+        for level, people, homeless in illness_exposure:
             if level <= 0 or people <= 0:
                 continue
             amount = (people // damage["exposure_population_unit"]) * min(level, 4)
@@ -1370,6 +1392,22 @@ class FinalFrostSystem:
                     state.final_frost.frost_hunger_deaths
                 ),
             },
+            "scoring_contract": {
+                "result_score_minimums": dict(
+                    self._result_score_minimums(state)
+                ),
+                "perfect_society": {
+                    **self._society_score_four_thresholds(state),
+                    "maximum_trust_crisis_days": 0,
+                    "maximum_panic_crisis_days": 0,
+                    "old_city_departure_allowed": False,
+                },
+                "cold_illness_population_grouping": (
+                    "aggregate_by_exposure_level_and_housing_status"
+                    if state.final_frost.balance_profile_id == "patch045"
+                    else "historical_per_exposure_group"
+                ),
+            },
             "final_result": {
                 "is_finalized": state.final_result.is_finalized,
                 "ending_id": state.final_result.ending_id,
@@ -2143,13 +2181,20 @@ class FinalFrostSystem:
 
         trust = state.trust_panic.trust or 0
         panic = state.trust_panic.panic or 0
+        perfect_society = self._society_score_four_thresholds(state)
         trust_crisis = count("trust_crisis")
         panic_crisis = count("panic_crisis")
         old_departed = state.old_city.result_id in {
             "partial_exodus",
             "large_exodus",
         }
-        if trust >= 70 and panic <= 30 and trust_crisis == 0 and panic_crisis == 0 and not old_departed:
+        if (
+            trust >= perfect_society["minimum_trust"]
+            and panic <= perfect_society["maximum_panic"]
+            and trust_crisis == 0
+            and panic_crisis == 0
+            and not old_departed
+        ):
             society = 4
         elif trust >= 50 and panic <= 50 and trust_crisis <= 1 and panic_crisis <= 1:
             society = 3
@@ -2184,12 +2229,37 @@ class FinalFrostSystem:
             )
         )
 
+    def _result_score_minimums(self, state: GameState) -> dict[str, int]:
+        profile = state.final_frost.balance_profile_id
+        if profile == "legacy_patch021":
+            return _LEGACY_PATCH_021_RESULT_SCORE_MINIMUMS
+        if profile == "patch022":
+            return _PATCH_022_RESULT_SCORE_MINIMUMS
+        return self.rules.scoring["result_score_minimums"]
+
+    def _society_score_four_thresholds(
+        self, state: GameState
+    ) -> dict[str, int]:
+        if state.final_frost.balance_profile_id != "patch045":
+            return {
+                "minimum_trust": (
+                    _PATCH_022_SOCIETY_SCORE_FOUR_TRUST_MINIMUM
+                ),
+                "maximum_panic": (
+                    _PATCH_022_SOCIETY_SCORE_FOUR_PANIC_MAXIMUM
+                ),
+            }
+        return {
+            "minimum_trust": self.rules.scoring[
+                "society_score_four_trust_minimum"
+            ],
+            "maximum_panic": self.rules.scoring[
+                "society_score_four_panic_maximum"
+            ],
+        }
+
     def _result_for_total(self, state: GameState, total: int) -> str:
-        minimums = (
-            _LEGACY_PATCH_021_RESULT_SCORE_MINIMUMS
-            if state.final_frost.balance_profile_id == "legacy_patch021"
-            else self.rules.scoring["result_score_minimums"]
-        )
+        minimums = self._result_score_minimums(state)
         return next(
             result for result in _RESULT_ORDER if total >= minimums[result]
         )
@@ -2207,7 +2277,8 @@ class FinalFrostSystem:
         if (
             any(score == 0 for score in scores.values())
             or (
-                state.final_frost.balance_profile_id == "patch022"
+                state.final_frost.balance_profile_id
+                in {"patch022", "patch045"}
                 and any(score < 3 for score in scores.values())
             )
             or (

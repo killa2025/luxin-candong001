@@ -40,6 +40,7 @@ from furnace_winter.gameplay.survival import (
 )
 from furnace_winter.models import (
     BuildingState,
+    CURRENT_SAVE_DATA_VERSION,
     DeterministicRandom,
     EventResolutionRecord,
     FrostDayRecord,
@@ -507,9 +508,15 @@ class FinalFrostPatchTests(unittest.TestCase):
             "Patch 022 preparation threshold": lambda item: item[
                 "preparation"
             ].update({"prepared_required_items": 5}),
-            "Patch 022 result band": lambda item: item["scoring"][
+            "Patch 045 result band": lambda item: item["scoring"][
                 "result_score_minimums"
             ].update({"high_victory": 20}),
+            "Patch 045 perfect-society trust": lambda item: item[
+                "scoring"
+            ].update({"society_score_four_trust_minimum": 84}),
+            "Patch 045 perfect-society panic": lambda item: item[
+                "scoring"
+            ].update({"society_score_four_panic_maximum": 16}),
             "Patch 022 high-victory death threshold": lambda item: item[
                 "scoring"
             ].update({"high_victory_death_ratio_percent": 20}),
@@ -540,7 +547,7 @@ class FinalFrostPatchTests(unittest.TestCase):
         minimums = self.rules.scoring["result_score_minimums"]
         with self.assertRaises(TypeError):
             minimums["high_victory"] = 0
-        self.assertEqual(minimums["high_victory"], 22)
+        self.assertEqual(minimums["high_victory"], 24)
 
     def test_day_49_baseline_and_preparation_are_stable(self) -> None:
         state = self.make_state()
@@ -581,6 +588,7 @@ class FinalFrostPatchTests(unittest.TestCase):
     ) -> None:
         system = self.system()
         current = self.make_state()
+        current.final_frost.balance_profile_id = "patch022"
         self.assertEqual(current.final_frost.balance_profile_id, "patch022")
         expectations = {
             24: "high_victory",
@@ -646,6 +654,41 @@ class FinalFrostPatchTests(unittest.TestCase):
             "standard_victory",
         )
 
+    def test_patch045_requires_six_perfect_systems_for_high_victory(self) -> None:
+        state = self.make_state()
+        system = self.system()
+
+        self.assertEqual(state.final_frost.balance_profile_id, "patch045")
+        self.assertEqual(system._result_for_total(state, 24), "high_victory")
+        self.assertEqual(system._result_for_total(state, 23), "standard_victory")
+
+        state.trust_panic.trust = 89
+        state.trust_panic.panic = 17
+        self.assertEqual(system._score(state)["trust_and_panic"], 3)
+        state.trust_panic.trust = 85
+        state.trust_panic.panic = 15
+        self.assertEqual(system._score(state)["trust_and_panic"], 4)
+
+        historical = self.make_state()
+        historical.final_frost.balance_profile_id = "patch022"
+        historical.trust_panic.trust = 70
+        historical.trust_panic.panic = 30
+        self.assertEqual(system._score(historical)["trust_and_panic"], 4)
+
+        system.prepare_new_day(state)
+        contract = system.observe(state)["scoring_contract"]
+        self.assertEqual(contract["result_score_minimums"]["high_victory"], 24)
+        self.assertEqual(
+            contract["perfect_society"],
+            {
+                "minimum_trust": 85,
+                "maximum_panic": 15,
+                "maximum_trust_crisis_days": 0,
+                "maximum_panic_crisis_days": 0,
+                "old_city_departure_allowed": False,
+            },
+        )
+
     def test_v16_migration_preserves_legacy_balance_and_rejects_forgery(
         self,
     ) -> None:
@@ -655,7 +698,9 @@ class FinalFrostPatchTests(unittest.TestCase):
 
         restored = decode_game_state(source)
 
-        self.assertEqual(restored.save_data_version, 17)
+        self.assertEqual(
+            restored.save_data_version, CURRENT_SAVE_DATA_VERSION
+        )
         self.assertEqual(
             restored.final_frost.balance_profile_id,
             "legacy_patch021",
@@ -683,6 +728,56 @@ class FinalFrostPatchTests(unittest.TestCase):
             SaveDataError, "unsupported final-frost balance profile"
         ):
             decode_game_state(invalid)
+
+    def test_v17_migration_preserves_patch022_and_rejects_patch045_forgery(
+        self,
+    ) -> None:
+        source = encode_game_state(self.make_state(day=12))
+        source["save_data_version"] = 17
+        source["final_frost"]["balance_profile_id"] = "patch022"
+
+        restored = decode_game_state(source)
+
+        self.assertEqual(
+            restored.save_data_version, CURRENT_SAVE_DATA_VERSION
+        )
+        self.assertEqual(restored.final_frost.balance_profile_id, "patch022")
+        contract = self.system().observe(restored)["scoring_contract"]
+        self.assertEqual(contract["result_score_minimums"]["high_victory"], 22)
+        self.assertEqual(contract["perfect_society"]["minimum_trust"], 70)
+        self.assertEqual(contract["perfect_society"]["maximum_panic"], 30)
+
+        forged = encode_game_state(self.make_state(day=12))
+        forged["save_data_version"] = 17
+        with self.assertRaisesRegex(
+            SaveDataError, "pre-v18 save cannot contain the Patch 045"
+        ):
+            decode_game_state(forged)
+
+    def test_patch045_aggregates_small_housed_cold_groups_before_rounding(
+        self,
+    ) -> None:
+        def new_sick(profile: str) -> int:
+            state = self.make_state()
+            state.final_frost.balance_profile_id = profile
+            self.set_population(state, healthy=40, housed=40)
+            state.medical.effective_capacity = 100
+            with patch.object(
+                FinalFrostSystem,
+                "_exposure",
+                return_value=[(1, 10, False)] * 4,
+            ):
+                self.system().resolve_frost_health(
+                    self.context(
+                        state,
+                        49,
+                        EndDayStage.RESOLVE_HOUSING_COLD_AND_HUNGER,
+                    )
+                )
+            return state.events.metrics["patch009_new_sick"]
+
+        self.assertEqual(new_sick("patch045"), 2)
+        self.assertEqual(new_sick("patch022"), 0)
 
     def test_v16_completed_result_keeps_legacy_ending_and_report(self) -> None:
         state = self.make_state()
