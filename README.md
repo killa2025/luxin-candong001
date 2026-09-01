@@ -2,13 +2,13 @@
 
 《炉心残冬》项目仓库。
 
-代码 Patch 026～042 及各自复审修正均已并入 `main`。Patch 042 的木材风险反馈已通过第三十九次黑盒主路径验收；该次验收同时发现 Patch 015 的钢材警告只计算研究费、没有覆盖首座小型采钢机成本。Patch 043 因此补齐完整钢材接线缺口：尚无小型采钢机时，按研究是否已经付款分别计算剩余钢材筛选成本与首座采钢机成本，并继续沿用 Patch 015 的当前派员可采量口径。木材仍使用 Patch 042 的 D49 前保守可采上界。两种警告只陈述配置和状态可证明的资源缺口，不推荐行动、不改变成本、产量、资源或终霜结论。Patch 040～041 的分诊命令、炉律和动作暂停合同继续有效。Patch 039 的 37 项科技说明与 `DEFERRED` 研究门禁继续有效；开始研究仍须 `confirm=true`，取消研究仍为零返还与进度清零。悼亡钟继续公开结构化累计死亡条件，不输出与机制不符的“近期死亡”正文。旧城实际离开或资源损失不符合现有终局正文时只登记 PENDING；`sedation_city` 正式触发公式尚未封存，其正文暂不进入运行选择。
+代码 Patch 026～043 及各自复审修正均已并入 `main`。Patch 043 的完整钢材接线缺口已通过第四十次专项黑盒验收；随后第四十一次完整盲玩发现规则查询畸形包络泄漏 `KeyError`，以及格式 5 把尚未触发的 `sedation_city` 正文误记为 PENDING。Patch 044 将规则查询改为结构化字段诊断，为未注册命令公开无策略的命令目录发现入口，并让新生成的格式 6 终局报告只在实际存在 `sedation_city` 标签时登记对应 PENDING；既有格式 5 报告继续原样严格复载。木材与钢材风险警告只陈述配置和状态可证明的资源缺口，不推荐行动、不改变成本、产量、资源或终霜结论。Patch 040～041 的分诊命令、炉律和动作暂停合同继续有效。Patch 039 的 37 项科技说明与 `DEFERRED` 研究门禁继续有效；开始研究仍须 `confirm=true`，取消研究仍为零返还与进度清零。悼亡钟继续公开结构化累计死亡条件，不输出与机制不符的“近期死亡”正文。旧城实际离开或资源损失不符合现有终局正文时只登记 PENDING；`sedation_city` 正式触发公式尚未封存，其正文暂不进入运行选择。
 
 游戏的实际玩家是运行在沙盒中的 AI，人类用户负责旁观。这个产品定位不产生 AI 专属规则：游戏仍通过通用结构化命令和状态接口运行，不提供决策评分、推荐行动或自动策略。
 
 ## 目录概览
 
-Patch 030、Patch 031、Patch 032、Patch 033、Patch 034、Patch 035、Patch 036、Patch 037、Patch 038、Patch 039、Patch 040、Patch 041、Patch 042 与 Patch 043 的既有合同继续有效。
+Patch 030、Patch 031、Patch 032、Patch 033、Patch 034、Patch 035、Patch 036、Patch 037、Patch 038、Patch 039、Patch 040、Patch 041、Patch 042、Patch 043 与 Patch 044 的既有合同继续有效。
 
 - `docs/`：项目文档
 - `data/`：数据文件
@@ -31,7 +31,7 @@ Patch 030、Patch 031、Patch 032、Patch 033、Patch 034、Patch 035、Patch 03
 - `game.sign_oath_order_law`、`game.staff_oath_order_facility` 与 `game.use_oath_order_action` 分别处理 006C 签署、守炉堂/巡查所派驻及路线主动行动；两条路线永久互斥，特殊设施自动启用、零槽位且不通过 `build` 建造。
 - `game.resolve_event` 处理当前可执行事件选项；重大事件未处理时硬阻塞日结，普通事件允许忽略且不会在后台偷偷结算。
 - `game.end_run` 只允许在 D55 完整结算、评分和报告已经生成后以 `confirm=true` 主动封存本局；它保留原 `ending_id`、评分和标签，只另记 `run_state=ended` 与 `termination_reason=player_ended`。
-- 终局报告保存实际选中的 `text_id` 和报告格式版本；Patch 020 使用本局种子对符合状态的封存候选文案作稳定选择，Patch 021 再用同日服务快照证明医疗与食堂经历。Patch 027 的格式 3 报告以 D55 服务事实和终局实际库存过滤主报告句，Patch 029 的格式 4 报告为这些事实分支接入用户确认正文，Patch 030 的格式 5 再按已签炉律、已建/运行设施、旧城结算与承诺事实接入路线和制度长文。既有格式 1 / 2 / 3 / 4 报告均按各自合同原样严格读取，不在加载时重抽，也不能用其他格式形状绕过校验。
+- 终局报告保存实际选中的 `text_id` 和报告格式版本；Patch 020 使用本局种子对符合状态的封存候选文案作稳定选择，Patch 021 再用同日服务快照证明医疗与食堂经历。Patch 027 的格式 3 报告以 D55 服务事实和终局实际库存过滤主报告句，Patch 029 的格式 4 报告为这些事实分支接入用户确认正文，Patch 030 的格式 5 再按已签炉律、已建/运行设施、旧城结算与承诺事实接入路线和制度长文。Patch 044 的格式 6 修正 `sedation_city` PENDING 适用条件；格式 1～5 均按各自合同原样严格读取，不在加载时重抽，也不能用其他格式形状绕过校验。
 - `GameSession` 是供沙盒 AI 使用的统一运行入口：新建或读取存档后，同一对象登记 27 个现有游戏命令，其中 26 个属于当前可执行能力，`game.triage` 作为暂停能力保留；成功修改状态的命令会原子保存，保存失败则回滚本次命令。
 - `GameSession.status()` 每次只返回当前生存与规划所需的紧凑事实；`observe()` 返回完整机器观察，分别列出 `available_commands` 与 `unavailable_commands`，并提供全部 `available_rule_sections`、正式 `play_envelopes`、规则查询协议、持久化文件角色、日结确认生命周期和序列语义；`command_specs` 查询保留全部命令及其 `command_exists`、`executable`、`unavailable_reason`。`rules_view(section)` 按模块返回已验证的原始配置及其 `FINAL` / `TEST_NUMERIC` 状态，不提供策略建议。命令规格通过 `related_rule_sections` 指向建筑、科技、炉律、事件、路线、生存与终局规则来源，并通过 `related_protocol_contracts` 指向日结确认等非游戏规则协议，不必先提交失败命令才能发现合法结构。
 - `GameSession.replay_document()` 与 `write_replay()` 导出本次进程从打开存档开始的确定性命令记录；它不伪装成此前整局历史。`replay_sequence` 只编号当前会话中实际记录的命令尝试，包含拒绝命令并在重开会话时重置；`state_sequence` 保存于游戏状态，只在状态成功提交时递增，并由请求字段 `expected_state_sequence` 用于并发校验。
@@ -44,7 +44,7 @@ Patch 030、Patch 031、Patch 032、Patch 033、Patch 034、Patch 035、Patch 03
 - `data/events.json` 保存 Patch 007 事件阈值、承诺期限与奖惩、固定增员预设和第七霜落预警日；这些试玩数值保持 `TEST_NUMERIC`。
 - `data/oath_order.json` 保存代码 Patch 008 的旧城派阈值、006C 解锁、炉律关系、行动成本与冷却；Patch 019 只继续覆盖誓言路线的暂行测试值，铁腕值保持不变，全部继续标记为 `TEST_NUMERIC`。
 - `data/final_frost.json` 保存代码 Patch 009 的终霜规则、Patch 013 的寒冷/饥饿/木材断链，以及 Patch 022 的准备与终局分档测试阈值；这些平衡数值保持 `TEST_NUMERIC`。
-- 当前存档数据版本为 v17。v16 → v17 只增加终霜平衡档标识：既有存档保留 `legacy_patch021` 档，新建局使用 `patch022` 档，避免新门槛重写旧局结论。尚未生成终局报告的兼容存档会在正式终局时生成当前格式 5 报告；已经生成的格式 1 / 2 / 3 / 4 报告保持原样并按各自合同严格复载。Patch 030 不提升存档数据版本，也不重抽任何既有报告。v15 → v16 的逐日服务历史迁移、v14 → v15 的报告格式迁移及此前迁移语义保持不变。
+- 当前存档数据版本为 v17。v16 → v17 只增加终霜平衡档标识：既有存档保留 `legacy_patch021` 档，新建局使用 `patch022` 档，避免新门槛重写旧局结论。尚未生成终局报告的兼容存档会在正式终局时生成当前格式 6 报告；已经生成的格式 1～5 报告保持原样并按各自合同严格复载。Patch 044 不提升存档数据版本，也不重抽任何既有报告。v15 → v16 的逐日服务历史迁移、v14 → v15 的报告格式迁移及此前迁移语义保持不变。
 
 ## 开发命令
 
@@ -87,5 +87,7 @@ print(game.status())
 print(game.command("game.set_furnace", {"level": 2}))
 print(game.command("game.end_day"))
 ```
+
+Patch 044 的机器诊断边界：规则查询缺少 `section`、误用 `topic` 或提交未知栏目时会返回请求形状、合法栏目和字段错误，不泄漏内部异常。未注册命令返回 `command_specs` 请求形状及完整注册命令名清单；两类诊断均不做模糊行动推荐。
 
 `play` 使用一行一个 JSON 对象的长连接协议。新局默认使用 `--map-mode random`；自选时使用 `--map-mode manual --map-key rustbone_tundra|black_ash_lowland|twin_source_rift`。直接发送结构化命令即可；另支持 `{"type":"observe"}`、`{"type":"status"}`、`{"type":"command_specs"}`、`{"type":"rules","section":"maps"}`、`{"type":"autosave"}`、`{"type":"replay"}` 与 `{"type":"quit"}`。未知包络会返回全部合法类型，不提供行动建议。完整规则栏目由观察结果的 `available_rule_sections` 提供；`rules.query` 不是游戏命令，若误作命令提交，拒绝结果会返回上述正式请求形状。强警告日结返回的确认令牌只在产生预览的同一个存活 `GameSession` 中有效，重连后必须重新预览。成功日结的 `warnings` 同时保留 `pre_settlement` 风险快照和 `settlement_result` 事实；后者明确返回本次实际死亡、遗体处理、结算后仍未处理遗体，以及当日耗尽资源点与自动释放岗位，不代表新增规则或预测。成功日结会在主存档之外写入同目录的 `<存档名>.autosave_end_day.json`，其中保留当日日结清理完成、日期推进前的锁定状态、日志与 `resume_stage`；它不会覆盖或替代主会话存档，也不能直接作为 `play` / `report` 的主存档。打开主存档后使用 `{"type":"autosave"}` 可严格读取最近快照；损坏快照返回 `AUTOSAVE_SNAPSHOT_INVALID` 及稳定的路径、字段、原因和约束，恢复阶段错误另列正式合法值。误把快照路径用于正式入口时返回 `AUTOSAVE_SNAPSHOT_NOT_PRIMARY_SAVE` 和只读查看方式，只有唯一可识别的主存档候选才给出单一路径，无扩展名与 `.json` 候选同时有效时会明确报告歧义。建立新局时主存档与自动保存作为同一个持久化集合检查：默认拒绝任何旧文件，显式覆盖会事务式写入新主存档并清除上一局自动保存。回放导出默认拒绝覆盖已有文件；显式覆盖前会严格解析全部回放条目，并始终禁止指向主存档、自动保存或运行配置。具体边界见 `docs/handoff/PATCH-011：统一游戏会话与沙盒入口实现记录.md`、`docs/handoff/PATCH-012：三地图开局与确定性随机实现记录.md` 与 `docs/handoff/PATCH-028：自动存档快照与机器恢复说明实现记录.md`。

@@ -528,6 +528,11 @@ class GameSession:
     def command_specs(self) -> tuple[CommandSpec, ...]:
         return self._catalog.specs()
 
+    def rules_query_contract(self) -> dict[str, Any]:
+        """Return the non-strategic rules-envelope discovery contract."""
+
+        return deepcopy(self._protocol_contract()["rules_query"])
+
     def observe(self) -> Observation:
         return Observation.from_state(
             deepcopy(self._state),
@@ -1277,6 +1282,16 @@ class GameSession:
         if result.code is ErrorCode.COMMAND_NOT_REGISTERED:
             data.setdefault("reason", "command_name_not_registered")
             data.setdefault("submitted_name", request.name)
+            data.setdefault(
+                "command_discovery",
+                {
+                    "request_shape": {"type": "command_specs"},
+                    "registered_command_names": sorted(
+                        spec.name for spec in self.command_specs()
+                    ),
+                    "contains_strategy_recommendations": False,
+                },
+            )
             if request.name == "rules.query":
                 data.update(
                     {

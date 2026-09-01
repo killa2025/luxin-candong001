@@ -39,6 +39,24 @@ from furnace_winter.interface import (
 from furnace_winter.models import decode_game_state, dumps
 
 
+def _protocol_value_kind(value: object) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, str):
+        return "STRING"
+    if isinstance(value, int):
+        return "INTEGER"
+    if isinstance(value, float):
+        return "NUMBER"
+    if isinstance(value, Mapping):
+        return "OBJECT"
+    if isinstance(value, Sequence):
+        return "ARRAY"
+    return type(value).__name__.upper()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="furnace-winter",
@@ -392,12 +410,53 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "command_specs": session.command_specs(),
                     }
                 elif envelope_type == "rules":
-                    response = {
-                        "type": "rules",
-                        "rules": session.rules_view(
-                            str(payload.get("section", ""))
-                        ),
-                    }
+                    contract = session.rules_query_contract()
+                    unexpected_fields = sorted(
+                        set(payload) - {"type", "section"}
+                    )
+                    section = payload.get("section")
+                    field_errors = {}
+                    if "section" not in payload:
+                        field_errors["section"] = {
+                            "required_kind": "STRING",
+                            "actual_kind": "MISSING",
+                        }
+                    elif not isinstance(section, str):
+                        field_errors["section"] = {
+                            "required_kind": "STRING",
+                            "actual_kind": _protocol_value_kind(section),
+                        }
+                    if unexpected_fields or field_errors:
+                        response = {
+                            "type": "error",
+                            "code": "INVALID_RULES_QUERY",
+                            "reason": "invalid_rules_query_shape",
+                            "field_errors": field_errors,
+                            "unexpected_fields": unexpected_fields,
+                            "request_shape": contract["request_shape"],
+                            "available_sections": contract[
+                                "available_sections"
+                            ],
+                            "state_changed": False,
+                        }
+                    elif section not in contract["available_sections"]:
+                        response = {
+                            "type": "error",
+                            "code": "INVALID_RULES_QUERY",
+                            "reason": "unknown_rules_section",
+                            "submitted_section": section,
+                            "unexpected_fields": [],
+                            "request_shape": contract["request_shape"],
+                            "available_sections": contract[
+                                "available_sections"
+                            ],
+                            "state_changed": False,
+                        }
+                    else:
+                        response = {
+                            "type": "rules",
+                            "rules": session.rules_view(section),
+                        }
                 elif envelope_type == "replay":
                     response = {
                         "type": "replay",

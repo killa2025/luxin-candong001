@@ -17,6 +17,8 @@ from furnace_winter.models.ending_selection import (
     patch027_report_pending_text_ids,
     patch029_report_body_text_ids,
     patch029_report_pending_text_ids,
+    patch030_report_body_text_ids,
+    patch030_report_pending_text_ids,
 )
 from furnace_winter.models.serialization import to_primitive
 from furnace_winter.models.state import (
@@ -48,6 +50,7 @@ from furnace_winter.models.state import (
     PATCH_020_ENDING_REPORT_FORMAT_VERSION,
     PATCH_027_ENDING_REPORT_FORMAT_VERSION,
     PATCH_029_ENDING_REPORT_FORMAT_VERSION,
+    PATCH_030_ENDING_REPORT_FORMAT_VERSION,
     MapState,
     MedicalState,
     OathOrderState,
@@ -5183,6 +5186,9 @@ def _validate_state_invariants(
             EndingReportState(
                 format_version=PATCH_029_ENDING_REPORT_FORMAT_VERSION
             ),
+            EndingReportState(
+                format_version=PATCH_030_ENDING_REPORT_FORMAT_VERSION
+            ),
         )
         if report not in allowed_ungenerated_reports:
             raise SaveDataError(
@@ -5229,6 +5235,8 @@ def _validate_state_invariants(
         patch027_pending_text_ids = patch027_report_pending_text_ids(state)
         patch029_body_text_ids = patch029_report_body_text_ids(state)
         patch029_pending_text_ids = patch029_report_pending_text_ids(state)
+        patch030_body_text_ids = patch030_report_body_text_ids(state)
+        patch030_pending_text_ids = patch030_report_pending_text_ids(state)
         is_legacy_report = (
             report.format_version == LEGACY_ENDING_REPORT_FORMAT_VERSION
             and report.title_text_id
@@ -5254,6 +5262,12 @@ def _validate_state_invariants(
             and report.body_text_ids == patch029_body_text_ids
             and report.pending_text_ids == patch029_pending_text_ids
         )
+        is_patch030_report = (
+            report.format_version == PATCH_030_ENDING_REPORT_FORMAT_VERSION
+            and report.title_text_id == canonical_report_title_text_id(state)
+            and report.body_text_ids == patch030_body_text_ids
+            and report.pending_text_ids == patch030_pending_text_ids
+        )
         is_current_report = (
             report.format_version == CURRENT_ENDING_REPORT_FORMAT_VERSION
             and report.title_text_id == canonical_report_title_text_id(state)
@@ -5265,6 +5279,7 @@ def _validate_state_invariants(
             or is_patch020_report
             or is_patch027_report
             or is_patch029_report
+            or is_patch030_report
             or is_current_report
         ):
             raise SaveDataError(
