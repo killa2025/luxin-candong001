@@ -170,6 +170,36 @@ class RepositoryDocumentationTests(unittest.TestCase):
         ):
             self.assertIn(preserved_rule, agents)
 
+    def test_patch044_blackbox_fixes_and_report_compatibility_are_documented(
+        self,
+    ) -> None:
+        agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+        pending = (REPOSITORY_ROOT / "docs" / "PENDING.md").read_text(
+            encoding="utf-8"
+        )
+        index = (REPOSITORY_ROOT / "docs" / "INDEX.md").read_text(
+            encoding="utf-8"
+        )
+        handoff = (
+            REPOSITORY_ROOT
+            / "docs"
+            / "handoff"
+            / "PATCH-044：规则查询与终局完整性黑盒修复实现记录.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("第四十次专项黑盒验收通过", index)
+        self.assertIn("PATCH-044：规则查询与终局完整性黑盒修复实现记录", index)
+        self.assertIn("规则查询缺少 `section`", readme)
+        self.assertIn("格式 6", readme)
+        self.assertIn("格式 1～5 旧报告保持原样", pending)
+        self.assertIn("只有实际终局标签包含 `sedation_city`", pending)
+        self.assertIn("INVALID_RULES_QUERY", handoff)
+        self.assertIn("不返回 `suggested_command`", handoff)
+        self.assertIn("存档数据版本保持 v17", handoff)
+        self.assertIn("Patch 045", agents)
+        self.assertNotIn("D56、Patch 044", agents)
+
     def test_repository_status_text_matches_patch_033_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -199,6 +229,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("Patch 035", readme)
         self.assertIn("Patch 036", readme)
         self.assertIn("格式 5", readme)
+        self.assertIn("格式 6", readme)
         self.assertIn('{"type":"autosave"}', readme)
         self.assertIn("command_specs", readme)
         self.assertIn("GameSession", readme)

@@ -708,6 +708,16 @@ def canonical_report_body_text_ids(state: GameState) -> list[str]:
     )
 
 
+def patch030_report_body_text_ids(state: GameState) -> list[str]:
+    """Reproduce report format 5 without rewriting existing saved reports."""
+
+    return _report_body_text_ids(
+        state,
+        patch020_fact_contract=False,
+        patch030_text_contract=True,
+    )
+
+
 def patch029_report_body_text_ids(state: GameState) -> list[str]:
     """Reproduce report format 4 without rewriting existing saved reports."""
 
@@ -747,6 +757,7 @@ def _report_pending_text_ids(
     patch020_fact_contract: bool,
     patch027_fact_contract: bool = False,
     patch030_text_contract: bool = False,
+    sedation_pending_requires_tag: bool = False,
 ) -> list[str]:
     pending: set[str] = set()
     ordinary_laws = set(state.laws.signed_law_ids)
@@ -754,6 +765,7 @@ def _report_pending_text_ids(
     ending_tags = {
         *state.final_result.defining_tags,
         *state.final_result.major_tags,
+        *state.final_result.ending_tags,
     }
     if (
         (patch027_fact_contract or not patch020_fact_contract)
@@ -824,7 +836,12 @@ def _report_pending_text_ids(
     else:
         if _old_city_full_text_is_pending(state):
             pending.add(_PENDING_LONG_TEXT_IDS["old_city"])
-        if ordinary_laws & {"tavern_law", "casino_law"}:
+        sedation_pending_applies = (
+            "sedation_city" in ending_tags
+            if sedation_pending_requires_tag
+            else bool(ordinary_laws & {"tavern_law", "casino_law"})
+        )
+        if sedation_pending_applies:
             pending.add("ending.entertainment.sedation_city.full_text")
     return sorted(pending)
 
@@ -849,6 +866,17 @@ def final_result_requires_illness_text(state: GameState) -> bool:
 
 
 def canonical_report_pending_text_ids(state: GameState) -> list[str]:
+    return _report_pending_text_ids(
+        state,
+        patch020_fact_contract=False,
+        patch030_text_contract=True,
+        sedation_pending_requires_tag=True,
+    )
+
+
+def patch030_report_pending_text_ids(state: GameState) -> list[str]:
+    """Reproduce report format 5 without rewriting existing saved reports."""
+
     return _report_pending_text_ids(
         state,
         patch020_fact_contract=False,

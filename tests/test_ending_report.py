@@ -30,6 +30,7 @@ from furnace_winter.models import (
     PATCH_020_ENDING_REPORT_FORMAT_VERSION,
     PATCH_027_ENDING_REPORT_FORMAT_VERSION,
     PATCH_029_ENDING_REPORT_FORMAT_VERSION,
+    PATCH_030_ENDING_REPORT_FORMAT_VERSION,
     BuildingState,
     DeterministicRandom,
     EndingReportState,
@@ -52,6 +53,8 @@ from furnace_winter.models.ending_selection import (
     patch027_report_pending_text_ids,
     patch029_report_body_text_ids,
     patch029_report_pending_text_ids,
+    patch030_report_body_text_ids,
+    patch030_report_pending_text_ids,
     report_template_values,
 )
 from furnace_winter.text import (
@@ -1136,6 +1139,10 @@ class EndingReportPatchTests(unittest.TestCase):
             "ending.entertainment.casino.full_text",
             canonical_report_body_text_ids(state),
         )
+        self.assertNotIn(
+            "ending.entertainment.sedation_city.full_text",
+            canonical_report_pending_text_ids(state),
+        )
         state.final_result.ending_tags.append("sedation_city")
         self.assertNotIn(
             "ending.entertainment.sedation_city.full_text",
@@ -1144,6 +1151,59 @@ class EndingReportPatchTests(unittest.TestCase):
         self.assertIn(
             "ending.entertainment.sedation_city.full_text",
             canonical_report_pending_text_ids(state),
+        )
+
+    def test_patch044_sedation_pending_requires_the_actual_ending_tag(self) -> None:
+        state = self.completed_state()
+        state.laws.signed_law_ids.extend(["tavern_law", "casino_law"])
+        state.final_result.report = EndingReportState()
+
+        EndingReportSystem().generate(state)
+
+        self.assertEqual(
+            state.final_result.report.format_version,
+            CURRENT_ENDING_REPORT_FORMAT_VERSION,
+        )
+        self.assertNotIn(
+            "ending.entertainment.sedation_city.full_text",
+            state.final_result.report.pending_text_ids,
+        )
+        self.assertEqual(
+            EndingReportSystem().observe(state)["content_status"],
+            "complete",
+        )
+        self.assertEqual(decode_game_state(encode_game_state(state)), state)
+
+        tampered = encode_game_state(state)
+        tampered["final_result"]["report"]["pending_text_ids"] = [
+            "ending.entertainment.sedation_city.full_text"
+        ]
+        with self.assertRaisesRegex(
+            SaveDataError, "text selection is not canonical"
+        ):
+            decode_game_state(tampered)
+
+    def test_patch044_preserves_generated_format5_sedation_pending(self) -> None:
+        state = self.completed_state()
+        state.laws.signed_law_ids.extend(["tavern_law", "casino_law"])
+        report = state.final_result.report
+        report.format_version = PATCH_030_ENDING_REPORT_FORMAT_VERSION
+        report.body_text_ids = patch030_report_body_text_ids(state)
+        report.pending_text_ids = patch030_report_pending_text_ids(state)
+
+        restored = decode_game_state(encode_game_state(state))
+
+        self.assertEqual(
+            restored.final_result.report.format_version,
+            PATCH_030_ENDING_REPORT_FORMAT_VERSION,
+        )
+        self.assertIn(
+            "ending.entertainment.sedation_city.full_text",
+            restored.final_result.report.pending_text_ids,
+        )
+        self.assertEqual(
+            EndingReportSystem().observe(restored)["content_status"],
+            "partial_pending_text",
         )
 
     def test_patch030_rejects_forged_sedation_narrative(self) -> None:

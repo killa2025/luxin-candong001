@@ -274,6 +274,36 @@ class GameSessionTests(unittest.TestCase):
             self.assertEqual(encode_game_state(session.state), before_state)
             self.assertEqual(save_path.read_bytes(), before_save)
 
+    def test_unknown_command_returns_non_strategic_catalog_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "unknown-command.json"
+            session = self.new_session(seed=1144, save_path=save_path)
+            before_state = encode_game_state(session.state)
+            before_save = save_path.read_bytes()
+
+            execution = session.command(
+                "game.research_start",
+                {"tech_id": "furnace_power_stability_1"},
+            )
+            after_state = encode_game_state(session.state)
+            after_save = save_path.read_bytes()
+
+        self.assertEqual(
+            execution.result.code, ErrorCode.COMMAND_NOT_REGISTERED
+        )
+        discovery = execution.result.data["command_discovery"]
+        self.assertEqual(
+            discovery["request_shape"], {"type": "command_specs"}
+        )
+        self.assertIn("game.research", discovery["registered_command_names"])
+        self.assertFalse(discovery["contains_strategy_recommendations"])
+        self.assertNotIn("suggested_command", execution.result.data)
+        self.assertNotIn("suggested_arguments", execution.result.data)
+        self.assertEqual(after_state, before_state)
+        self.assertEqual(after_save, before_save)
+        self.assertFalse(execution.result.state_changed)
+        self.assertFalse(execution.save_written)
+
     def test_sequence_contract_distinguishes_session_attempts_from_saved_state(
         self,
     ) -> None:
@@ -1825,6 +1855,63 @@ class PlayCliTests(unittest.TestCase):
         )
         self.assertEqual(lines[1]["status"]["state_sequence"], 0)
         self.assertEqual(lines[4]["status"]["state_sequence"], 0)
+
+    def test_rules_envelope_rejects_topic_without_leaking_key_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "cli-rules-shape.json"
+            requests = (
+                {"type": "rules", "topic": "final_frost"},
+                {"type": "rules", "section": "not_a_section"},
+                {"type": "rules", "section": "final_frost"},
+                {"type": "quit"},
+            )
+            input_stream = StringIO(
+                "".join(json.dumps(item) + "\n" for item in requests)
+            )
+            output_stream = StringIO()
+            with patch("sys.stdin", input_stream), redirect_stdout(output_stream):
+                exit_code = main(
+                    [
+                        "play",
+                        str(save_path),
+                        "--data-dir",
+                        str(ROOT / "data"),
+                        "--new",
+                    ]
+                )
+            lines = [
+                json.loads(line)
+                for line in output_stream.getvalue().splitlines()
+            ]
+
+        self.assertEqual(exit_code, 0)
+        malformed = lines[1]
+        self.assertEqual(malformed["code"], "INVALID_RULES_QUERY")
+        self.assertEqual(malformed["reason"], "invalid_rules_query_shape")
+        self.assertEqual(
+            malformed["field_errors"]["section"],
+            {"required_kind": "STRING", "actual_kind": "MISSING"},
+        )
+        self.assertEqual(malformed["unexpected_fields"], ["topic"])
+        self.assertEqual(
+            malformed["request_shape"],
+            {"type": "rules", "section": "RULE_SECTION_STRING"},
+        )
+        self.assertIn("final_frost", malformed["available_sections"])
+        self.assertFalse(malformed["state_changed"])
+        self.assertNotEqual(malformed.get("exception_type"), "KeyError")
+
+        unknown = lines[2]
+        self.assertEqual(unknown["code"], "INVALID_RULES_QUERY")
+        self.assertEqual(unknown["reason"], "unknown_rules_section")
+        self.assertEqual(unknown["submitted_section"], "not_a_section")
+        self.assertIn("final_frost", unknown["available_sections"])
+        self.assertFalse(unknown["state_changed"])
+
+        valid = lines[3]
+        self.assertEqual(valid["type"], "rules")
+        self.assertEqual(valid["rules"]["section"], "final_frost")
+        self.assertEqual(lines[4]["type"], "closed")
 
     def test_json_lines_autosave_view_and_direct_path_rejection(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
