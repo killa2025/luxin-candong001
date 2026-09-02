@@ -241,6 +241,11 @@ class RepositoryDocumentationTests(unittest.TestCase):
 
         self.assertIn("Patch 023～045 及其复审修正均已并入 `main`", agents)
         self.assertIn("Patch 046 只补机器发现性", agents)
+        self.assertIn("不追溯改变寒冷结算和终局评分", agents)
+        self.assertIn(
+            "不得输出“近期死亡”正文或自行新增时间机制",
+            agents,
+        )
         self.assertIn("D56、Patch 047", agents)
         self.assertNotIn("D56、Patch 046", agents)
         self.assertIn("不修改允许加班的建筑类型", handoff)
