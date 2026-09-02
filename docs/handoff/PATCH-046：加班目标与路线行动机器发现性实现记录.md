@@ -22,4 +22,4 @@
 ## 验证
 
 - 专项测试覆盖允许类型、当前合法实例、阻塞原因、拒绝回传、正式规则查询和路线参数导航。
-- 全量 540 项 unittest、9 份 JSON 配置校验、`compileall` 与 `git diff --check` 均通过。
+- 全量 541 项 unittest、9 份 JSON 配置校验、`compileall` 与 `git diff --check` 均通过。

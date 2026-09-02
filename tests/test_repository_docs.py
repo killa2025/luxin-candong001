@@ -230,6 +230,21 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("Patch 046", agents)
         self.assertNotIn("D56、Patch 045", agents)
 
+    def test_patch046_contract_advances_repository_boundary(self) -> None:
+        agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        handoff = (
+            REPOSITORY_ROOT
+            / "docs"
+            / "handoff"
+            / "PATCH-046：加班目标与路线行动机器发现性实现记录.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Patch 023～045 及其复审修正均已并入 `main`", agents)
+        self.assertIn("Patch 046 只补机器发现性", agents)
+        self.assertIn("D56、Patch 047", agents)
+        self.assertNotIn("D56、Patch 046", agents)
+        self.assertIn("不修改允许加班的建筑类型", handoff)
+
     def test_repository_status_text_matches_patch_033_boundary(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         agents = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
