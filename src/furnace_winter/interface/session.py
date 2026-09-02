@@ -1002,6 +1002,8 @@ class GameSession:
                 "research_start": self.technologies.research_start_notice(),
                 "descriptions": self.technologies.description_catalog(),
             }
+        elif section == "laws":
+            result["interface_text"] = self.laws.observe(self._state)
         elif section == "oath_order":
             result["interface_text"] = self.oath_order.route_view(self._state)
         return result

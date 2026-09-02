@@ -1488,6 +1488,36 @@ class GameSessionTests(unittest.TestCase):
             actions["stay_persuasion"]["old_city_requirement_text"],
             "旧城派危机已激活时可用。",
         )
+        action_spec = next(
+            spec
+            for spec in session.command_specs()
+            if spec.name == "game.use_oath_order_action"
+        )
+        self.assertEqual(
+            action_spec.argument_semantics["action_id"],
+            "option_prerequisites_are_listed_in_oath_order.action_rules",
+        )
+
+    def test_patch046_overtime_contract_is_in_formal_law_rules(self) -> None:
+        session = self.new_session(seed=1146)
+
+        rules = session.rules_view("laws")
+        contract = rules["interface_text"]["overtime_target_contract"]
+        overtime_spec = next(
+            spec
+            for spec in session.command_specs()
+            if spec.name == "game.overtime"
+        )
+
+        self.assertEqual(contract["requires_signed_law_id"], "overtime_law")
+        self.assertFalse(contract["law_prerequisite_satisfied"])
+        self.assertIn("canteen", contract["allowed_building_types"])
+        self.assertNotIn("hunting_lodge", contract["allowed_building_types"])
+        self.assertEqual(contract["eligible_building_ids"], [])
+        self.assertEqual(
+            overtime_spec.argument_semantics["building_id"],
+            "registered_building_id_restricted_by_overtime_target_contract",
+        )
 
     def test_patch036_triage_target_feedback_is_formally_discoverable(self) -> None:
         session = self.new_session(seed=1136)

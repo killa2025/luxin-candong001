@@ -90,6 +90,9 @@ def build_law_catalog(
         name=OVERTIME_COMMAND,
         required_arguments={"building_id": ArgumentKind.STRING},
         optional_arguments={"confirm": ArgumentKind.BOOLEAN},
+        argument_semantics={
+            "building_id": "registered_building_id_restricted_by_overtime_target_contract",
+        },
         related_rule_sections=("laws", "buildings"),
         pre_execution_text_id=overtime_confirmation.text_id,
         pre_execution_text_template=overtime_confirmation.text,
@@ -297,13 +300,25 @@ class LawSystem:
             return self._illegal("overtime_daily_limit_reached")
         building = state.buildings.get(str(request.arguments["building_id"]))
         if building is None:
-            return self._illegal("unknown_building")
+            return self._illegal(
+                "unknown_building",
+                overtime_target_contract=self.overtime_target_contract(state),
+            )
         if building.building_type not in OVERTIME_BUILDING_TYPES:
-            return self._illegal("building_cannot_overtime")
+            return self._illegal(
+                "building_cannot_overtime",
+                overtime_target_contract=self.overtime_target_contract(state),
+            )
         if self._assigned_total(building) <= 0:
-            return self._illegal("building_has_no_staff")
+            return self._illegal(
+                "building_has_no_staff",
+                overtime_target_contract=self.overtime_target_contract(state),
+            )
         if not self._is_expected_operational(state, building):
-            return self._illegal("building_not_operational")
+            return self._illegal(
+                "building_not_operational",
+                overtime_target_contract=self.overtime_target_contract(state),
+            )
         return CommandValidation.valid()
 
     def _medical_ration_legality(self, state: GameState, request: CommandRequest) -> CommandValidation:
@@ -1049,6 +1064,7 @@ class LawSystem:
                 "numerator": progress_numerator,
                 "denominator": progress_denominator,
             },
+            "overtime_target_contract": self.overtime_target_contract(state),
             "death_path": state.social_policy.death_path,
             "firepit_enabled": state.social_policy.firepit_enabled,
             "firepit_daily_effect": {
@@ -1070,6 +1086,54 @@ class LawSystem:
                 for key, value in state.laws.cooldowns.items()
                 if key != _LAW_COOLDOWN
             },
+        }
+
+    def overtime_target_contract(self, state: GameState) -> dict[str, Any]:
+        """Describe legal overtime targets without recommending an action."""
+
+        law_ready = "overtime_law" in state.laws.signed_law_ids
+        daily_limit_available = state.social_policy.overtime_building_id is None
+        targets: list[dict[str, Any]] = []
+        eligible_ids: list[str] = []
+        for building_id, building in sorted(state.buildings.items()):
+            blocking_reasons: list[str] = []
+            if building.building_type not in OVERTIME_BUILDING_TYPES:
+                blocking_reasons.append("building_type_not_allowed")
+            if self._assigned_total(building) <= 0:
+                blocking_reasons.append("building_has_no_staff")
+            if not self._is_expected_operational(state, building):
+                blocking_reasons.append("building_not_operational")
+            if not law_ready:
+                blocking_reasons.append("overtime_law_not_signed")
+            if not daily_limit_available:
+                blocking_reasons.append("overtime_daily_limit_reached")
+            eligible_now = not blocking_reasons
+            if eligible_now:
+                eligible_ids.append(building_id)
+            targets.append(
+                {
+                    "building_id": building_id,
+                    "building_type": building.building_type,
+                    "assigned_population": self._assigned_total(building),
+                    "expected_operational": self._is_expected_operational(
+                        state, building
+                    ),
+                    "eligible_now": eligible_now,
+                    "blocking_reasons": blocking_reasons,
+                }
+            )
+        return {
+            "allowed_building_types": sorted(OVERTIME_BUILDING_TYPES),
+            "requires_signed_law_id": "overtime_law",
+            "law_prerequisite_satisfied": law_ready,
+            "one_target_per_day": True,
+            "daily_limit_available": daily_limit_available,
+            "requires_assigned_population": True,
+            "requires_expected_operational": True,
+            "requires_confirm_true": True,
+            "eligible_building_ids": eligible_ids,
+            "targets": targets,
+            "contains_strategy_recommendations": False,
         }
 
     def triage_target_contract(self) -> dict[str, Any]:
