@@ -667,6 +667,56 @@ class LawPatchTests(unittest.TestCase):
         self.assertEqual(result.data["reason"], "building_not_operational")
         self.assertEqual(state, before)
 
+    def test_overtime_targets_are_discoverable_without_guessing(self) -> None:
+        state = self.make_state()
+        canteen = self.execute_building(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "canteen", "zone": "inner_ring"},
+        )
+        lodge = self.execute_building(
+            state,
+            BUILD_COMMAND,
+            {"building_type": "hunting_lodge", "zone": "outer_ring"},
+        )
+        for built in (canteen, lodge):
+            self.execute_building(
+                state,
+                ASSIGN_COMMAND,
+                {
+                    "building_id": built.data["building_id"],
+                    "population_type": "workers",
+                    "count": 5,
+                },
+            )
+        self.assertTrue(self.sign(state, "overtime_law").accepted)
+
+        contract = self.law_system().observe(state)["overtime_target_contract"]
+        targets = {item["building_id"]: item for item in contract["targets"]}
+        self.assertIn("canteen", contract["allowed_building_types"])
+        self.assertNotIn("hunting_lodge", contract["allowed_building_types"])
+        self.assertEqual(
+            contract["eligible_building_ids"], [canteen.data["building_id"]]
+        )
+        self.assertTrue(targets[canteen.data["building_id"]]["eligible_now"])
+        self.assertEqual(
+            targets[lodge.data["building_id"]]["blocking_reasons"],
+            ["building_type_not_allowed"],
+        )
+        self.assertFalse(contract["contains_strategy_recommendations"])
+
+        before = deepcopy(state)
+        rejected = self.execute_law(
+            state,
+            OVERTIME_COMMAND,
+            {"building_id": lodge.data["building_id"], "confirm": True},
+        )
+        self.assertEqual(rejected.data["reason"], "building_cannot_overtime")
+        self.assertEqual(
+            rejected.data["overtime_target_contract"], contract
+        )
+        self.assertEqual(state, before)
+
     def test_overtime_target_staff_cannot_be_partly_or_fully_unassigned(self) -> None:
         state = self.make_state()
         canteen = self.execute_building(

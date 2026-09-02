@@ -2,13 +2,13 @@
 
 《炉心残冬》项目仓库。
 
-代码 Patch 026～044 及各自复审修正均已并入 `main`。第四十三次 seed 45045 锈骨冻原完整盲玩以 148 人零死亡、六系统满分和总分 24 结束，确认高胜仍过于容易，并暴露了同等级寒冷人口按住宅逐组向下取整、使 10 人小组长期免于患病的确定缺陷。Patch 045 对新建局启用新的 `patch045` 平衡档：同一暴露等级且同为有房或无房的人口先汇总再计算患病，高胜最低总分提高为 24，社会系统 4 分收紧为信任至少 85 且恐慌至多 15；正式机器标准流固定为 UTF-8。旧局保留历史平衡，不追溯改分。木材与钢材风险警告只陈述配置和状态可证明的资源缺口，不推荐行动、不改变成本、产量、资源或终霜结论。Patch 040～041 的分诊命令、炉律和动作暂停合同继续有效。Patch 039 的 37 项科技说明与 `DEFERRED` 研究门禁继续有效；开始研究仍须 `confirm=true`，取消研究仍为零返还与进度清零。悼亡钟继续公开结构化累计死亡条件，不输出与机制不符的“近期死亡”正文。旧城实际离开或资源损失不符合现有终局正文时只登记 PENDING；`sedation_city` 正式触发公式尚未封存，其正文暂不进入运行选择。
+代码 Patch 026～045 及各自复审修正均已并入 `main`。第四十四次 seed 45145 锈骨冻原唯一盲玩以 50 人存活、92 人死亡和总分 4 完成 D55，确认 Patch 045 的偏难地图不再轻易高胜且仍有活路；同时暴露了加班目标只能靠枚举失败发现的机器接口缺口。Patch 046 在正式炉律规则、机器观察和拒绝结果中公开允许加班的建筑类型、当前实例资格与阻塞原因，不改变任何机制或平衡值。悼亡钟的累计死亡前置条件原本已在正式路线规则中公开，本轮只让命令参数语义明确指向该规则，未把黑盒误判改成新机制。Patch 045 对新建局启用 `patch045` 平衡档：同一暴露等级且同为有房或无房的人口先汇总再计算患病，高胜最低总分为 24，社会系统 4 分要求信任至少 85 且恐慌至多 15；正式机器标准流固定为 UTF-8。旧局保留历史平衡，不追溯改分。
 
 游戏的实际玩家是运行在沙盒中的 AI，人类用户负责旁观。这个产品定位不产生 AI 专属规则：游戏仍通过通用结构化命令和状态接口运行，不提供决策评分、推荐行动或自动策略。
 
 ## 目录概览
 
-Patch 030、Patch 031、Patch 032、Patch 033、Patch 034、Patch 035、Patch 036、Patch 037、Patch 038、Patch 039、Patch 040、Patch 041、Patch 042、Patch 043、Patch 044 与 Patch 045 的既有合同继续有效。
+Patch 030、Patch 031、Patch 032、Patch 033、Patch 034、Patch 035、Patch 036、Patch 037、Patch 038、Patch 039、Patch 040、Patch 041、Patch 042、Patch 043、Patch 044、Patch 045 与 Patch 046 的既有合同继续有效。
 
 - `docs/`：项目文档
 - `data/`：数据文件
@@ -33,7 +33,7 @@ Patch 030、Patch 031、Patch 032、Patch 033、Patch 034、Patch 035、Patch 03
 - `game.end_run` 只允许在 D55 完整结算、评分和报告已经生成后以 `confirm=true` 主动封存本局；它保留原 `ending_id`、评分和标签，只另记 `run_state=ended` 与 `termination_reason=player_ended`。
 - 终局报告保存实际选中的 `text_id` 和报告格式版本；Patch 020 使用本局种子对符合状态的封存候选文案作稳定选择，Patch 021 再用同日服务快照证明医疗与食堂经历。Patch 027 的格式 3 报告以 D55 服务事实和终局实际库存过滤主报告句，Patch 029 的格式 4 报告为这些事实分支接入用户确认正文，Patch 030 的格式 5 再按已签炉律、已建/运行设施、旧城结算与承诺事实接入路线和制度长文。Patch 044 的格式 6 修正 `sedation_city` PENDING 适用条件；格式 1～5 均按各自合同原样严格读取，不在加载时重抽，也不能用其他格式形状绕过校验。
 - `GameSession` 是供沙盒 AI 使用的统一运行入口：新建或读取存档后，同一对象登记 27 个现有游戏命令，其中 26 个属于当前可执行能力，`game.triage` 作为暂停能力保留；成功修改状态的命令会原子保存，保存失败则回滚本次命令。
-- `GameSession.status()` 每次只返回当前生存与规划所需的紧凑事实；`observe()` 返回完整机器观察，分别列出 `available_commands` 与 `unavailable_commands`，并提供全部 `available_rule_sections`、正式 `play_envelopes`、规则查询协议、持久化文件角色、日结确认生命周期和序列语义；`command_specs` 查询保留全部命令及其 `command_exists`、`executable`、`unavailable_reason`。`rules_view(section)` 按模块返回已验证的原始配置及其 `FINAL` / `TEST_NUMERIC` 状态，不提供策略建议。命令规格通过 `related_rule_sections` 指向建筑、科技、炉律、事件、路线、生存与终局规则来源，并通过 `related_protocol_contracts` 指向日结确认等非游戏规则协议，不必先提交失败命令才能发现合法结构。
+- `GameSession.status()` 每次只返回当前生存与规划所需的紧凑事实；`observe()` 返回完整机器观察，分别列出 `available_commands` 与 `unavailable_commands`，并提供全部 `available_rule_sections`、正式 `play_envelopes`、规则查询协议、持久化文件角色、日结确认生命周期和序列语义；`command_specs` 查询保留全部命令及其 `command_exists`、`executable`、`unavailable_reason`。`rules_view(section)` 按模块返回已验证的原始配置及其 `FINAL` / `TEST_NUMERIC` 状态，不提供策略建议。炉律规则另公开 `overtime_target_contract`，列出允许类型、当前实例资格和阻塞原因；路线行动参数明确指向 `oath_order.action_rules` 中的逐项前置条件。命令规格通过 `related_rule_sections` 指向建筑、科技、炉律、事件、路线、生存与终局规则来源，并通过 `related_protocol_contracts` 指向日结确认等非游戏规则协议，不必先提交失败命令才能发现合法结构。
 - `GameSession.replay_document()` 与 `write_replay()` 导出本次进程从打开存档开始的确定性命令记录；它不伪装成此前整局历史。`replay_sequence` 只编号当前会话中实际记录的命令尝试，包含拒绝命令并在重开会话时重置；`state_sequence` 保存于游戏状态，只在状态成功提交时递增，并由请求字段 `expected_state_sequence` 用于并发校验。
 - `game.set_furnace` 在白天设置最终炉心档位 `0～3`；炉心关闭或燃料不足会在 `end_day` 前产生结构化强警告。若日结实际有效炉级为 0，当日至少发生 1 例自然死亡；疾病、饥饿优先结算，只有两者均未造成死亡时，既有寒冷系统才保证至少 1 人冻死。警告会分别返回无条件的自然死亡下限与有条件的寒冷死亡下限，不预先断言具体死因。
 - `data/survival.json` 保存已封存的开局值、炉心档位、食物基础规则、固定天气与区域修正。
@@ -91,5 +91,7 @@ print(game.command("game.end_day"))
 Patch 044 的机器诊断边界：规则查询缺少 `section`、误用 `topic` 或提交未知栏目时会返回请求形状、合法栏目和字段错误，不泄漏内部异常。未注册命令返回 `command_specs` 请求形状及完整注册命令名清单；两类诊断均不做模糊行动推荐。
 
 Patch 045 的机器与平衡边界：`observe()` 的终霜视图公开当前平衡档、五档总分门槛、社会系统 4 分条件及寒冷患病分组口径。命令行启动时会把标准输入、标准输出和标准错误流固定为 UTF-8，避免 Windows 本地代码页损坏中文 JSON；这不改变 JSON 协议、随机流或游戏状态。
+
+Patch 046 的机器发现边界：`game.overtime` 的允许建筑类型、当前目标实例、派员、预计运行状态、资格与阻塞原因可从 `observe().law_view` 或 `rules(laws).interface_text` 直接读取；目标拒绝也返回同一合同。该清单只陈述当前合法性，不推荐选择。`game.use_oath_order_action` 的参数语义明确指向既有路线逐项规则，其中悼亡钟的累计死亡条件早已存在，本轮未修改条件或收益。
 
 `play` 使用一行一个 JSON 对象的长连接协议。新局默认使用 `--map-mode random`；自选时使用 `--map-mode manual --map-key rustbone_tundra|black_ash_lowland|twin_source_rift`。直接发送结构化命令即可；另支持 `{"type":"observe"}`、`{"type":"status"}`、`{"type":"command_specs"}`、`{"type":"rules","section":"maps"}`、`{"type":"autosave"}`、`{"type":"replay"}` 与 `{"type":"quit"}`。未知包络会返回全部合法类型，不提供行动建议。完整规则栏目由观察结果的 `available_rule_sections` 提供；`rules.query` 不是游戏命令，若误作命令提交，拒绝结果会返回上述正式请求形状。强警告日结返回的确认令牌只在产生预览的同一个存活 `GameSession` 中有效，重连后必须重新预览。成功日结的 `warnings` 同时保留 `pre_settlement` 风险快照和 `settlement_result` 事实；后者明确返回本次实际死亡、遗体处理、结算后仍未处理遗体，以及当日耗尽资源点与自动释放岗位，不代表新增规则或预测。成功日结会在主存档之外写入同目录的 `<存档名>.autosave_end_day.json`，其中保留当日日结清理完成、日期推进前的锁定状态、日志与 `resume_stage`；它不会覆盖或替代主会话存档，也不能直接作为 `play` / `report` 的主存档。打开主存档后使用 `{"type":"autosave"}` 可严格读取最近快照；损坏快照返回 `AUTOSAVE_SNAPSHOT_INVALID` 及稳定的路径、字段、原因和约束，恢复阶段错误另列正式合法值。误把快照路径用于正式入口时返回 `AUTOSAVE_SNAPSHOT_NOT_PRIMARY_SAVE` 和只读查看方式，只有唯一可识别的主存档候选才给出单一路径，无扩展名与 `.json` 候选同时有效时会明确报告歧义。建立新局时主存档与自动保存作为同一个持久化集合检查：默认拒绝任何旧文件，显式覆盖会事务式写入新主存档并清除上一局自动保存。回放导出默认拒绝覆盖已有文件；显式覆盖前会严格解析全部回放条目，并始终禁止指向主存档、自动保存或运行配置。具体边界见 `docs/handoff/PATCH-011：统一游戏会话与沙盒入口实现记录.md`、`docs/handoff/PATCH-012：三地图开局与确定性随机实现记录.md` 与 `docs/handoff/PATCH-028：自动存档快照与机器恢复说明实现记录.md`。

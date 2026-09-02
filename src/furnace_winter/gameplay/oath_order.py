@@ -152,6 +152,9 @@ def build_oath_order_catalog(rules: OathOrderRules) -> CommandCatalog:
             name=USE_OATH_ORDER_ACTION_COMMAND,
             required_arguments={"action_id": ArgumentKind.STRING},
             argument_options={"action_id": tuple(sorted(rules.actions))},
+            argument_semantics={
+                "action_id": "option_prerequisites_are_listed_in_oath_order.action_rules",
+            },
             related_rule_sections=("oath_order",),
         )
     )
