@@ -69,6 +69,7 @@ from furnace_winter.config.technologies import (
     TechnologyRule,
     TechnologyRules,
     load_technology_rules,
+    validate_research_staffing_precision,
 )
 from furnace_winter.config.oath_order import (
     OathOrderConfigError,
@@ -151,4 +152,5 @@ __all__ = [
     "load_survival_rules",
     "validate_config_file",
     "validate_config_tree",
+    "validate_research_staffing_precision",
 ]

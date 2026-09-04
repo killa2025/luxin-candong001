@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import shutil
 import unittest
 from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from furnace_winter import GameSession
-from furnace_winter.config import TechnologyConfigError, load_technology_rules
+from furnace_winter.config import (
+    TechnologyConfigError,
+    load_technology_rules,
+    validate_config_tree,
+)
 from furnace_winter.gameplay.end_day import EndDayStage
 from furnace_winter.interface import ErrorCode
 from furnace_winter.models import SaveDataError, decode_game_state, encode_game_state, dumps
@@ -208,6 +213,73 @@ class ResearchStaffingTests(unittest.TestCase):
                 source["research"]["staffing_full_engineers"] = value
                 path.write_text(json.dumps(source), encoding="utf-8")
                 with self.assertRaises(TechnologyConfigError): load_technology_rules(path)
+
+    def test_complete_config_tree_rejects_inexact_lawful_research_speed(self):
+        with TemporaryDirectory() as temp:
+            config_dir = Path(temp) / "data"
+            shutil.copytree(ROOT / "data", config_dir)
+            path = config_dir / "technologies.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["research"]["progress_units_per_day"] = 2
+            path.write_text(json.dumps(document), encoding="utf-8")
+
+            report = validate_config_tree(config_dir)
+            self.assertFalse(report.is_valid)
+            self.assertTrue(any(
+                issue.location == "$.research"
+                and "科研人手精度跨配置校验失败" in issue.message
+                for issue in report.issues
+            ))
+            save_path = Path(temp) / "must-not-exist.json"
+            with self.assertRaises(TechnologyConfigError):
+                GameSession.new(
+                    config_dir=config_dir,
+                    save_path=save_path,
+                    seed=48048,
+                    map_mode="manual",
+                    map_key="black_ash_lowland",
+                )
+            self.assertFalse(save_path.exists())
+
+    def test_overtime_research_speed_command_is_exact_and_atomic(self):
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "game.json"
+            game = self.session(path)
+            first = self.institute(game, 1)
+            self.institute(game, 2)
+            self.command(game, "game.sign_law", {"law_id": "overtime_law"})
+            before_state = encode_game_state(game.state)
+            before_save = path.read_bytes()
+            before_replay = game.replay_document()
+            original_save = game.save
+
+            def fail_save():
+                raise OSError("test only")
+
+            game.save = fail_save
+            failed = game.command("game.overtime", {
+                "building_id": first,
+                "confirm": True,
+            })
+            self.assertEqual(failed.result.code, ErrorCode.INTERNAL_ERROR, failed.result)
+            self.assertEqual(encode_game_state(game.state), before_state)
+            self.assertEqual(path.read_bytes(), before_save)
+            replay_after_failure = game.replay_document()
+            self.assertEqual(replay_after_failure.entries[:-1], before_replay.entries)
+            self.assertFalse(replay_after_failure.entries[-1].result.accepted)
+
+            game.save = original_save
+            succeeded = game.command("game.overtime", {
+                "building_id": first,
+                "confirm": True,
+            })
+            self.assertEqual(succeeded.result.code, ErrorCode.OK)
+            self.assertEqual(
+                game.status()["research"]["speed_contract"]["potential_progress_tenths"],
+                11,
+            )
+            loaded = GameSession.load(path, config_dir=ROOT / "data")
+            self.assertEqual(loaded.status(), game.status())
 
     def test_fixed_formal_d1_d55_paths_with_reduced_midgame_research(self):
         # Recorded construction probes, NOT blindplay or a runtime recommendation.

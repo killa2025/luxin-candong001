@@ -11,6 +11,7 @@ from furnace_winter.config import (
     RESEARCHABLE_STRUCTURAL_DEFERRED_TECH_IDS,
     SurvivalRules,
     TechnologyRules,
+    validate_research_staffing_precision,
 )
 from furnace_winter.config.technologies import validate_technology_building_links
 from furnace_winter.gameplay.buildings import (
@@ -115,6 +116,8 @@ class TechnologySystem:
         self.survival_rules = survival_rules
         self.law_rules = law_rules
         self.text_registry = text_registry or build_action_text_registry()
+        if law_rules is not None:
+            validate_research_staffing_precision(rules, law_rules)
         self.technology_text_registry = build_technology_text_registry()
         description_tech_ids = {
             text_id.removeprefix("tech.").removesuffix(".desc")

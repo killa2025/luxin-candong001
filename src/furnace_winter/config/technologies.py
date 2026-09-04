@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -248,6 +249,54 @@ def validate_technology_building_links(
             raise TechnologyConfigError(
                 f"technology {tech_id} conflicts with the configured heat technology"
             )
+
+
+def validate_research_staffing_precision(
+    technology_rules: TechnologyRules,
+    law_rules: Any,
+) -> None:
+    """Reject configs whose lawful Patch 048 speeds cannot be stored exactly.
+
+    Patch 048 persists fractional research progress in tenths.  Validate every
+    legal staffing pair and either overtime target before a session can start,
+    rather than allowing a command to create a state that later observation or
+    saving cannot represent.
+    """
+
+    research = technology_rules.research
+    overtime = Fraction(
+        law_rules.worktime.overtime_medical_research_numerator,
+        law_rules.worktime.overtime_medical_research_denominator,
+    )
+    secondary_weight = Fraction(
+        research.second_center_speed_numerator,
+        research.second_center_speed_denominator,
+    ) - 1
+    full = research.staffing_full_engineers
+
+    for first_staff in range(full + 1):
+        for second_staff in range(full + 1):
+            for overtime_target in (None, 0, 1):
+                contributions: list[Fraction] = []
+                for index, staff in enumerate((first_staff, second_staff)):
+                    if staff == 0:
+                        continue
+                    value = Fraction(
+                        research.progress_units_per_day * staff,
+                        full,
+                    )
+                    if overtime_target == index:
+                        value *= overtime
+                    contributions.append(value)
+                ranked = sorted(contributions, reverse=True)
+                total = ranked[0] if ranked else Fraction(0)
+                if len(ranked) == 2:
+                    total += ranked[1] * secondary_weight
+                if (total * 10).denominator != 1:
+                    raise TechnologyConfigError(
+                        "Patch 048 research speed cannot be represented in exact "
+                        "tenths for every lawful staffing and overtime combination"
+                    )
 
 
 def _object(value: Any, path: str) -> dict[str, Any]:
