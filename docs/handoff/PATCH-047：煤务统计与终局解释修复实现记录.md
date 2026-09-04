@@ -40,10 +40,14 @@
 
 验证命令（仓库根目录，PowerShell 先设置 `$env:PYTHONPATH='src'`）：
 
-- `python -m unittest discover -s tests -q`：550 项通过。
+- `python -m unittest discover -s tests -q`：551 项通过。
 - `python -m furnace_winter validate-config data`：9 份 JSON 通过。
 - `python -m compileall -q src tests`：通过。
 - `git diff --check`：通过。
+
+## 第一轮复审修正
+
+审核发现新增 `CommandSpec.argument_minimums` 插在字段中间会挤占原有位置参数，导致第七个及后续参数错位。将该新增字段设为 `kw_only=True`，保留所有旧位置参数顺序。新增兼容测试覆盖 `related_rule_sections`、`related_protocol_contracts` 和全部执行前文案字段，也验证新下界字段只能以关键字传入。不改变机器输出字段或游戏校验顺序。
 
 ## 边界与后续
 

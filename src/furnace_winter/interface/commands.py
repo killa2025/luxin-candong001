@@ -119,7 +119,7 @@ class CommandSpec:
     allow_extra_arguments: bool = False
     argument_semantics: Mapping[str, str] = field(default_factory=dict)
     # Discovery metadata; existing command-specific legality keeps its priority.
-    argument_minimums: Mapping[str, int] = field(default_factory=dict)
+    argument_minimums: Mapping[str, int] = field(default_factory=dict, kw_only=True)
     related_rule_sections: tuple[str, ...] = ()
     related_protocol_contracts: tuple[str, ...] = ()
     pre_execution_text_id: str | None = None
