@@ -1979,6 +1979,10 @@ class PlayCliTests(unittest.TestCase):
         valid = lines[3]
         self.assertEqual(valid["type"], "rules")
         self.assertEqual(valid["rules"]["section"], "final_frost")
+        contract = valid["rules"]["interface_text"]["scoring_contract"]
+        self.assertEqual(contract, lines[0]["observation"]["final_frost_view"]["scoring_contract"])
+        self.assertIn("coal_system_critical", [item["id"] for item in contract["result_caps"]])
+        self.assertEqual(contract["result_cap_combination"], "worst_of_total_tier_and_all_triggered_caps")
         self.assertEqual(lines[4]["type"], "closed")
 
     def test_json_lines_autosave_view_and_direct_path_rejection(self) -> None:

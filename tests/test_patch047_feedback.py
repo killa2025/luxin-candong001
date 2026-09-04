@@ -136,6 +136,33 @@ class Patch047FeedbackTests(unittest.TestCase):
             self.assertEqual(encode_game_state(observation.state), before)
             self.assertEqual(path.read_bytes(), original)
             self.assertEqual(observation.state.final_result.report, state.final_result.report)
+            self.assertEqual(
+                session.rules_view("final_frost")["interface_text"]["scoring_contract"],
+                observation.final_frost_view["scoring_contract"],
+            )
+            self.assertEqual(encode_game_state(session.state), before)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_final_frost_rules_share_observation_contract_without_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rules.json"
+            session = GameSession.new(config_dir=ROOT / "data", save_path=path, seed=47047)
+            before_state = encode_game_state(session.state)
+            before_bytes = path.read_bytes()
+            before_replay = deepcopy(session.replay_document())
+            expected = session.observe().final_frost_view["scoring_contract"]
+            view = session.rules_view("final_frost")
+            self.assertEqual(view["interface_text"]["scoring_contract"], expected)
+            self.assertEqual(view["document"], json.loads((ROOT / "data/final_frost.json").read_text(encoding="utf-8-sig")))
+            self.assertEqual(view["config_status"], view["document"]["config_status"])
+            self.assertIn("result_caps", expected)
+            self.assertEqual(expected["result_cap_combination"], "worst_of_total_tier_and_all_triggered_caps")
+            view["interface_text"]["scoring_contract"]["result_caps"].clear()
+            view["document"].clear()
+            self.assertEqual(session.rules_view("final_frost")["interface_text"]["scoring_contract"], expected)
+            self.assertEqual(encode_game_state(session.state), before_state)
+            self.assertEqual(path.read_bytes(), before_bytes)
+            self.assertEqual(session.replay_document(), before_replay)
 
     def test_cap_contract_matches_previous_logic_for_all_score_combinations(self):
         order = ["high_victory", "standard_victory", "bitter_victory", "collapse_survival", "ember_survival"]

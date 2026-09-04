@@ -40,7 +40,7 @@
 
 验证命令（仓库根目录，PowerShell 先设置 `$env:PYTHONPATH='src'`）：
 
-- `python -m unittest discover -s tests -q`：551 项通过。
+- `python -m unittest discover -s tests -q`：552 项通过。
 - `python -m furnace_winter validate-config data`：9 份 JSON 通过。
 - `python -m compileall -q src tests`：通过。
 - `git diff --check`：通过。
@@ -50,6 +50,14 @@
 审核发现新增 `CommandSpec.argument_minimums` 插在字段中间会挤占原有位置参数，导致第七个及后续参数错位。将该新增字段设为 `kw_only=True`，保留所有旧位置参数顺序。新增兼容测试覆盖 `related_rule_sections`、`related_protocol_contracts` 和全部执行前文案字段，也验证新下界字段只能以关键字传入。不改变机器输出字段或游戏校验顺序。
 
 ## 边界与后续
+
+### 合并后第四十七次黑盒修复
+
+PR #50 合并至 `2948ad33a978317e0d1f4c07e2dfe0e73560d03f` 后，黑盒确认旧报告冻结、观察降档解释及接口发现性通过，但 `rules(final_frost)` 仍只返回配置文档，缺少观察中的评分合同。本轮让该查询的 `interface_text.scoring_contract` 直接复用 `FinalFrostSystem.observe()` 的同一合同，包括全部 `result_caps`、取最差档规则及基础煤判定，不复制另一套规则，不改原始 `document` 或 `config_status`。
+
+新增查询与观察等价、返回值隔离、状态/主存档字节/回放只读测试；扩展旧报告复载测试及真实 JSON 行入口规则查询测试。运行逻辑只增加正式查询接线，没有修改煤务结算、评分、JSON、存档或平衡。
+
+原证据只有已封存 D55 主存档、日结自动存档和观察包络，故新日结煤务、新终局解释及 D49 活动选项仍属黑盒未覆盖，不按单元测试通过替代黑盒验收。原 91 项证据哈希前后匹配；后续需另备可追溯的合法专项存档，不编辑旧证据、不抽取观察 state 冒充主存档。
 
 不调整研究速度、工程师最低人数、研究成本、产能、医疗、地图、社会路线或终局门槛。研究所“可运行且至少一名工程师即完整基础速度”是第三批数值补表第 4.3 节的现行规则，不当程序缺陷擅自更改。研究与医疗人力压力、普通地图后期平衡继续交用户另行裁决。
 
