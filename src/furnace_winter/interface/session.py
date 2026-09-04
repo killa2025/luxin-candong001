@@ -1014,6 +1014,12 @@ class GameSession:
             result["interface_text"] = self.laws.observe(self._state)
         elif section == "oath_order":
             result["interface_text"] = self.oath_order.route_view(self._state)
+        elif section == "final_frost":
+            result["interface_text"] = {
+                "scoring_contract": self.final_frost.observe(self._state)[
+                    "scoring_contract"
+                ],
+            }
         return result
 
     def execute_payload(self, payload: Mapping[str, Any]) -> SessionExecution:
