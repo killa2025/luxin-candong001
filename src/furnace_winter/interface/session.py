@@ -542,6 +542,7 @@ class GameSession:
             event_views=self.events.active_event_views(self._state),
             promise_views=self.events.active_promise_views(self._state),
             map_view=self.maps.view(self._state),
+            heat_view=self.buildings.heat_target_contract(self._state),
             law_view=self.laws.observe(self._state),
             technology_view=self.technologies.view(self._state),
             old_city_view=self.oath_order.old_city_view(self._state),
@@ -1012,6 +1013,10 @@ class GameSession:
             }
         elif section == "laws":
             result["interface_text"] = self.laws.observe(self._state)
+        elif section == "buildings":
+            result["interface_text"] = {
+                "heat_target_contract": self.buildings.heat_target_contract(self._state),
+            }
         elif section == "oath_order":
             result["interface_text"] = self.oath_order.route_view(self._state)
         elif section == "final_frost":

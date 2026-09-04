@@ -305,6 +305,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
         CommandSpec(
             name=HEAT_COMMAND,
             required_arguments={"building_id": ArgumentKind.STRING},
+            argument_semantics={"building_id": "buildings.heat_target_contract.targets.building_id"},
             related_rule_sections=("buildings",),
         )
     )
@@ -726,6 +727,61 @@ class BuildingSystem:
                 },
             )
         return CommandValidation.valid()
+
+    def heat_target_contract(self, state: GameState) -> dict[str, Any]:
+        """Read-only heat eligibility, evaluated by the actual command legality."""
+        targets = []
+        heating = self._projected_heating(state)
+        reserved = self._coal_reserved_for_level(state, heating.effective_furnace_level)
+        for building_id, building in sorted(state.buildings.items()):
+            rule = self.rules.buildings[building.building_type]
+            validation = self._legality(
+                state, CommandRequest("heat-contract", HEAT_COMMAND, {"building_id": building_id})
+            )
+            targets.append({
+                "building_id": building_id,
+                "building_type": building.building_type,
+                "type_supports_heat": rule.can_heat,
+                "heated_today": building.heated_today,
+                "projected_temperature_without_heat": (
+                    self._projected_building_temperature(state, building, heating, include_heat=False)
+                    if rule.can_heat else None
+                ),
+                "minimum_operating_temperature": rule.min_operating_temperature,
+                "eligible_now": validation.is_valid,
+                "rejection_code": None if validation.is_valid else validation.code.value,
+                "first_blocking_reason": validation.details.get("reason"),
+                "blocking_details": deepcopy(dict(validation.details)),
+            })
+        return {
+            "command_name": HEAT_COMMAND,
+            "can_heat_semantics": "building_type_capability_not_current_eligibility",
+            "eligibility_scope": "current_valid_state_and_well_formed_target_request",
+            "requires_open_planning_day": True,
+            "allowed_building_types": sorted(key for key, rule in self.rules.buildings.items() if rule.can_heat),
+            "temperature_condition": {
+                "left": "projected_temperature_without_heat",
+                "operator": "<",
+                "right": "minimum_operating_temperature",
+                "equality_is_eligible": False,
+            },
+            "once_per_building_per_day": True,
+            "daily_city_limit": self.rules.heat.daily_city_limit,
+            "heat_uses_today": state.building_management.heat_uses_today,
+            "heat_coal_cost": self.rules.heat.coal_cost,
+            "furnace_coal_reserved": reserved,
+            "coal_required_including_reserve": reserved + self.rules.heat.coal_cost,
+            "available_coal": state.resources.coal,
+            "reserve_basis": "projected_effective_furnace_level_base_coal_cost",
+            "targets": targets,
+            "blocking_reason_order": [
+                "game_already_failed", "day_not_open_for_planning", "unknown_building",
+                "building_cannot_heat", "building_already_heated_today",
+                "daily_heat_limit_reached", "temperature_already_sufficient",
+                "insufficient_coal_after_furnace_reserve",
+            ],
+            "contains_strategy_recommendations": False,
+        }
 
     def _heat_legality(self, state: GameState, request: CommandRequest) -> CommandValidation:
         building_id = request.arguments.get("building_id")
