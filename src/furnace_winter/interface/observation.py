@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from furnace_winter.interface.commands import CommandSpec
@@ -29,6 +29,7 @@ class Observation:
     oath_order_view: dict[str, Any] | None = None
     final_frost_view: dict[str, Any] | None = None
     ending_report_view: dict[str, Any] | None = None
+    heat_view: dict[str, Any] | None = field(default=None, kw_only=True)
 
     @classmethod
     def from_state(
@@ -47,6 +48,7 @@ class Observation:
         oath_order_view: dict[str, Any] | None = None,
         final_frost_view: dict[str, Any] | None = None,
         ending_report_view: dict[str, Any] | None = None,
+        heat_view: dict[str, Any] | None = None,
     ) -> Observation:
         return cls(
             protocol_version=PROTOCOL_VERSION,
@@ -68,4 +70,5 @@ class Observation:
             oath_order_view=oath_order_view,
             final_frost_view=final_frost_view,
             ending_report_view=ending_report_view,
+            heat_view=heat_view,
         )

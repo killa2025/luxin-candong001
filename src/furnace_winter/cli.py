@@ -287,6 +287,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     event_views=events.active_event_views(state),
                     promise_views=events.active_promise_views(state),
                     map_view=maps.view(state),
+                    heat_view=buildings.heat_target_contract(state),
                     law_view=laws.observe(state),
                     technology_view=technologies.view(state),
                     old_city_view=oath_order.old_city_view(state),
