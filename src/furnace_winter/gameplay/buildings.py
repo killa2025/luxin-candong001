@@ -732,7 +732,8 @@ class BuildingSystem:
         """Read-only heat eligibility, evaluated by the actual command legality."""
         targets = []
         heating = self._projected_heating(state)
-        reserved = self._coal_reserved_for_level(state, heating.effective_furnace_level)
+        reservation = self._coal_reservation_components(state, heating.effective_furnace_level)
+        reserved = reservation["total_coal_reserved"]
         for building_id, building in sorted(state.buildings.items()):
             rule = self.rules.buildings[building.building_type]
             validation = self._legality(
@@ -772,7 +773,8 @@ class BuildingSystem:
             "furnace_coal_reserved": reserved,
             "coal_required_including_reserve": reserved + self.rules.heat.coal_cost,
             "available_coal": state.resources.coal,
-            "reserve_basis": "projected_effective_furnace_level_base_coal_cost",
+            "reserve_basis": "max(effective_level_base_coal_cost - available_woodfuel, 0) + target_overload_coal_cost",
+            "reserve_components": reservation,
             "targets": targets,
             "blocking_reason_order": [
                 "game_already_failed", "day_not_open_for_planning", "unknown_building",
@@ -1399,18 +1401,31 @@ class BuildingSystem:
         return projected_woodfuel_available(state, self.rules)
 
     def _coal_reserved_for_level(self, state: GameState, level: int) -> int:
+        return self._coal_reservation_components(state, level)["total_coal_reserved"]
+
+    def _coal_reservation_components(self, state: GameState, level: int) -> dict[str, int]:
         base_fuel = furnace_coal_cost(
             state,
             self.survival_rules,
             level,
         )
-        base_reserve = max(base_fuel - self._woodfuel_available(state), 0)
+        woodfuel_available = self._woodfuel_available(state)
+        base_reserve = max(base_fuel - woodfuel_available, 0)
         overload_reserve = 0
         if self.technology_rules is not None:
             overload_reserve = self.technology_rules.overload.levels[
                 state.furnace.overload_level
             ].coal_cost
-        return base_reserve + overload_reserve
+        return {
+            "projected_effective_furnace_level": level,
+            "effective_level_base_coal_cost": base_fuel,
+            "available_woodfuel": woodfuel_available,
+            "woodfuel_deduction_from_base": min(base_fuel, woodfuel_available),
+            "base_coal_reserved_after_woodfuel": base_reserve,
+            "target_overload_level": state.furnace.overload_level,
+            "target_overload_coal_cost": overload_reserve,
+            "total_coal_reserved": base_reserve + overload_reserve,
+        }
 
     def _building_insulation_bonus(
         self, state: GameState, building: BuildingState

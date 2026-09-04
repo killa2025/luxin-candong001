@@ -102,7 +102,7 @@ Patch 047 的反馈边界：初始观察的 `protocol_contract.play_envelopes.co
 
 也可包为 `{"type":"command","request":{"name":"COMMAND_NAME_STRING","arguments":{}}}`。`command_id` 和 `expected_state_sequence` 可省略，由会话按公开默认值补齐。派员人数为绝对目标，最小 1；撤员人数若填写也至少 1，省略则清空对应岗位。普通追思的累计死亡、墓园、炉律、冷却与规划日要求公开于 `rules(laws).interface_text.action_rules.memorial`。
 
-建筑状态的 `can_heat` 只表示该类型支持加热，不代表当前可以执行。初始/完整观察的 `heat_view` 与 `rules(buildings).interface_text.heat_target_contract` 返回同一当前资格合同：预计未加热温度必须严格低于运行门槛，每座每天一次、全城次数未用尽，且扣除预计有效炉级的基础煤预留后须够支付加热费用。每个目标给出 `eligible_now` 与按实际校验顺序返回的首个阻塞原因；等于温度门槛也不得加热。查询只陈述条件，不推荐行动、不改变资源或已存状态。
+建筑状态的 `can_heat` 只表示该类型支持加热，不代表当前可以执行。初始/完整观察的 `heat_view` 与 `rules(buildings).interface_text.heat_target_contract` 返回同一当前资格合同：预计未加热温度必须严格低于运行门槛，每座每天一次、全城次数未用尽，且扣除供暖煤预留后须够支付加热费用。预留公式为 `max(预计有效炉级基础煤耗 - 可用木柴替代量, 0) + 目标过载煤耗`，`reserve_components` 逐项公开组成；这是当前预留计算，不代表已经付款或已经消耗木柴。每个目标给出 `eligible_now` 与按实际校验顺序返回的首个阻塞原因；等于温度门槛也不得加热。查询只陈述条件，不推荐行动、不改变资源或已存状态。
 
 终霜“缺煤日”只统计基础供暖煤耗未完整支付，不混入过载费用，木柴也不作为煤炭储备评分。`final_frost_view.scoring_contract.result_caps` 公开所有既有分档上限；正式 `{"type":"rules","section":"final_frost"}` 查询在 `rules.interface_text.scoring_contract` 返回同一合同，原始配置仍在 `rules.document`，不被覆盖。`final_frost_view.final_result.score_explanation` 和会话 `ending_report_view.score_explanation` 解释已保存分数与实际记录结局。报告中的旧 `limiting_factor_ids` 不是完整降档清单，新解释不改写它，也不重算旧每日记录或旧报告。D49 唯一确认选项显示用户确认的“守住炉城。”，效果不变。
 

@@ -24,7 +24,7 @@ class HeatDiscoveryTests(unittest.TestCase):
     def setUpClass(cls):
         fixtures.BuildingPatchTests.setUpClass()
 
-    def setup_target(self, day=55, coal=500):
+    def setup_target(self, day=55, coal=500, with_technology_rules=False):
         fixture = fixtures.BuildingPatchTests()
         state = fixture.make_state()
         state.calendar.current_day = day
@@ -33,7 +33,7 @@ class HeatDiscoveryTests(unittest.TestCase):
         state.resources.coal = coal
         state.resources.wood = 500
         state.resources.steel = 500
-        system = fixture.make_system()
+        system = fixture.make_system(with_technology_rules=with_technology_rules)
         result = system.execute(state, CommandRequest("build", BUILD_COMMAND, {
             "building_type": "canteen", "zone": "inner_ring"}))
         self.assertTrue(result.accepted, result)
@@ -73,6 +73,43 @@ class HeatDiscoveryTests(unittest.TestCase):
         self.assertEqual(result.data, target["blocking_details"])
         state.calendar.is_day_locked = True
         self.assertEqual(self.target(system, state, bid)["first_blocking_reason"], "day_not_open_for_planning")
+
+    def test_formal_technology_overload_and_woodfuel_reserve_components(self):
+        for woodfuel, coal, expected_reserve, eligible in (
+            (False, 112, 93, False), (False, 113, 93, True),
+            (True, 92, 73, False), (True, 93, 73, True),
+        ):
+            with self.subTest(woodfuel=woodfuel, coal=coal):
+                state, system, bid = self.setup_target(coal=coal, with_technology_rules=True)
+                state.technologies.researched_tech_ids = sorted(system.technology_rules.technologies)
+                state.furnace.mode_id = "level_2"
+                state.furnace.is_active = True
+                state.furnace.overload_level = 1
+                state.building_management.woodfuel_confirmed_today = woodfuel
+                # Isolate the coal gate while using real technology/woodfuel
+                # projection, cost calculation and command execution.
+                with patch.object(type(system), "_projected_building_temperature", return_value=-100):
+                    contract = system.heat_target_contract(state)
+                    components = contract["reserve_components"]
+                    self.assertEqual(components["projected_effective_furnace_level"], 2)
+                    self.assertEqual(components["effective_level_base_coal_cost"], 68)
+                    self.assertEqual(components["available_woodfuel"], 20 if woodfuel else 0)
+                    self.assertEqual(components["woodfuel_deduction_from_base"], 20 if woodfuel else 0)
+                    self.assertEqual(components["target_overload_coal_cost"], 25)
+                    self.assertEqual(components["total_coal_reserved"], expected_reserve)
+                    self.assertEqual(contract["furnace_coal_reserved"], expected_reserve)
+                    self.assertEqual(contract["coal_required_including_reserve"], expected_reserve + 20)
+                    target = self.target(system, state, bid)
+                    self.assertEqual(target["eligible_now"], eligible)
+                    before = deepcopy(state)
+                    result = system.execute(state, CommandRequest("heat", HEAT_COMMAND, {"building_id": bid}))
+                    self.assertEqual(result.accepted, eligible, result)
+                    if eligible:
+                        self.assertEqual(state.resources.coal, coal - 20)
+                    else:
+                        self.assertEqual(result.data["reason"], "insufficient_coal_after_furnace_reserve")
+                        self.assertEqual(result.data["furnace_coal_reserved"], expected_reserve)
+                        self.assertEqual(state, before)
 
     def test_success_then_building_and_city_limits_and_unsupported_type(self):
         state, system, bid = self.setup_target()
