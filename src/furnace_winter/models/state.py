@@ -6,7 +6,7 @@ from enum import StrEnum
 from furnace_winter.models.randomness import RandomState
 
 
-CURRENT_SAVE_DATA_VERSION = 18
+CURRENT_SAVE_DATA_VERSION = 19
 LEGACY_ENDING_REPORT_FORMAT_VERSION = 1
 PATCH_020_ENDING_REPORT_FORMAT_VERSION = 2
 PATCH_027_ENDING_REPORT_FORMAT_VERSION = 3
@@ -382,6 +382,8 @@ class TechState:
     active_research_id: str | None = None
     research_progress_units: int = 0
     research_required_units: int = 0
+    research_profile_id: str = field(default="staffing_patch048", kw_only=True)
+    research_remainder_tenths: int = field(default=0, kw_only=True)
 
 
 @dataclass(slots=True)

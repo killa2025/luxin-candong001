@@ -210,6 +210,8 @@ class Patch013BalanceTests(unittest.TestCase):
     @staticmethod
     def downgrade_v14_to_v13(document: dict) -> dict:
         document["save_data_version"] = 13
+        document.get("technologies", {}).pop("research_profile_id", None)
+        document.get("technologies", {}).pop("research_remainder_tenths", None)
         del document["final_frost"]["balance_profile_id"]
         del document["final_result"]["report"]["format_version"]
         del document["cold_exposure"]

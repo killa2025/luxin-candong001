@@ -1291,6 +1291,8 @@ class EndingReportPatchTests(unittest.TestCase):
             )
         )
         legacy["save_data_version"] = 11
+        legacy.get("technologies", {}).pop("research_profile_id", None)
+        legacy.get("technologies", {}).pop("research_remainder_tenths", None)
         del legacy["final_frost"]["balance_profile_id"]
         for field in (
             "run_state",
@@ -1313,6 +1315,8 @@ class EndingReportPatchTests(unittest.TestCase):
 
         terminal_legacy = encode_game_state(self.completed_state())
         terminal_legacy["save_data_version"] = 11
+        terminal_legacy.get("technologies", {}).pop("research_profile_id", None)
+        terminal_legacy.get("technologies", {}).pop("research_remainder_tenths", None)
         del terminal_legacy["final_frost"]["balance_profile_id"]
         terminal_legacy["hunger"] = {
             "mild_population": 0,
@@ -1368,6 +1372,8 @@ class EndingReportPatchTests(unittest.TestCase):
         )
         del legacy_report["format_version"]
         legacy_document["save_data_version"] = 14
+        legacy_document.get("technologies", {}).pop("research_profile_id", None)
+        legacy_document.get("technologies", {}).pop("research_remainder_tenths", None)
         del legacy_document["final_frost"]["balance_profile_id"]
 
         restored = decode_game_state(legacy_document)
@@ -1457,6 +1463,8 @@ class EndingReportPatchTests(unittest.TestCase):
         ]
         document = encode_game_state(state)
         document["save_data_version"] = 15
+        document.get("technologies", {}).pop("research_profile_id", None)
+        document.get("technologies", {}).pop("research_remainder_tenths", None)
         del document["final_frost"]["balance_profile_id"]
         for record in document["final_frost"]["daily_records"].values():
             for field in (
@@ -1514,6 +1522,8 @@ class EndingReportPatchTests(unittest.TestCase):
         )
         document = encode_game_state(state)
         document["save_data_version"] = 15
+        document.get("technologies", {}).pop("research_profile_id", None)
+        document.get("technologies", {}).pop("research_remainder_tenths", None)
         del document["final_frost"]["balance_profile_id"]
 
         restored = decode_game_state(document)
@@ -1557,6 +1567,8 @@ class EndingReportPatchTests(unittest.TestCase):
 
         pre_v16 = encode_game_state(state)
         pre_v16["save_data_version"] = 15
+        pre_v16.get("technologies", {}).pop("research_profile_id", None)
+        pre_v16.get("technologies", {}).pop("research_remainder_tenths", None)
         del pre_v16["final_frost"]["balance_profile_id"]
         pre_v16["final_frost"]["daily_records"]["49"][
             "service_history_known"

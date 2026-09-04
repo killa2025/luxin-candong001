@@ -369,6 +369,8 @@ class FinalFrostPatchTests(unittest.TestCase):
     def v10_document(state) -> dict:
         document = encode_game_state(state)
         document["save_data_version"] = 10
+        document.get("technologies", {}).pop("research_profile_id", None)
+        document.get("technologies", {}).pop("research_remainder_tenths", None)
         del document["final_frost"]
         del document["medical"]["sick_treatment_progress"]
         document["events"].pop("fixed_arrival_pressure_days")
@@ -694,6 +696,8 @@ class FinalFrostPatchTests(unittest.TestCase):
     ) -> None:
         source = encode_game_state(self.make_state(day=12))
         source["save_data_version"] = 16
+        source.get("technologies", {}).pop("research_profile_id", None)
+        source.get("technologies", {}).pop("research_remainder_tenths", None)
         del source["final_frost"]["balance_profile_id"]
 
         restored = decode_game_state(source)
@@ -716,6 +720,8 @@ class FinalFrostPatchTests(unittest.TestCase):
 
         forged = encode_game_state(self.make_state(day=12))
         forged["save_data_version"] = 16
+        forged.get("technologies", {}).pop("research_profile_id", None)
+        forged.get("technologies", {}).pop("research_remainder_tenths", None)
         with self.assertRaisesRegex(
             SaveDataError,
             "pre-v17 save cannot contain a balance profile",
@@ -734,6 +740,8 @@ class FinalFrostPatchTests(unittest.TestCase):
     ) -> None:
         source = encode_game_state(self.make_state(day=12))
         source["save_data_version"] = 17
+        source.get("technologies", {}).pop("research_profile_id", None)
+        source.get("technologies", {}).pop("research_remainder_tenths", None)
         source["final_frost"]["balance_profile_id"] = "patch022"
 
         restored = decode_game_state(source)
@@ -749,6 +757,8 @@ class FinalFrostPatchTests(unittest.TestCase):
 
         forged = encode_game_state(self.make_state(day=12))
         forged["save_data_version"] = 17
+        forged.get("technologies", {}).pop("research_profile_id", None)
+        forged.get("technologies", {}).pop("research_remainder_tenths", None)
         with self.assertRaisesRegex(
             SaveDataError, "pre-v18 save cannot contain the Patch 045"
         ):
@@ -803,6 +813,8 @@ class FinalFrostPatchTests(unittest.TestCase):
         expected_result = deepcopy(state.final_result)
         legacy = encode_game_state(state)
         legacy["save_data_version"] = 16
+        legacy.get("technologies", {}).pop("research_profile_id", None)
+        legacy.get("technologies", {}).pop("research_remainder_tenths", None)
         del legacy["final_frost"]["balance_profile_id"]
 
         restored = decode_game_state(legacy)

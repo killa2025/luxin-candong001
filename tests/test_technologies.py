@@ -64,9 +64,12 @@ class TechnologyPatchTests(unittest.TestCase):
         )
 
     def make_state(self):
-        return create_initial_survival_state(
+        state = create_initial_survival_state(
             self.survival_rules, self.building_rules, random_seed=6006
         )
+        # These pre-048 contracts remain the legacy-run regression suite.
+        state.technologies.research_profile_id = "legacy_fixed"
+        return state
 
     def technology_system(self) -> TechnologySystem:
         return TechnologySystem(
@@ -1463,6 +1466,8 @@ class TechnologyPatchTests(unittest.TestCase):
 
         legacy = deepcopy(encoded)
         legacy["save_data_version"] = 6
+        legacy.get("technologies", {}).pop("research_profile_id", None)
+        legacy.get("technologies", {}).pop("research_remainder_tenths", None)
         del legacy["final_frost"]["balance_profile_id"]
         legacy["furnace"].pop("overload_level")
         legacy["furnace"].pop("pressure_redline_warned")
@@ -1486,6 +1491,8 @@ class TechnologyPatchTests(unittest.TestCase):
         current = encode_game_state(self.make_state())
         mislabeled = deepcopy(current)
         mislabeled["save_data_version"] = 6
+        mislabeled.get("technologies", {}).pop("research_profile_id", None)
+        mislabeled.get("technologies", {}).pop("research_remainder_tenths", None)
         with self.assertRaises(SaveDataError):
             decode_game_state(mislabeled)
 
@@ -1493,6 +1500,8 @@ class TechnologyPatchTests(unittest.TestCase):
             with self.subTest(pressure=pressure):
                 legacy = deepcopy(current)
                 legacy["save_data_version"] = 6
+                legacy.get("technologies", {}).pop("research_profile_id", None)
+                legacy.get("technologies", {}).pop("research_remainder_tenths", None)
                 del legacy["final_frost"]["balance_profile_id"]
                 legacy["furnace"].pop("overload_level")
                 legacy["furnace"].pop("pressure_redline_warned")

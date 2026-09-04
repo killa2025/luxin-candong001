@@ -331,11 +331,13 @@ def validate_config_tree(root: Path) -> ValidationReport:
 
     if not manifest_present:
         buildings_path = root / "buildings.json"
+        laws_path = root / "laws.json"
         maps_path = root / "maps.json"
         technologies_path = root / "technologies.json"
         final_frost_path = root / "final_frost.json"
     elif manifest_config_paths is None:
         buildings_path = None
+        laws_path = None
         maps_path = None
         technologies_path = None
         final_frost_path = None
@@ -348,6 +350,9 @@ def validate_config_tree(root: Path) -> ValidationReport:
             for path in manifest_config_paths
             if path.name == "technologies.json"
         ]
+        law_matches = [
+            path for path in manifest_config_paths if path.name == "laws.json"
+        ]
         final_frost_matches = [
             path
             for path in manifest_config_paths
@@ -358,6 +363,7 @@ def validate_config_tree(root: Path) -> ValidationReport:
         ]
         if (
             len(building_matches) > 1
+            or len(law_matches) > 1
             or len(technology_matches) > 1
             or len(final_frost_matches) > 1
             or len(map_matches) > 1
@@ -366,10 +372,11 @@ def validate_config_tree(root: Path) -> ValidationReport:
                 ValidationIssue(
                     manifest_path,
                     "$.configs",
-                    "manifest 中建筑、地图、科技与终霜配置路径各自最多登记一项",
+                    "manifest 中建筑、炉律、地图、科技与终霜配置路径各自最多登记一项",
                 )
             )
         buildings_path = building_matches[0] if len(building_matches) == 1 else None
+        laws_path = law_matches[0] if len(law_matches) == 1 else None
         technologies_path = (
             technology_matches[0] if len(technology_matches) == 1 else None
         )
@@ -452,6 +459,34 @@ def validate_config_tree(root: Path) -> ValidationReport:
                         f"建筑与科技跨配置校验失败：{exc}",
                     )
                 )
+
+    if laws_path is not None and technologies_path is not None:
+        linked_paths = {laws_path.resolve(), technologies_path.resolve()}
+        available_paths = {path.resolve() for path in config_files}
+        linked_paths_are_valid = not any(
+            issue.path.resolve() in linked_paths for issue in issues
+        )
+        if linked_paths.issubset(available_paths) and linked_paths_are_valid:
+            try:
+                from furnace_winter.config.laws import load_law_rules
+                from furnace_winter.config.technologies import (
+                    load_technology_rules,
+                    validate_research_staffing_precision,
+                )
+
+                validate_research_staffing_precision(
+                    load_technology_rules(technologies_path),
+                    load_law_rules(laws_path),
+                )
+            except (OSError, ValueError) as exc:
+                issues.append(
+                    ValidationIssue(
+                        technologies_path,
+                        "$.research",
+                        f"科研人手精度跨配置校验失败：{exc}",
+                    )
+                )
+
     if (
         buildings_path is not None
         and technologies_path is not None
