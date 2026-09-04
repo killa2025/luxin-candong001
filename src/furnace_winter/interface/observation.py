@@ -30,6 +30,7 @@ class Observation:
     final_frost_view: dict[str, Any] | None = None
     ending_report_view: dict[str, Any] | None = None
     heat_view: dict[str, Any] | None = field(default=None, kw_only=True)
+    research_view: dict[str, Any] | None = field(default=None, kw_only=True)
 
     @classmethod
     def from_state(
@@ -49,6 +50,7 @@ class Observation:
         final_frost_view: dict[str, Any] | None = None,
         ending_report_view: dict[str, Any] | None = None,
         heat_view: dict[str, Any] | None = None,
+        research_view: dict[str, Any] | None = None,
     ) -> Observation:
         return cls(
             protocol_version=PROTOCOL_VERSION,
@@ -71,4 +73,5 @@ class Observation:
             final_frost_view=final_frost_view,
             ending_report_view=ending_report_view,
             heat_view=heat_view,
+            research_view=research_view,
         )

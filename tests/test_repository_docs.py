@@ -219,7 +219,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("PATCH-045：偏难地图高胜门槛与机器编码修正实现记录", index)
-        self.assertIn("当前存档数据版本为 v18", readme)
+        self.assertIn("当前存档数据版本为 v19", readme)
         self.assertIn("同等级、同住房状态的人口会先汇总", readme)
         self.assertIn("高胜最低总分为 24", readme)
         self.assertIn("信任至少 85、恐慌至多 15", readme)
@@ -246,7 +246,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
             "不得输出“近期死亡”正文或自行新增时间机制",
             agents,
         )
-        self.assertIn("D56、Patch 048", agents)
+        self.assertIn("D56、Patch 049", agents)
         self.assertNotIn("D56、Patch 046", agents)
         self.assertIn("不修改允许加班的建筑类型", handoff)
 
@@ -260,7 +260,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
         self.assertIn("data/oath_order.json", readme)
         self.assertIn("data/final_frost.json", readme)
         self.assertIn("data/maps.json", readme)
-        self.assertIn("当前存档数据版本为 v18", readme)
+        self.assertIn("当前存档数据版本为 v19", readme)
         self.assertIn("PATCH-011", readme)
         self.assertIn("PATCH-012", readme)
         self.assertIn("Patch 013", readme)

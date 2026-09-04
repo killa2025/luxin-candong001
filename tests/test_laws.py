@@ -1370,6 +1370,8 @@ class LawPatchTests(unittest.TestCase):
         legacy = encode_game_state(self.make_state())
         downgrade_to_pre_patch006_schema(legacy)
         legacy["save_data_version"] = 4
+        legacy.get("technologies", {}).pop("research_profile_id", None)
+        legacy.get("technologies", {}).pop("research_remainder_tenths", None)
         del legacy["social_policy"]
         del legacy["medical"]
         migrated = decode_game_state(legacy)
@@ -1401,6 +1403,8 @@ class LawPatchTests(unittest.TestCase):
                 document = encode_game_state(state)
                 downgrade_to_pre_patch006_schema(document)
                 document["save_data_version"] = 5
+                document.get("technologies", {}).pop("research_profile_id", None)
+                document.get("technologies", {}).pop("research_remainder_tenths", None)
                 del document["social_policy"]["consecutive_ration_mode"]
 
                 migrated = decode_game_state(document)
@@ -1486,6 +1490,8 @@ class LawPatchTests(unittest.TestCase):
         legacy = encode_game_state(state)
         downgrade_to_pre_patch006_schema(legacy)
         legacy["save_data_version"] = 5
+        legacy.get("technologies", {}).pop("research_profile_id", None)
+        legacy.get("technologies", {}).pop("research_remainder_tenths", None)
         del legacy["social_policy"]["consecutive_ration_mode"]
 
         locked_restore = deepcopy(legacy)
@@ -1552,6 +1558,8 @@ class LawPatchTests(unittest.TestCase):
         legacy = encode_game_state(state)
         downgrade_to_pre_patch006_schema(legacy)
         legacy["save_data_version"] = 5
+        legacy.get("technologies", {}).pop("research_profile_id", None)
+        legacy.get("technologies", {}).pop("research_remainder_tenths", None)
         del legacy["social_policy"]["consecutive_ration_mode"]
         migrated = decode_game_state(legacy)
         self.law_system().validate_state(migrated)
@@ -1639,6 +1647,8 @@ class LawPatchTests(unittest.TestCase):
                 legacy = encode_game_state(state)
                 downgrade_to_pre_patch006_schema(legacy)
                 legacy["save_data_version"] = 4
+                legacy.get("technologies", {}).pop("research_profile_id", None)
+                legacy.get("technologies", {}).pop("research_remainder_tenths", None)
                 del legacy["social_policy"]
                 del legacy["medical"]
 
@@ -1655,6 +1665,8 @@ class LawPatchTests(unittest.TestCase):
         base = encode_game_state(self.make_state())
         downgrade_to_pre_patch006_schema(base)
         base["save_data_version"] = 4
+        base.get("technologies", {}).pop("research_profile_id", None)
+        base.get("technologies", {}).pop("research_remainder_tenths", None)
         del base["social_policy"]
         del base["medical"]
         malformed_documents = []

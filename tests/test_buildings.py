@@ -1426,6 +1426,8 @@ class BuildingPatchTests(unittest.TestCase):
         legacy = encode_game_state(state)
         downgrade_to_pre_patch006_schema(legacy)
         legacy["save_data_version"] = 2
+        legacy.get("technologies", {}).pop("research_profile_id", None)
+        legacy.get("technologies", {}).pop("research_remainder_tenths", None)
         del legacy["building_management"]
         del legacy["surface_resource_points"]
         del legacy["daily_survival"]["woodfuel_wood_burned"]
@@ -2075,6 +2077,8 @@ class BuildingPatchTests(unittest.TestCase):
                 legacy = encode_game_state(state)
                 downgrade_to_pre_patch006_schema(legacy)
                 legacy["save_data_version"] = 2
+                legacy.get("technologies", {}).pop("research_profile_id", None)
+                legacy.get("technologies", {}).pop("research_remainder_tenths", None)
                 del legacy["building_management"]
                 del legacy["surface_resource_points"]
                 del legacy["daily_survival"]["woodfuel_wood_burned"]

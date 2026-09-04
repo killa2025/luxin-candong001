@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import fields
+from fractions import Fraction
 from typing import Any
 
 from furnace_winter.config import (
@@ -217,6 +218,11 @@ class TechnologySystem:
                     research_required_units=(
                         state.technologies.research_required_units
                     ),
+                    research_progress_tenths=(
+                        state.technologies.research_progress_units * 10
+                        + state.technologies.research_remainder_tenths
+                    ),
+                    research_fraction_scale=10,
                     refund={"wood": 0, "steel": 0},
                 )
             return CommandValidation.valid()
@@ -300,6 +306,8 @@ class TechnologySystem:
                     "steel": rule.steel_cost,
                 },
                 research_days=rule.research_days,
+                research_days_basis="nominal_work_requirement_not_completion_prediction",
+                research_speed=self.research_speed_view(state),
                 research_required_units=required_units,
                 payment_timing="on_start",
                 cancellation_refund={"wood": 0, "steel": 0},
@@ -334,6 +342,7 @@ class TechnologySystem:
         state.resources.steel -= rule.steel_cost
         state.technologies.active_research_id = tech_id
         state.technologies.research_progress_units = 0
+        state.technologies.research_remainder_tenths = 0
         state.technologies.research_required_units = required_units
         return {
             "tech_id": tech_id,
@@ -350,6 +359,7 @@ class TechnologySystem:
         tech_id = state.technologies.active_research_id
         state.technologies.active_research_id = None
         state.technologies.research_progress_units = 0
+        state.technologies.research_remainder_tenths = 0
         state.technologies.research_required_units = 0
         return {"tech_id": tech_id, "refund": {"wood": 0, "steel": 0}}
 
@@ -574,16 +584,13 @@ class TechnologySystem:
             )
             return
 
-        progress = self.rules.research.progress_units_per_day
-        if len(institutes) >= 2:
-            progress = (
-                progress * self.rules.research.second_center_speed_numerator
-                // self.rules.research.second_center_speed_denominator
-            )
-        overtime_id = state.social_policy.overtime_building_id
-        if overtime_id in {item.building_id for item in institutes}:
-            numerator, denominator = self._overtime_progress_multiplier()
-            progress = progress * numerator // denominator
+        speed = self.research_speed_view(state)
+        total_tenths = (
+            state.technologies.research_remainder_tenths
+            + speed["potential_progress_tenths"]
+        )
+        progress, remainder = divmod(total_tenths, 10)
+        state.technologies.research_remainder_tenths = remainder
         state.technologies.research_progress_units += progress
 
         completed = (
@@ -599,6 +606,14 @@ class TechnologySystem:
                 "required_units": state.technologies.research_required_units,
                 "completed": completed,
                 "research_institute_count": len(institutes),
+                "research_profile_id": state.technologies.research_profile_id,
+                "progress_added_tenths": speed["potential_progress_tenths"],
+                "research_remainder_tenths": 0 if completed else remainder,
+                "discarded_completion_overflow_tenths": max(
+                    0, state.technologies.research_progress_units * 10 + remainder
+                    - state.technologies.research_required_units * 10,
+                ) if completed else 0,
+                "contributions": speed["contributions"],
             },
         )
         if not completed:
@@ -607,6 +622,7 @@ class TechnologySystem:
         state.technologies.researched_tech_ids.append(tech_id)
         state.technologies.active_research_id = None
         state.technologies.research_progress_units = 0
+        state.technologies.research_remainder_tenths = 0
         state.technologies.research_required_units = 0
         if tech_id == "tech_storage_expansion":
             warehouse_count = sum(
@@ -615,6 +631,73 @@ class TechnologySystem:
             )
             state.resources.storage_capacity += 300 * warehouse_count
         context.emit("technology.research.completed", {"tech_id": tech_id})
+
+    def research_speed_view(self, state: GameState) -> dict[str, Any]:
+        """Same exact arithmetic for current-state information and settlement.
+
+        Staffing is read again in the research stage, after medical/death work.
+        The current-state view is not a guarantee of future surviving staff.
+        """
+        research = self.rules.research
+        trial = state.technologies.research_profile_id == "staffing_patch048"
+        institutes = self._staffed_research_institutes(state, require_operational=True)
+        numerator, denominator = self._overtime_progress_multiplier()
+        values: list[Fraction] = []
+        contributions = []
+        for building in institutes:
+            overtime = building.building_id == state.social_policy.overtime_building_id
+            base = Fraction(research.progress_units_per_day)
+            if trial:
+                base *= Fraction(building.assigned_engineers, research.staffing_full_engineers)
+            adjusted = base * (Fraction(numerator, denominator) if overtime else 1)
+            values.append(adjusted)
+            contributions.append({
+                "building_id": building.building_id,
+                "assigned_engineers": building.assigned_engineers,
+                "overtime": overtime,
+                "base_progress": {"numerator": base.numerator, "denominator": base.denominator},
+                "after_overtime_progress": {
+                    "numerator": adjusted.numerator, "denominator": adjusted.denominator,
+                },
+            })
+        secondary_weight = Fraction(
+            research.second_center_speed_numerator,
+            research.second_center_speed_denominator,
+        ) - 1
+        if trial:
+            ranked = sorted(values, reverse=True)
+            total = ranked[0] if ranked else Fraction(0)
+            if len(ranked) >= 2:
+                total += ranked[1] * secondary_weight
+        else:
+            # Preserve the legacy per-stage integer rounding and whole-queue overtime.
+            progress = research.progress_units_per_day if institutes else 0
+            if len(institutes) >= 2:
+                progress = progress * research.second_center_speed_numerator // research.second_center_speed_denominator
+            if any(item["overtime"] for item in contributions):
+                progress = progress * numerator // denominator
+            total = Fraction(progress)
+        tenths = total * 10
+        if tenths.denominator != 1:
+            raise SaveDataError("research speed cannot be represented in exact tenths")
+        return {
+            "research_profile_id": state.technologies.research_profile_id,
+            "config_status": self.rules.config_status.value,
+            "assessment_stage": "current_state_not_future_settlement",
+            "staffing_read_stage": EndDayStage.ADVANCE_AND_COMMIT_RESEARCH.value,
+            "full_speed_engineers_per_institute": research.staffing_full_engineers if trial else 1,
+            "full_speed_progress_units_per_day": research.progress_units_per_day,
+            "formula": "max(after_overtime_contributions) + 0.5 * min(after_overtime_contributions)" if trial else "legacy_fixed_speed_and_whole_queue_overtime",
+            "overtime_scope": "target_institute_only" if trial else "whole_queue",
+            "engineering_apprentice_extra_progress": "PENDING",
+            "potential_progress_tenths": tenths.numerator,
+            "active_research_id": state.technologies.active_research_id,
+            "progress_tenths": state.technologies.research_progress_units * 10 + state.technologies.research_remainder_tenths,
+            "required_tenths": state.technologies.research_required_units * 10,
+            "fraction_scale": 10,
+            "carry_to_next_technology": False,
+            "contributions": contributions,
+        }
 
     def view(self, state: GameState) -> tuple[dict[str, Any], ...]:
         completed = set(state.technologies.researched_tech_ids)

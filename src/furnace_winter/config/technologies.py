@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -121,6 +121,7 @@ class ResearchRules:
     progress_units_per_day: int
     second_center_speed_numerator: int
     second_center_speed_denominator: int
+    staffing_full_engineers: int = field(default=10, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,6 +303,7 @@ def load_technology_rules(path: Path) -> TechnologyRules:
         research_data,
         {
             "max_queues",
+            "staffing_full_engineers",
             "progress_units_per_day",
             "second_center_speed_numerator",
             "second_center_speed_denominator",
@@ -309,6 +311,9 @@ def load_technology_rules(path: Path) -> TechnologyRules:
         "$.research",
     )
     research = ResearchRules(
+        staffing_full_engineers=_integer(
+            research_data["staffing_full_engineers"], "$.research.staffing_full_engineers", minimum=1
+        ),
         max_queues=_integer(research_data["max_queues"], "$.research.max_queues", minimum=1),
         progress_units_per_day=_integer(
             research_data["progress_units_per_day"],
@@ -328,6 +333,8 @@ def load_technology_rules(path: Path) -> TechnologyRules:
     )
     if research.max_queues != 1:
         raise TechnologyConfigError("V1 supports exactly one research queue")
+    if research.staffing_full_engineers != 10:
+        raise TechnologyConfigError("Patch 048 trial requires 10 engineers for full research speed")
     if (
         research.progress_units_per_day
         * research.second_center_speed_numerator

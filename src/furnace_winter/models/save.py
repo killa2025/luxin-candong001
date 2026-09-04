@@ -227,6 +227,9 @@ class SaveMigrationRegistry:
             raise SaveDataError("save_data_version must be an integer")
         if version > self.current_version:
             raise SaveDataError(f"save version {version} is newer than supported version")
+        if version < 19 and isinstance(migrated.get("technologies"), Mapping):
+            if {"research_profile_id", "research_remainder_tenths"} & set(migrated["technologies"]):
+                raise SaveDataError("pre-v19 save cannot contain research staffing fields")
         if version < 17 and isinstance(migrated.get("final_frost"), Mapping):
             raw_final_frost = dict(migrated["final_frost"])
             if "balance_profile_id" in raw_final_frost:
@@ -1362,6 +1365,10 @@ def _decode_medical(value: Any) -> MedicalState:
 def _decode_technologies(value: Any) -> TechState:
     data = _object(value, "technologies", _field_names(TechState))
     return TechState(
+        research_profile_id=_string(data["research_profile_id"], "technologies.research_profile_id"),
+        research_remainder_tenths=_integer(
+            data["research_remainder_tenths"], "technologies.research_remainder_tenths", minimum=0
+        ),
         researched_tech_ids=_string_list(
             data["researched_tech_ids"], "technologies.researched_tech_ids"
         ),
@@ -2214,6 +2221,7 @@ def _decode_game_state(
         migrations.register(15, _migrate_v15_to_v16)
         migrations.register(16, _migrate_v16_to_v17)
         migrations.register(17, _migrate_v17_to_v18)
+        migrations.register(18, _migrate_v18_to_v19)
     data = migrations.migrate(document)
     data = _object(data, "$", _field_names(GameState))
     try:
@@ -3639,6 +3647,20 @@ def _migrate_v17_to_v18(document: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v18_to_v19(document: dict[str, Any]) -> dict[str, Any]:
+    """Add research metadata without changing old progress, balance or reports."""
+    migrated = deepcopy(_object(document, "$", _field_names(GameState)))
+    technologies = _object(
+        migrated["technologies"], "technologies",
+        set(_field_names(TechState)) - {"research_profile_id", "research_remainder_tenths"},
+    )
+    technologies["research_profile_id"] = "legacy_fixed"
+    technologies["research_remainder_tenths"] = 0
+    migrated["technologies"] = technologies
+    migrated["save_data_version"] = 19
+    return migrated
+
+
 def _validate_state_invariants(
     state: GameState, *, strict_event_timeline: bool = True
 ) -> None:
@@ -4452,10 +4474,18 @@ def _validate_state_invariants(
         technologies.researched_tech_ids
     ):
         raise SaveDataError("researched tech ids must be unique")
+    if technologies.research_profile_id not in {"legacy_fixed", "staffing_patch048"}:
+        raise SaveDataError("unknown research profile")
+    remainder = technologies.research_remainder_tenths
+    if isinstance(remainder, bool) or not isinstance(remainder, int) or not 0 <= remainder < 10:
+        raise SaveDataError("research remainder must be integer tenths in 0..9")
+    if technologies.research_profile_id == "legacy_fixed" and remainder:
+        raise SaveDataError("legacy research cannot contain fractional progress")
     if technologies.active_research_id is None:
         if (
             technologies.research_progress_units != 0
             or technologies.research_required_units != 0
+            or remainder != 0
         ):
             raise SaveDataError("inactive research must have zero progress and requirement")
     else:

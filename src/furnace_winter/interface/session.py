@@ -543,6 +543,7 @@ class GameSession:
             promise_views=self.events.active_promise_views(self._state),
             map_view=self.maps.view(self._state),
             heat_view=self.buildings.heat_target_contract(self._state),
+            research_view=self.technologies.research_speed_view(self._state),
             law_view=self.laws.observe(self._state),
             technology_view=self.technologies.view(self._state),
             old_city_view=self.oath_order.old_city_view(self._state),
@@ -966,6 +967,7 @@ class GameSession:
             "panic": state.trust_panic.panic,
             "map": self.maps.view(state),
             "research": {
+                "speed_contract": self.technologies.research_speed_view(state),
                 "active_tech_id": state.technologies.active_research_id,
                 "progress_units": state.technologies.research_progress_units,
                 "required_units": state.technologies.research_required_units,
@@ -1008,6 +1010,7 @@ class GameSession:
         }
         if section == "technologies":
             result["interface_text"] = {
+                "research_speed": self.technologies.research_speed_view(self._state),
                 "research_start": self.technologies.research_start_notice(),
                 "descriptions": self.technologies.description_catalog(),
             }

@@ -3,6 +3,7 @@
   "config_status": "TEST_NUMERIC",
   "research": {
     "max_queues": 1,
+    "staffing_full_engineers": 10,
     "progress_units_per_day": 4,
     "second_center_speed_numerator": 150,
     "second_center_speed_denominator": 100
