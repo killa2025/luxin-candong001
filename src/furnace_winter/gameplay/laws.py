@@ -1065,6 +1065,21 @@ class LawSystem:
                 "denominator": progress_denominator,
             },
             "overtime_target_contract": self.overtime_target_contract(state),
+            "action_rules": {
+                "memorial": {
+                    "command_name": MEMORIAL_COMMAND,
+                    "requires_signed_law_id": "memorial_law",
+                    "law_prerequisite_satisfied": "memorial_law" in signed,
+                    "requires_recorded_death": True,
+                    "recorded_death_requirement_satisfied": state.population.population_dead > 0,
+                    "requires_built_building_type": "cemetery",
+                    "building_prerequisite_satisfied": self._has_built_type(state, "cemetery"),
+                    "cooldown_days": self.rules.actions.memorial_cooldown_days,
+                    "next_available_day": state.laws.cooldowns.get(_MEMORIAL_COOLDOWN, 1),
+                    "requires_open_planning_day": True,
+                    "contains_strategy_recommendations": False,
+                },
+            },
             "death_path": state.social_policy.death_path,
             "firepit_enabled": state.social_policy.firepit_enabled,
             "firepit_daily_effect": {

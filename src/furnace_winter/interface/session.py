@@ -547,13 +547,21 @@ class GameSession:
             old_city_view=self.oath_order.old_city_view(self._state),
             oath_order_view=self.oath_order.route_view(self._state),
             final_frost_view=self.final_frost.observe(self._state),
-            ending_report_view=self.ending_report.observe(self._state),
+            ending_report_view={
+                **self.ending_report.observe(self._state),
+                "score_explanation": self.final_frost.score_explanation(self._state),
+            },
         )
 
     def _protocol_contract(self) -> dict[str, Any]:
         rule_sections = tuple(sorted(self._rule_documents))
         return {
             "play_envelopes": {
+                "command_request_contract": {
+                    key: value
+                    for key, value in invalid_command_format_details().items()
+                    if key != "reason"
+                },
                 "supported_types": [
                     "autosave",
                     "command",

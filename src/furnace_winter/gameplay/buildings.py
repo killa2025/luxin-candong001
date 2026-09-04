@@ -255,6 +255,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
             },
             argument_options={"population_type": tuple(_STAFF_FIELDS)},
             argument_semantics={"count": "absolute_target_count"},
+            argument_minimums={"count": 1},
             related_rule_sections=("buildings",),
         )
     )
@@ -268,6 +269,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
             optional_arguments={"count": ArgumentKind.INTEGER},
             argument_options={"population_type": tuple(_STAFF_FIELDS)},
             argument_semantics={"count": "decrement_count_omitted_clears_all"},
+            argument_minimums={"count": 1},
             related_rule_sections=("buildings",),
         )
     )
@@ -281,6 +283,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
             },
             argument_options={"population_type": ("workers", "engineers")},
             argument_semantics={"count": "absolute_target_count"},
+            argument_minimums={"count": 1},
             related_rule_sections=("buildings",),
         )
     )
@@ -294,6 +297,7 @@ def build_building_catalog(rules: BuildingRules | None = None) -> CommandCatalog
             optional_arguments={"count": ArgumentKind.INTEGER},
             argument_options={"population_type": ("workers", "engineers")},
             argument_semantics={"count": "decrement_count_omitted_clears_all"},
+            argument_minimums={"count": 1},
             related_rule_sections=("buildings",),
         )
     )

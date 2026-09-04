@@ -118,6 +118,8 @@ class CommandSpec:
     argument_options: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     allow_extra_arguments: bool = False
     argument_semantics: Mapping[str, str] = field(default_factory=dict)
+    # Discovery metadata; existing command-specific legality keeps its priority.
+    argument_minimums: Mapping[str, int] = field(default_factory=dict, kw_only=True)
     related_rule_sections: tuple[str, ...] = ()
     related_protocol_contracts: tuple[str, ...] = ()
     pre_execution_text_id: str | None = None
@@ -170,6 +172,12 @@ class CommandCatalog:
             raise ValueError(f"arguments cannot be both required and optional: {overlap}")
         known_arguments = set(spec.required_arguments) | set(spec.optional_arguments)
         unknown_options = set(spec.argument_options) - known_arguments
+        for argument, minimum in spec.argument_minimums.items():
+            kind = spec.required_arguments.get(
+                argument, spec.optional_arguments.get(argument)
+            )
+            if kind != ArgumentKind.INTEGER or type(minimum) is not int:
+                raise ValueError("argument minimums require integer arguments and bounds")
         if unknown_options:
             raise ValueError(f"argument options reference unknown arguments: {unknown_options}")
         unknown_semantics = set(spec.argument_semantics) - known_arguments

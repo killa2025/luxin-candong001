@@ -246,7 +246,7 @@ class RepositoryDocumentationTests(unittest.TestCase):
             "不得输出“近期死亡”正文或自行新增时间机制",
             agents,
         )
-        self.assertIn("D56、Patch 047", agents)
+        self.assertIn("D56、Patch 048", agents)
         self.assertNotIn("D56、Patch 046", agents)
         self.assertIn("不修改允许加班的建筑类型", handoff)
 

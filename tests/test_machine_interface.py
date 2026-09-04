@@ -204,6 +204,34 @@ class CommandInterfaceTests(unittest.TestCase):
         self.assertEqual(missing.code, ErrorCode.INVALID_ARGUMENTS)
         self.assertEqual(missing.details["missing"], ["target"])
 
+    def test_command_schema_preserves_all_legacy_positional_fields(self) -> None:
+        fields = (
+            "name", "required_arguments", "optional_arguments", "argument_options",
+            "allow_extra_arguments", "argument_semantics", "related_rule_sections",
+            "related_protocol_contracts", "pre_execution_text_id",
+            "pre_execution_text_template", "pre_execution_text_parameters",
+        )
+        values = (
+            "test.compat", {"target": ArgumentKind.STRING},
+            {"count": ArgumentKind.INTEGER}, {"target": ("example",)}, False,
+            {"count": "absolute_target_count"}, ("buildings",), ("play_envelopes",),
+            "test.confirm", "Confirm {target}.", {"target": "arguments.target"},
+        )
+        # Cover the reported seventh argument and every later field. The text
+        # identifier/template pair must be registered together.
+        for length in (7, 8, 10, 11):
+            with self.subTest(length=length):
+                spec = CommandSpec(*values[:length])
+                CommandCatalog().register(spec)
+                for name, value in zip(fields, values[:length]):
+                    self.assertEqual(getattr(spec, name), value)
+                self.assertEqual(spec.argument_minimums, {})
+        spec = CommandSpec(*values, argument_minimums={"count": 1})
+        CommandCatalog().register(spec)
+        self.assertEqual(spec.argument_minimums, {"count": 1})
+        with self.assertRaises(TypeError):
+            CommandSpec(*values, {"count": 1})
+
     def test_command_schema_rejects_non_boolean_capability_fields(self) -> None:
         malformed = (
             {"command_exists": 1},

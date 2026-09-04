@@ -31,6 +31,7 @@ _PATCH032_TEXT_IDS = {
 _PATCH033_SOURCE = (
     "docs/handoff/PATCH-033：事件与承诺反馈文案收口实现记录.md"
 )
+_PATCH047_SOURCE = "docs/handoff/PATCH-047：煤务统计与终局解释修复实现记录.md"
 _PATCH033_TEXT_IDS = {
     "event.option.unavailable.feedback",
     "promise.same_type.active",
@@ -287,6 +288,7 @@ _RUNTIME_TEXT = {
         "新增人口已经进城，并立即计入住房、食物、医疗和疾病压力。"
     ),
     "event.seventh_frost_start.title": "第七霜落",
+    "event.seventh_frost_start.option_a": "守住炉城。",
     "event.seventh_frost_start.body": (
         "第七霜落来了。\n"
         "从今天起，城外不再是可以指望的退路，炉心、食物、医疗和住房都会被压到最后的余量。\n"
@@ -341,7 +343,9 @@ def build_event_text_registry() -> TextRegistry:
                 status=ConfigStatus.FINAL,
                 visibility=TextVisibility.PLAYER_VISIBLE,
                 source=(
-                    _PATCH031_SOURCE
+                    _PATCH047_SOURCE
+                    if text_id == "event.seventh_frost_start.option_a"
+                    else _PATCH031_SOURCE
                     if text_id in _PATCH031_TEXT_IDS
                     else _PATCH032_SOURCE
                     if text_id in _PATCH032_TEXT_IDS

@@ -2,7 +2,7 @@
 
 《炉心残冬》项目仓库。
 
-代码 Patch 026～045 及各自复审修正均已并入 `main`。第四十四次 seed 45145 锈骨冻原唯一盲玩以 50 人存活、92 人死亡和总分 4 完成 D55，确认 Patch 045 的偏难地图不再轻易高胜且仍有活路；同时暴露了加班目标只能靠枚举失败发现的机器接口缺口。Patch 046 在正式炉律规则、机器观察和拒绝结果中公开允许加班的建筑类型、当前实例资格与阻塞原因，不改变任何机制或平衡值。悼亡钟的累计死亡前置条件原本已在正式路线规则中公开，本轮只让命令参数语义明确指向该规则，未把黑盒误判改成新机制。Patch 045 对新建局启用 `patch045` 平衡档：同一暴露等级且同为有房或无房的人口先汇总再计算患病，高胜最低总分为 24，社会系统 4 分要求信任至少 85 且恐慌至多 15；正式机器标准流固定为 UTF-8。旧局保留历史平衡，不追溯改分。
+代码 Patch 026～046 及各自复审修正均已并入 `main`。Patch 047 修复新日结的基础煤统计，并补齐评分限制解释、协议与行动条件发现性、D49 选项文字；不改变平衡数值。历史测试结果保留在实现记录中，不在玩家入口提供旧局经验。新建局使用 `patch045` 平衡档，正式机器标准流为 UTF-8；旧记录和已生成报告不在加载时自动改分或重抽文案。
 
 游戏的实际玩家是运行在沙盒中的 AI，人类用户负责旁观。这个产品定位不产生 AI 专属规则：游戏仍通过通用结构化命令和状态接口运行，不提供决策评分、推荐行动或自动策略。
 
@@ -93,5 +93,15 @@ Patch 044 的机器诊断边界：规则查询缺少 `section`、误用 `topic` 
 Patch 045 的机器与平衡边界：`observe()` 的终霜视图公开当前平衡档、五档总分门槛、社会系统 4 分条件及寒冷患病分组口径。命令行启动时会把标准输入、标准输出和标准错误流固定为 UTF-8，避免 Windows 本地代码页损坏中文 JSON；这不改变 JSON 协议、随机流或游戏状态。
 
 Patch 046 的机器发现边界：`game.overtime` 的允许建筑类型、当前目标实例、派员、预计运行状态、资格与阻塞原因可从 `observe().law_view` 或 `rules(laws).interface_text` 直接读取；目标拒绝也返回同一合同。该清单只陈述当前合法性，不推荐选择。`game.use_oath_order_action` 的参数语义明确指向既有路线逐项规则，其中悼亡钟的累计死亡条件早已存在，本轮未修改条件或收益。
+
+Patch 047 的反馈边界：初始观察的 `protocol_contract.play_envelopes.command_request_contract` 直接列出命令形状、字段与默认值，完整命令目录由 `{"type":"command_specs"}` 查询。结构化命令使用 `name`，不是 `command` 别名；纯协议形状如下（大写字符串为占位符，不是可执行动作）：
+
+```json
+{"name":"COMMAND_NAME_STRING","arguments":{}}
+```
+
+也可包为 `{"type":"command","request":{"name":"COMMAND_NAME_STRING","arguments":{}}}`。`command_id` 和 `expected_state_sequence` 可省略，由会话按公开默认值补齐。派员人数为绝对目标，最小 1；撤员人数若填写也至少 1，省略则清空对应岗位。普通追思的累计死亡、墓园、炉律、冷却与规划日要求公开于 `rules(laws).interface_text.action_rules.memorial`。
+
+终霜“缺煤日”只统计基础供暖煤耗未完整支付，不混入过载费用，木柴也不作为煤炭储备评分。`final_frost_view.scoring_contract.result_caps` 公开所有既有分档上限；`final_frost_view.final_result.score_explanation` 和会话 `ending_report_view.score_explanation` 解释已保存分数与实际记录结局。报告中的旧 `limiting_factor_ids` 不是完整降档清单，新解释不改写它，也不重算旧每日记录或旧报告。D49 唯一确认选项显示用户确认的“守住炉城。”，效果不变。
 
 `play` 使用一行一个 JSON 对象的长连接协议。新局默认使用 `--map-mode random`；自选时使用 `--map-mode manual --map-key rustbone_tundra|black_ash_lowland|twin_source_rift`。直接发送结构化命令即可；另支持 `{"type":"observe"}`、`{"type":"status"}`、`{"type":"command_specs"}`、`{"type":"rules","section":"maps"}`、`{"type":"autosave"}`、`{"type":"replay"}` 与 `{"type":"quit"}`。未知包络会返回全部合法类型，不提供行动建议。完整规则栏目由观察结果的 `available_rule_sections` 提供；`rules.query` 不是游戏命令，若误作命令提交，拒绝结果会返回上述正式请求形状。强警告日结返回的确认令牌只在产生预览的同一个存活 `GameSession` 中有效，重连后必须重新预览。成功日结的 `warnings` 同时保留 `pre_settlement` 风险快照和 `settlement_result` 事实；后者明确返回本次实际死亡、遗体处理、结算后仍未处理遗体，以及当日耗尽资源点与自动释放岗位，不代表新增规则或预测。成功日结会在主存档之外写入同目录的 `<存档名>.autosave_end_day.json`，其中保留当日日结清理完成、日期推进前的锁定状态、日志与 `resume_stage`；它不会覆盖或替代主会话存档，也不能直接作为 `play` / `report` 的主存档。打开主存档后使用 `{"type":"autosave"}` 可严格读取最近快照；损坏快照返回 `AUTOSAVE_SNAPSHOT_INVALID` 及稳定的路径、字段、原因和约束，恢复阶段错误另列正式合法值。误把快照路径用于正式入口时返回 `AUTOSAVE_SNAPSHOT_NOT_PRIMARY_SAVE` 和只读查看方式，只有唯一可识别的主存档候选才给出单一路径，无扩展名与 `.json` 候选同时有效时会明确报告歧义。建立新局时主存档与自动保存作为同一个持久化集合检查：默认拒绝任何旧文件，显式覆盖会事务式写入新主存档并清除上一局自动保存。回放导出默认拒绝覆盖已有文件；显式覆盖前会严格解析全部回放条目，并始终禁止指向主存档、自动保存或运行配置。具体边界见 `docs/handoff/PATCH-011：统一游戏会话与沙盒入口实现记录.md`、`docs/handoff/PATCH-012：三地图开局与确定性随机实现记录.md` 与 `docs/handoff/PATCH-028：自动存档快照与机器恢复说明实现记录.md`。

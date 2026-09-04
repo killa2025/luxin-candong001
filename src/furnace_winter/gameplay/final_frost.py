@@ -1082,6 +1082,15 @@ class FinalFrostSystem:
         total_population_loss = max(
             population_start - state.population.population_alive, 0
         )
+        # The sealed shortage fact concerns BASE coal, not optional overload.
+        # required_coal includes the target overload, even when it was unpaid.
+        # Woodfuel remains emergency fuel, not coal-reserve score credit.
+        target_overload_cost = self.technology_rules.overload.levels[
+            state.daily_survival.target_overload_level
+        ].coal_cost
+        base_coal_required = (
+            state.daily_survival.required_coal - target_overload_cost
+        )
         record = FrostDayRecord(
             day=day,
             real_temperature=self.rules.temperatures[day].real,
@@ -1092,7 +1101,7 @@ class FinalFrostSystem:
             heating_shortfall=state.daily_survival.heating_shortfall,
             coal_shortage=(
                 state.daily_survival.coal_paid
-                < state.daily_survival.required_coal
+                < base_coal_required
             ),
             furnace_underheated=(
                 state.daily_survival.heating_shortfall or critical_frozen
@@ -1235,6 +1244,12 @@ class FinalFrostSystem:
                 "day": day,
                 "population_end": record.population_end,
                 "daily_deaths": total_population_loss,
+                "coal_shortage": record.coal_shortage,
+                "base_coal_required": base_coal_required,
+                "base_coal_paid": state.daily_survival.coal_paid,
+                "target_overload_coal_required": target_overload_cost,
+                "overload_coal_paid": state.daily_survival.overload_coal_paid,
+                "coal_shortage_basis": "base_coal_payment_only",
             },
         )
 
@@ -1393,6 +1408,15 @@ class FinalFrostSystem:
                 ),
             },
             "scoring_contract": {
+                "coal_shortage": {
+                    "basis": "base_coal_payment_only",
+                    "comparison": "base_coal_paid < base_coal_required",
+                    "overload_coal_included": False,
+                    "woodfuel_counts_as_coal_payment": False,
+                    "existing_daily_records_recomputed": False,
+                },
+                "result_caps": self._result_cap_checks(state),
+                "result_cap_combination": "worst_of_total_tier_and_all_triggered_caps",
                 "result_score_minimums": dict(
                     self._result_score_minimums(state)
                 ),
@@ -1416,6 +1440,7 @@ class FinalFrostSystem:
                 "major_tags": list(state.final_result.major_tags),
                 "defining_tags": list(state.final_result.defining_tags),
                 "tag_contracts": self._survival_tag_contracts(state),
+                "score_explanation": self.score_explanation(state),
             },
         }
 
@@ -2267,36 +2292,89 @@ class FinalFrostSystem:
     def _apply_result_caps(
         self, state: GameState, scores: dict[str, int], result: str
     ) -> str:
-        cap = "high_victory"
-        zeros = sum(score == 0 for score in scores.values())
-        high_victory_death_ratio_percent = (
+        caps = [
+            check["maximum_result_id"]
+            for check in self._result_cap_checks(state, scores)
+            if check["triggered"]
+        ]
+        return max([result, *caps], key=_RESULT_ORDER.index)
+
+    def _result_cap_checks(
+        self, state: GameState, scores: dict[str, int] | None = None
+    ) -> list[dict[str, object]]:
+        """One executable contract for both actual caps and read-only discovery."""
+        death_limit = (
             _LEGACY_PATCH_021_HIGH_VICTORY_DEATH_RATIO_PERCENT
             if state.final_frost.balance_profile_id == "legacy_patch021"
             else self.rules.scoring["high_victory_death_ratio_percent"]
         )
-        if (
-            any(score == 0 for score in scores.values())
-            or (
-                state.final_frost.balance_profile_id
-                in {"patch022", "patch045"}
-                and any(score < 3 for score in scores.values())
+        definitions = [
+            ("zero_system", "standard_victory", "zero_system_count", ">=", 1),
+            ("death_ratio", "standard_victory", "deaths_times_100", ">",
+             max(state.population.population_total_ever, 1) * death_limit),
+            ("coal_system_critical", "bitter_victory", "coal_and_core", "<=", 1),
+            ("population_system_critical", "bitter_victory", "population_and_death", "<=", 1),
+            ("three_zero_systems", "collapse_survival", "zero_system_count", ">=", 3),
+            ("wood_supply_locked", "collapse_survival", "wood_supply_locked", ">=", 1),
+            ("five_zero_systems", "ember_survival", "zero_system_count", ">=", 5),
+        ]
+        if state.final_frost.balance_profile_id in {"patch022", "patch045"}:
+            definitions.append(
+                ("system_below_three", "standard_victory", "minimum_system_score", "<", 3)
             )
-            or (
-                state.population.population_dead * 100
-                > max(state.population.population_total_ever, 1)
-                * high_victory_death_ratio_percent
-            )
-        ):
-            cap = "standard_victory"
-        if scores["coal_and_core"] <= 1 or scores["population_and_death"] <= 1:
-            cap = "bitter_victory"
-        if zeros >= 3:
-            cap = "collapse_survival"
-        if state.final_frost.wood_supply_locked:
-            cap = "collapse_survival"
-        if zeros >= 5:
-            cap = "ember_survival"
-        return _RESULT_ORDER[max(_RESULT_ORDER.index(result), _RESULT_ORDER.index(cap))]
+        metrics = None if scores is None else {
+            "zero_system_count": sum(score == 0 for score in scores.values()),
+            "minimum_system_score": min(scores.values()),
+            "deaths_times_100": state.population.population_dead * 100,
+            "coal_and_core": scores["coal_and_core"],
+            "population_and_death": scores["population_and_death"],
+            "wood_supply_locked": int(state.final_frost.wood_supply_locked),
+        }
+        operators = {
+            ">=": lambda a, b: a >= b, ">": lambda a, b: a > b,
+            "<=": lambda a, b: a <= b, "<": lambda a, b: a < b,
+        }
+        return [
+            {
+                "id": rule_id,
+                "maximum_result_id": cap,
+                "metric": metric,
+                "operator": operator,
+                "threshold": threshold,
+                "actual": metrics[metric] if metrics is not None else None,
+                "triggered": (
+                    operators[operator](metrics[metric], threshold)
+                    if metrics is not None else None
+                ),
+                **({"death_ratio_percent": death_limit,
+                    "denominator": "max(population_total_ever, 1)"}
+                   if rule_id == "death_ratio" else {}),
+            }
+            for rule_id, cap, metric, operator, threshold in sorted(definitions)
+        ]
+
+    def score_explanation(self, state: GameState) -> dict[str, object]:
+        """Explain persisted scores without rescoring old records or reports."""
+        result = state.final_result
+        if not result.is_finalized or result.hard_fail_type is not None:
+            return {"available": False, "reason": "no_final_survival_score"}
+        base = self._result_for_total(state, result.total_score)
+        checks = self._result_cap_checks(state, result.system_scores)
+        return {
+            "available": True,
+            "basis": "persisted_system_scores_and_current_cap_contract",
+            "recomputes_historical_daily_records": False,
+            "total_score_result_id": base,
+            "recorded_result_id": result.ending_id,
+            "cap_checks": checks,
+            "downgrading_cap_ids": [
+                check["id"] for check in checks
+                if check["triggered"]
+                and _RESULT_ORDER.index(check["maximum_result_id"])
+                > _RESULT_ORDER.index(base)
+            ],
+            "contains_strategy_recommendations": False,
+        }
 
     def _ending_tags(
         self, state: GameState, scores: dict[str, int]
